@@ -50,6 +50,7 @@ HELLO = {"type": "invoke", "id": 1, "name": "overlay-connected",
 BACKOFF_FIRST = 1.0
 BACKOFF_MAX = 30.0
 SEEN_CAP = 1000
+SILENCE_LIMIT = 180.0  # idle-but-healthy connections persist; past this, re-hello+resync
 
 
 # ---- minimal WebSocket client (stdlib; Firebot speaks plain ws://) ----------
@@ -75,6 +76,11 @@ def ws_handshake(host, port, timeout=10):
     accept = hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
     if base64.b64encode(accept).decode() not in head.decode("latin1"):
         LOG.warning("handshake accept-key mismatch (continuing anyway)")
+    # Handshake done: stop enforcing the connect timeout. An idle channel is
+    # healthy -- quiet chat sends nothing for minutes. Reads past
+    # SILENCE_LIMIT raise socket.timeout, which the serve loop treats as a
+    # cue to re-hello and resync (backfill), never as an error.
+    sock.settimeout(SILENCE_LIMIT)
     return sock
 
 
@@ -173,11 +179,21 @@ def _widget_event_data(env):
 
 def extract_chat(env):
     """Strict predicate chain from the scout report. Returns a list of
-    ("message", chatMessage) / ("delete", messageData) / ("backfill", [msgs])."""
+    ("message", chatMessage) / ("delete", messageData) / ("backfill", [msgs]).
+
+    Live increments arrive as message/chat-message; every envelope from our
+    widget -- message, state-update, or the show snapshot sent on connect --
+    is also scanned for widgetConfig.state.chatMessages (last <=100), so a
+    (re)connect resyncs without special cases. Dedupe on id downstream."""
     out = []
     overlay, name, edata = _widget_event_data(env)
     if edata is None or overlay != OVERLAY_INSTANCE:
         return out
+    state = ((edata.get("widgetConfig") or {}).get("state") or {}).get("chatMessages")
+    if isinstance(state, list):
+        msgs = [m for m in state if isinstance(m, dict) and m.get("rawText") is not None]
+        if msgs:
+            out.append(("backfill", msgs))
     if name != "message":
         return out
     kind = edata.get("messageName")
@@ -186,13 +202,6 @@ def extract_chat(env):
         out.append(("message", mdata["chatMessage"]))
     elif kind == "delete-message" and isinstance(mdata.get("messageId"), str):
         out.append(("delete", {"messageId": mdata["messageId"]}))
-    # Reconnect backfill: the same envelope echoes widget state carrying the
-    # last <=100 messages. Best-effort; dedupe on id downstream.
-    state = ((edata.get("widgetConfig") or {}).get("state") or {}).get("chatMessages")
-    if isinstance(state, list):
-        msgs = [m for m in state if isinstance(m, dict) and m.get("rawText") is not None]
-        if msgs:
-            out.append(("backfill", msgs))
     return out
 
 
@@ -280,6 +289,10 @@ class Bridge:
             LOG.debug("non-JSON frame (%d bytes)", len(raw))
             return 0
         if not isinstance(env, dict):
+            return 0
+        if env.get("type") == "response":
+            # Registration acknowledgement -- the proof the hello landed.
+            LOG.info("firebot response: %s", raw[:200])
             return 0
         delivered = 0
         for kind, item in extract_chat(env):

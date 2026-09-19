@@ -223,6 +223,38 @@ class TestChatRenderer(unittest.TestCase):
 
 # ---- bridge reconnect test ----------------------------------------------------
 
+class TestExtractChat(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir, "bridges"))
+
+    def envelope(self, name, data, instance="Stream 1080p"):
+        return {"type": "event", "name": "send-to-overlay",
+                "data": {"event": "OVERLAY:WIDGET-EVENT",
+                         "meta": {"event": {"name": name, "data": data}},
+                         "overlayInstance": instance}}
+
+    def test_show_envelope_yields_backfill(self):
+        import firebot_chat
+        env = self.envelope("show", {"widgetType": {"id": "firebot:chat"},
+            "widgetConfig": {"state": {"chatMessages": [
+                {"id": "b1", "username": "u", "rawText": "hi"}]}}})
+        kinds = [k for k, _ in firebot_chat.extract_chat(env)]
+        self.assertIn("backfill", kinds)
+
+    def test_other_instance_ignored(self):
+        import firebot_chat
+        env = self.envelope("message", {"widgetType": {"id": "firebot:chat"},
+            "messageName": "chat-message",
+            "messageData": {"chatMessage": {"id": "x", "username": "u",
+                                                "rawText": "hi"}}},
+            instance="Other Scene")
+        self.assertEqual(firebot_chat.extract_chat(env), [])
+
+    def test_response_frame_ignored_by_extractor(self):
+        import firebot_chat
+        self.assertEqual(firebot_chat.extract_chat({"type": "response",
+                                                   "name": "success"}), [])
+
 def _ws_server_frame(text):
     data = text.encode("utf-8")
     head = bytearray([0x81])
