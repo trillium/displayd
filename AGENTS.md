@@ -56,6 +56,23 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Headless testing: `DISPLAYD_FAKE_FB=1` selects the in-memory framebuffer
   double (CI/local demos only; never set on the host).
 
+## Static-region composition (layout layer)
+
+- Opt-in over the single-view core: `POST /layout {"regions": [...]}`,
+  `GET /layout`, `DELETE /layout`; a bare `POST /show` or `/clear`
+  exits layout mode. Geometry is stack (`height`/`width`, px or %), grid
+  (`rows`/`cols` + `row`/`col`/`row_span`/`col_span`), or explicit `rect`;
+  pure validator is `parse_layout()` in `displayd.py` (atomic reject).
+- Each region runs its renderer in a `RegionScreen` thread; presents
+  recomposite from the per-region frame cache, so one region updating
+  never disturbs others. Renderer crashes are contained per region
+  (last-good-frame kept, error in `/state` layout entry).
+- Feeds stay global, so they route to whichever region(s) bind that
+  renderer. Chat-attention pulls are suppressed while a layout is
+  active; `POST /notify` still interrupts full-screen (clearing layout).
+- Tests: `tests/test_layout.py` (parser, daemon, HTTP); headless via
+  `DISPLAYD_FAKE_FB=1`.
+
 ## Chat view and Firebot bridge (v1)
 
 - `renderers/chat.py` renders the rolling window; feed it with

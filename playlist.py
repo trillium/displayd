@@ -40,8 +40,9 @@ Design decisions (captain's brief, task-qll0e):
   on dark ones) over a dark track, so the bar reads on both dark views
   (beads) and light ones (qr) instead of vanishing into the background.
 - **Rotation yields.** While a notice/attention transient holds the screen,
-  while the panel is blanked (manual off or idle-off), or after an explicit
-  manual ``/show``/``/clear``, the scheduler holds: it does not advance,
+  while the panel is blanked (manual off or idle-off), while a
+  static-region layout owns the panel, or after an explicit manual
+  ``/show``/``/clear``, the scheduler holds: it does not advance,
   and the bar is hidden. Transients and blanking resume automatically with
   a fresh dwell; a manual choice holds until an explicit resume (the
   manual-choice-wins rule). Advancing never touches the activity clock, so
@@ -315,6 +316,15 @@ class Playlist:
         try:
             if getattr(self.daemon.fb, "blanked", False):
                 return "screen-off"
+        except Exception:
+            pass
+        try:
+            # A static-region layout owns the panel region by region:
+            # rotation holds (and the bar hides) until the layout is
+            # cleared, exactly like a manual choice. getattr-guarded so
+            # test doubles without layout state still work.
+            if getattr(self.daemon, "layout", None) is not None:
+                return "layout-active"
         except Exception:
             pass
         return None
