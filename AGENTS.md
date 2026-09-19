@@ -80,3 +80,20 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Deploy is `rsync` of the repo to `~/displayd` (no git there), then
   `sudo systemctl restart displayd`. Chat is quiet late at night: an empty
   panel with "waiting for chat" is the healthy idle state, not a bug.
+
+## Playlist mode (rotation + progress bar)
+
+- Scheduler lives in `playlist.py` (`Playlist` thread on top of
+  `_start_view`); config is the `playlist` section of the policy surface
+  (enabled/placement/thickness/direction/color/tick_seconds/views).
+- Bar is composited via `Screen.overlay` (`overlay_image` hook) +
+  `repaint_overlay()` tick; hidden whenever rotation holds (transient,
+  screen-off, manual hold). Rotation never touches the activity clock.
+- Colour precedence: per-view `color` > renderer `ACCENT` attr >
+  playlist `color` > white fallback, always with a contrast border.
+  A renderer declares `ACCENT = "#rrggbb"` to opt in (additive).
+- Manual `/show`/`/clear` holds rotation until `POST /playlist/resume`;
+  boot-time `clear()` is followed by `playlist.boot()` so a persisted
+  `enabled: true` resumes after restart.
+- Cache discipline: the frame cache (`Screen.on_present` hook) stores
+  pre-overlay frames only, so a cached re-entry never serves a stale bar.

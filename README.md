@@ -106,7 +106,9 @@ publishes an unauthenticated control surface to everything that can route to it.
 | POST | `/feed/<renderer>/<input>` | any JSON payload | push validated data into a view |
 | POST | `/notify` | `{"title":...}`, `body`?, `severity`? (`info`/`warn`/`critical`), `duration`? | transient notice, then automatic return |
 | GET | `/policy` | – | autonomous-behaviour config + activity clock |
-| POST | `/policy` | `{"idle":{...},"chat_attention":{...},"notifications":{...}}` | update policy (persisted) |
+| POST | `/policy` | `{"idle":{...},"chat_attention":{...},"notifications":{...},"playlist":{...}}` | update policy (persisted) |
+| GET | `/playlist` | – | rotation status: view, index, progress, hold reason |
+| POST | `/playlist/pause`, `/playlist/resume`, `/playlist/next` | – | hold, resume, or skip the rotation |
 | POST | `/clear` | – | blank the screen to black |
 | POST | `/screen` | `{"power":"on"\|"off"}` | screen power |
 | POST | `/screen/on`, `/screen/off` | – | screen power shorthand |
@@ -328,6 +330,46 @@ wins, and a late timer can never clobber it.
 All three are configured over `GET`/`POST /policy` (and the control page)
 and persisted to `policy.json` next to the daemon (`DISPLAYD_POLICY`
 overrides the path), so they survive a restart.
+
+## Playlist mode (automatic rotation)
+
+Off by default. When enabled, the daemon rotates through the configured
+`views` list, showing each for its own `dwell` seconds and wrapping at the
+end. Rotation is a scheduler on top of `/show`, not a parallel path, so
+every switch keeps the instant-switching guarantees (resident renderers,
+last-known data, no blank frame).
+
+A progress bar fills empty-to-full across each dwell (default; `drain`
+shrinks full-to-empty instead) and the view switches when it maxes out.
+It sits flush on one edge (`top`/`left`/`bottom`/`right`): horizontal edges
+fill left-to-right, side edges fill bottom-to-top. Thickness defaults to
+10px. The bar is composited onto every presented frame, so it tracks
+animated views directly and is repainted on a short tick (`tick_seconds`,
+default 0.2s) for static views that park after one frame.
+
+The bar wears the page's colours: a renderer may declare an `ACCENT`
+module attribute (`"#rrggbb"`, a colour name, or an `(r, g, b)` tuple)
+and the bar uses it; a per-view `color` in the playlist item overrides it
+(handy for views owned by other tasks), then the playlist-level `color`,
+then a white fallback. The fill always carries a contrast border over a
+dark track, so it reads on dark and light views alike. Renderers that
+declare no `ACCENT` work exactly as before.
+
+Rotation yields: a notice or chat-attention transient pauses it (bar
+hidden) and it resumes with a fresh dwell on return; a blanked panel
+pauses it; an explicit manual `/show`/`/clear` holds it until
+`POST /playlist/resume` (or re-saving the playlist section enabled). A
+view that is unknown is skipped after a short error dwell, and a view that
+raises mid-dwell holds its last good frame while the scheduler still
+advances -- rotation never stalls on one bad view.
+
+Example:
+
+    curl -s -X POST localhost:8980/policy -H 'Content-Type: application/json' \
+      -d '{"playlist":{"enabled":true,"placement":"bottom","views":[\
+        {"renderer":"beads","dwell":30,"color":"#50DC78"},\
+        {"renderer":"clock","dwell":15},\
+        {"renderer":"qr","params":{"data":"https://example.com"},"dwell":15}]}}'
 
 ## The console
 

@@ -13,6 +13,10 @@ from PIL import ImageDraw, ImageFont
 NAME = "notice"
 DESCRIPTION = "Transient notification card (policy layer shows it, then returns)"
 STATIC = True
+# Playlist progress-bar colour for this view (see playlist.accent_for).
+# A notice only ever shows as a transient, which hides the bar; this is
+# the fallback if it is ever parked directly.
+ACCENT = "#5AC8FF"
 PARAMS = {
     "title": {"type": "string", "required": True, "help": "notice headline"},
     "body": {"type": "string", "help": "longer text, \n starts a new line"},

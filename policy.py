@@ -32,6 +32,8 @@ import os
 import threading
 import time
 
+import playlist as playlist_module
+
 # Priority: higher preempts lower. Idle-off is not a transient; it only
 # fires when no transient is active.
 PRIORITY = {"attention": 1, "notice": 2}
@@ -51,6 +53,16 @@ DEFAULTS = {
         "enabled": False,  # OFF by default: blanking the panel unasked
         "after_seconds": 600,  # inactivity window before power-off
     },
+    "playlist": {
+        "enabled": False,  # OFF by default: rotation is opt-in
+        "placement": "bottom",  # top | left | bottom | right
+        "thickness": 10,  # bar thickness in px at panel resolution
+        "direction": "fill",  # fill (empty->full) or drain (full->empty)
+        "color": "#FFFFFF",  # default bar colour; per-view color wins,
+        # then renderer ACCENT, then this (see playlist.accent_for)
+        "tick_seconds": 0.2,  # overlay repaint cadence for parked views
+        "views": [],  # [{renderer, params?, dwell?, color?}]
+    },
 }
 
 # (section, key): (kind, min, max) for numbers; kind is "bool", "num", "str".
@@ -63,6 +75,12 @@ _SCHEMA = {
     ("chat_attention", "return_after"): ("num", 5, 600),
     ("idle", "enabled"): ("bool", None, None),
     ("idle", "after_seconds"): ("num", 5, 86400),
+    ("playlist", "enabled"): ("bool", None, None),
+    ("playlist", "placement"): ("str", None, None),
+    ("playlist", "thickness"): ("num", 2, 64),
+    ("playlist", "direction"): ("str", None, None),
+    ("playlist", "color"): ("str", None, None),
+    ("playlist", "tick_seconds"): ("num", 0.05, 2.0),
 }
 
 
@@ -173,6 +191,16 @@ class Policy:
             elif kind == "str":
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError("%s.%s must be a non-empty string" % (section, key))
+        playlist = config.get("playlist") or {}
+        if playlist.get("placement") not in playlist_module.PLACEMENTS:
+            raise ValueError("playlist.placement must be one of %s"
+                             % "/".join(playlist_module.PLACEMENTS))
+        if playlist.get("direction") not in playlist_module.DIRECTIONS:
+            raise ValueError("playlist.direction must be one of %s"
+                             % "/".join(playlist_module.DIRECTIONS))
+        if playlist_module.parse_color(playlist.get("color"), None) is None:
+            raise ValueError("playlist.color is not a colour")
+        playlist_module.validate_views(playlist.get("views") or [])
 
     # ---- activity clock ------------------------------------------------
 
@@ -196,6 +224,18 @@ class Policy:
             self.generation += 1
             self.active = None
             return self.generation
+
+    def note_playlist(self, renderer, params):
+        """A scheduler advance: new return target, nothing else.
+
+        Unlike note_select this touches neither the activity clock (so
+        rotation can never defeat idle-off) nor the generation counter
+        (so it can never orphan a transient's return timer). The playlist
+        only advances when no transient is active, so rewriting the base
+        here is safe: a notice returns to the view it interrupted."""
+        with self._lock:
+            self.base = {"renderer": renderer,
+                         "params": copy.deepcopy(params or {})}
 
     def note_clear(self):
         with self._lock:

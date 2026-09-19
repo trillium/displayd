@@ -36,6 +36,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image
 
+import playlist as playlist_module
 import policy as policy_module
 import feedback as feedback_module
 
@@ -319,6 +320,8 @@ class Screen:
         self.feeds = None  # wired by DisplayDaemon to its FeedStore
         self.current_view = None
         self.on_present = None  # daemon hook(img): frame cache + switch timing
+        self.overlay = None  # playlist progress bar hook: fn(img) -> img
+        self._base = None  # last pre-overlay frame, for overlay repaints
 
     def new_image(self, background=(0, 0, 0)):
         return Image.new("RGB", (self.W, self.H), background)
@@ -328,11 +331,37 @@ class Screen:
         the daemon swaps it in with a single write -- never a blank or a
         partial frame."""
         with self.present_lock:
-            self.fb.present(img)
+            if self.overlay is None:
+                self._base = None
+                self.fb.present(img)
+            else:
+                try:
+                    self._base = img.copy()
+                    self.fb.present(self.overlay(img.copy()))
+                except Exception:
+                    self._base = None
+                    self.fb.present(img)
             hook = self.on_present
         if hook is not None:
             try:
+                # Pre-overlay frame: the frame cache stays bar-free, so a
+                # cached re-entry never serves a stale progress bar.
                 hook(img)
+            except Exception:
+                pass
+
+    def repaint_overlay(self):
+        """Re-composite the overlay onto the last frame and present.
+
+        Lets the playlist bar advance smoothly on STATIC views that park
+        after a single present. Best-effort: never raises. Bypasses the
+        on_present hook on purpose: overlay ticks are not fresh draws and
+        must not pollute the frame cache or switch timing."""
+        with self.present_lock:
+            if self.overlay is None or self._base is None:
+                return
+            try:
+                self.fb.present(self.overlay(self._base.copy()))
             except Exception:
                 pass
 
@@ -613,6 +642,10 @@ class DisplayDaemon:
         # default next to the daemon, mirroring POLICY_FILE.
         self.feedback = feedback_module.FeedbackStore(path=feedback_path)
         self.transient_timer = None
+        # Playlist rotation: scheduler on top of _start_view, overlay hook
+        # for the progress bar. Starts enabled only from persisted config.
+        self.playlist = playlist_module.Playlist(self)
+        self.screen.overlay = self.playlist.overlay_image
         self.watchdog_stop = threading.Event()
         self.watchdog_thread = None
         self.stop_event = None
@@ -620,6 +653,7 @@ class DisplayDaemon:
         self.current = None
         self.started_at = None
         self.last_error = None
+        self.playlist.start()
         self.console_taken = self.fb.take_console()
         self.fb.set_blank(0)
         if self.fb.backlight:
@@ -755,6 +789,7 @@ class DisplayDaemon:
         # rejected and the current view keeps running undisturbed.
         validate_params(params or {}, entry.get("params") or {})
         self.policy.note_select(name, params)
+        self.playlist.on_manual()  # manual choice wins: hold the rotation
         with self.lock:
             self._cancel_transient_timer()
             self._wake_if_idle()
@@ -762,6 +797,7 @@ class DisplayDaemon:
 
     def clear(self):
         self.policy.note_clear()
+        self.playlist.on_manual()
         with self.lock:
             self._cancel_transient_timer()
             self._wake_if_idle()
@@ -931,6 +967,7 @@ class DisplayDaemon:
     def set_policy(self, patch):
         config, persisted = self.policy.update_config(patch or {})
         self.policy.note_api()
+        self.playlist.config_updated(patch or {})  # saving playlist = run
         state = self.get_policy()
         state["persisted"] = persisted
         return state
@@ -1013,6 +1050,7 @@ class DisplayDaemon:
                 "first_pixel_ms": self.last_switch_ms,
                 "fresh_frame_ms": self.last_frame_ms,
             },
+            "playlist": self.playlist.status(),
         }
 
     def renderer_list(self):
@@ -1021,6 +1059,7 @@ class DisplayDaemon:
             if "module" not in entry:
                 out.append({"name": name, "broken": entry["broken"]})
                 continue
+            accent = playlist_module.accent_for(entry)
             out.append(
                 {
                     "name": name,
@@ -1028,6 +1067,7 @@ class DisplayDaemon:
                     "params": entry["params"],
                     "inputs": entry.get("inputs", {}),
                     "static": entry["static"],
+                    "accent": "#%02x%02x%02x" % accent,
                 }
             )
         return out
@@ -1133,6 +1173,26 @@ CONTROL_PAGE = """<!DOCTYPE html>
   <input type="number" id="pol-notify-dur" min="1" max="300">
   <div class="meta" id="pol-status">policy: loading&hellip;</div>
   <button id="polsave">Save policy</button>
+</div>
+
+<h2>Playlist: rotate views on their own</h2>
+<div class="card">
+  <label><input type="checkbox" id="pl-en" style="width:auto"> Playlist enabled (rotates through the views below)</label>
+  <label for="pl-place">Bar placement<span class="help">which edge the progress bar sits on (string: top/left/bottom/right)</span></label>
+  <select id="pl-place"><option>top</option><option>left</option><option>bottom</option><option>right</option></select>
+  <label for="pl-thick">Bar thickness (px)<span class="help">readable at distance without stealing content (number, 2-64)</span></label>
+  <input type="number" id="pl-thick" min="2" max="64">
+  <label for="pl-dir">Bar direction<span class="help">fill grows empty-to-full, drain shrinks full-to-empty (string)</span></label>
+  <select id="pl-dir"><option>fill</option><option>drain</option></select>
+  <label for="pl-color">Default bar colour<span class="help">a per-view color or a renderer's ACCENT wins over this (string, #rrggbb)</span></label>
+  <input type="text" id="pl-color">
+  <label for="pl-views">Views (JSON list)<span class="help">each {"renderer": name, "params"?: {}, "dwell"?: seconds 3-3600, "color"?: override}; a manual Show pauses rotation until resumed</span></label>
+  <input type="text" id="pl-views">
+  <div class="meta" id="pl-status">playlist: loading&hellip;</div>
+  <button id="plsave">Save playlist</button>
+  <button id="plpause" class="ghost">Pause</button>
+  <button id="plresume" class="ghost">Resume</button>
+  <button id="plnext" class="ghost">Next view</button>
 </div>
 
 <h2>Notify</h2>
@@ -1348,6 +1408,56 @@ document.getElementById("polsave").onclick = async () => {
     say("policy saved"); refreshPolicy(); }
   catch (err) { say("policy save failed: " + err.message, true); }
 };
+async function refreshPlaylist() {
+  try {
+    const s = await api("/playlist");
+    const p = (await api("/policy")).config.playlist;
+    document.getElementById("pl-en").checked = !!p.enabled;
+    document.getElementById("pl-place").value = p.placement;
+    document.getElementById("pl-thick").value = p.thickness;
+    document.getElementById("pl-dir").value = p.direction;
+    document.getElementById("pl-color").value = p.color;
+    const v = document.getElementById("pl-views");
+    if (document.activeElement !== v) v.value = JSON.stringify(p.views);
+    const vname = s.view ? s.view.renderer : "(none)";
+    document.getElementById("pl-status").textContent =
+      "playlist: " + (s.enabled ? ("on \u00b7 " + vname +
+        (s.progress == null ? "" : (" \u00b7 " + Math.round(s.progress * 100) + "%"))) : "off") +
+      (s.hold && s.hold !== "disabled" && s.hold !== "empty" ? (" \u00b7 held (" + s.hold + ")") : "") +
+      (s.last_error ? (" \u00b7 error: " + s.last_error) : "");
+  } catch (err) { say("playlist load failed: " + err.message, true); }
+}
+document.getElementById("plsave").onclick = async () => {
+  let views;
+  try {
+    views = JSON.parse(document.getElementById("pl-views").value || "[]");
+  } catch (err) { say("views is not valid JSON", true); return; }
+  const patch = { playlist: {
+    enabled: document.getElementById("pl-en").checked,
+    placement: document.getElementById("pl-place").value,
+    direction: document.getElementById("pl-dir").value,
+    color: document.getElementById("pl-color").value.trim() || "#FFFFFF",
+    views: views } };
+  const t = document.getElementById("pl-thick").value.trim();
+  if (t !== "") patch.playlist.thickness = Number(t);
+  try { await api("/policy", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch) });
+    say("playlist saved"); refreshPlaylist(); }
+  catch (err) { say("playlist save failed: " + err.message, true); }
+};
+document.getElementById("plpause").onclick = async () => {
+  try { await api("/playlist/pause", { method: "POST" }); say("playlist paused"); refreshPlaylist(); }
+  catch (err) { say("pause failed: " + err.message, true); }
+};
+document.getElementById("plresume").onclick = async () => {
+  try { await api("/playlist/resume", { method: "POST" }); say("playlist resumed"); refreshPlaylist(); }
+  catch (err) { say("resume failed: " + err.message, true); }
+};
+document.getElementById("plnext").onclick = async () => {
+  try { await api("/playlist/next", { method: "POST" }); say("skipped to next view"); refreshPlaylist(); }
+  catch (err) { say("skip failed: " + err.message, true); }
+};
 document.getElementById("notify").onclick = async () => {
   const body = { title: document.getElementById("nt-title").value,
     body: document.getElementById("nt-body").value,
@@ -1366,8 +1476,10 @@ document.getElementById("notify").onclick = async () => {
   await refreshState();
   refreshPreview();
   refreshPolicy();
+  refreshPlaylist();
   setInterval(refreshState, 2000);
   setInterval(refreshPreview, 2000);
+  setInterval(refreshPlaylist, 2000);
   setInterval(() => refreshRenderers(true), 15000);
 })();
 </script>
@@ -1423,6 +1535,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, png, "image/png")
         if path == "/policy":
             return self._send(200, DAEMON.get_policy())
+        if path == "/playlist":
+            return self._send(200, DAEMON.playlist.status())
         if path == "/feedback":
             query = parse_qs(urlsplit(self.path).query)
             try:
@@ -1497,6 +1611,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, DAEMON.set_policy(self._body()))
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
+        if path == "/playlist/pause":
+            DAEMON.policy.note_api()
+            DAEMON.playlist.pause()
+            return self._send(200, DAEMON.playlist.status())
+        if path == "/playlist/resume":
+            DAEMON.policy.note_api()
+            DAEMON.playlist.resume()
+            return self._send(200, DAEMON.playlist.status())
+        if path == "/playlist/next":
+            DAEMON.policy.note_api()
+            DAEMON.playlist.next()
+            return self._send(200, DAEMON.playlist.status())
         if path == "/feedback":
             body = self._body()
             try:
@@ -1547,6 +1673,9 @@ def main():
     args = parser.parse_args()
     DAEMON = DisplayDaemon()
     DAEMON.clear()
+    # Boot-time clear is housekeeping, not a manual choice: let a persisted
+    # enabled playlist resume rotating (it restores the first view itself).
+    DAEMON.playlist.boot()
     DAEMON.start_watchdog()
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     print("displayd listening on %s:%d with %d renderer(s)" % (args.bind, args.port, len(DAEMON.renderers)))
