@@ -32,10 +32,12 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image
 
 import policy as policy_module
+import feedback as feedback_module
 
 FB = "/dev/fb0"
 FB_SYS = "/sys/class/graphics/fb0/"
@@ -238,6 +240,58 @@ class Framebuffer:
             "fb_blank": self.get_blank(),
             "backlight": self.backlight_state(),
         }
+
+
+class HeadlessFramebuffer(Framebuffer):
+    """In-memory stand-in for the physical screen.
+
+    Active ONLY when DISPLAYD_FAKE_FB=1 (headless CI and local MCP demos
+    with no /dev/fb0). The deployed daemon never sets it. Drawing goes to
+    an in-memory BGRX buffer with the same layout snapshot() expects, so
+    show/feed/snapshot behave identically minus photons."""
+
+    def __init__(self, width=1920, height=1080):
+        self.width = width
+        self.height = height
+        self.bpp = 32
+        self.stride = self.width * 4
+        self.fd = None
+        self.last_frame = None
+        self.blanked = False
+        self.saved_brightness = None
+        self.backlight = None
+        self.vt_fd = None
+
+    def raw(self, data):
+        self.last_frame = bytes(data)
+
+    def repaint(self):
+        pass
+
+    def black(self):
+        self.raw(bytes(self.width * self.height * 4))
+
+    def take_console(self):
+        return False
+
+    def release_console(self):
+        pass
+
+    def set_blank(self, value):
+        self.blanked = (int(value) != 0)
+        return True
+
+    def get_blank(self):
+        return 4 if self.blanked else 0
+
+    def power_off(self):
+        self.set_blank(4)
+        return {"fb_blank": True, "backlight": False}
+
+    def power_on(self):
+        self.set_blank(0)
+        return {"fb_blank": True, "backlight": False,
+                "repaint": self.last_frame is not None}
 
 
 class Screen:
@@ -478,10 +532,37 @@ class FeedStore:
             }
         return out
 
+    def status(self, renderer, input_name):
+        """One feed's health plus its latest value. Raises KeyError when
+        the (renderer, input) pair was never declared."""
+        with self._lock:
+            entry = self._data.get((renderer, input_name))
+        if entry is None:
+            raise KeyError("unknown input: %s.%s" % (renderer, input_name))
+        updated = entry["updated_at"]
+        if updated is None:
+            health, age = "cold", None
+        else:
+            age = round(time.time() - updated, 1)
+            health = "warm" if age < self.STALE_AFTER else "stale"
+        values = list(entry["values"])
+        return {
+            "renderer": renderer,
+            "input": input_name,
+            "count": len(values),
+            "updated_at": updated,
+            "age_seconds": age,
+            "health": health,
+            "latest": values[-1] if values else None,
+        }
+
 
 class DisplayDaemon:
-    def __init__(self, policy_path=None, clock=None):
-        self.fb = Framebuffer()
+    def __init__(self, policy_path=None, clock=None, feedback_path=None):
+        if os.environ.get("DISPLAYD_FAKE_FB") == "1":
+            self.fb = HeadlessFramebuffer()
+        else:
+            self.fb = Framebuffer()
         self.screen = Screen(self.fb)
         self.renderers = load_renderers(RENDERER_DIR)
         self.lock = threading.Lock()
@@ -499,6 +580,10 @@ class DisplayDaemon:
         self.policy = policy_module.Policy(
             policy_path if policy_path is not None else POLICY_FILE,
             clock=clock)
+        # Display-feedback log (feedback.py): durable JSONL + per-note PNG
+        # frames. feedback_path is a test hook; production uses the env
+        # default next to the daemon, mirroring POLICY_FILE.
+        self.feedback = feedback_module.FeedbackStore(path=feedback_path)
         self.transient_timer = None
         self.watchdog_stop = threading.Event()
         self.watchdog_thread = None
@@ -679,6 +764,46 @@ class DisplayDaemon:
         if superseded:
             out["superseded"] = superseded
         return out
+
+    # ---- display feedback --------------------------------------------
+
+    def record_feedback(self, view, rating, categories=None, notes="",
+                          params=None, agent="anonymous", include_frame=True):
+        """Record one judgement about what a view looks like on the panel.
+
+        Captures a /snapshot at feedback time so a later reader sees exactly
+        what was judged. Raises KeyError (unknown view) or ValueError (bad
+        rating/categories). Deliberately does NOT touch the policy clock:
+        annotating the panel is not display activity, and counting it would
+        keep an idle panel awake while reviewers write notes about it."""
+        entry = self.renderers.get(view)
+        if not entry or "module" not in entry:
+            raise KeyError("unknown renderer: %s" % view)
+        png, size = None, None
+        if include_frame:
+            png = self.snapshot()
+            if png is not None:
+                size = (self.fb.width, self.fb.height)
+        stored = self.feedback.record(
+            view, rating, categories=categories, notes=notes,
+            params=params, agent=agent, frame_png=png, frame_size=size)
+        stored["snapshot_captured"] = png is not None
+        return stored
+
+    def list_feedback(self, view=None, limit=50):
+        entries = self.feedback.list(view=view, limit=limit)
+        return {"feedback": entries, "count": len(entries)}
+
+    def get_feedback(self, entry_id):
+        return self.feedback.get(entry_id)
+
+    def feedback_frame(self, entry_id):
+        """Raw PNG bytes of a note's frame. Raises KeyError/IOError."""
+        with open(self.feedback.frame_path(entry_id), "rb") as fh:
+            return fh.read()
+
+    def feedback_summary(self):
+        return self.feedback.summary()
 
     SEVERITIES = ("info", "warn", "critical")
 
@@ -1211,6 +1336,41 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, png, "image/png")
         if path == "/policy":
             return self._send(200, DAEMON.get_policy())
+        if path == "/feedback":
+            query = parse_qs(urlsplit(self.path).query)
+            try:
+                return self._send(200, DAEMON.list_feedback(
+                    view=(query.get("view", [None])[0]),
+                    limit=(query.get("limit", [50])[0])))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+        if path == "/feedback/summary":
+            return self._send(200, DAEMON.feedback_summary())
+        if path.startswith("/feedback/"):
+            parts = path.split("/")
+            if len(parts) == 3 and parts[2]:
+                try:
+                    return self._send(200, DAEMON.get_feedback(parts[2]))
+                except KeyError as exc:
+                    return self._send(404, {"error": str(exc)})
+            if len(parts) == 4 and parts[2] and parts[3] == "frame":
+                try:
+                    return self._send(200, DAEMON.feedback_frame(parts[2]),
+                                      "image/png")
+                except KeyError as exc:
+                    return self._send(404, {"error": str(exc)})
+                except IOError as exc:
+                    return self._send(404, {"error": str(exc),
+                                            "frame_present": False})
+            return self._send(404, {"error": "not found"})
+        if path.startswith("/feed/"):
+            parts = path.split("/")
+            if len(parts) != 4 or not parts[2] or not parts[3]:
+                return self._send(404, {"error": "use /feed/<renderer>/<input>"})
+            try:
+                return self._send(200, DAEMON.feeds.status(parts[2], parts[3]))
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc)})
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -1250,6 +1410,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, DAEMON.set_policy(self._body()))
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
+        if path == "/feedback":
+            body = self._body()
+            try:
+                stored = DAEMON.record_feedback(
+                    body.get("view"), body.get("rating"),
+                    categories=body.get("categories"),
+                    notes=body.get("notes", ""),
+                    params=body.get("params"),
+                    agent=body.get("agent", "anonymous"),
+                    include_frame=body.get("include_frame", True))
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            except TypeError as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(201, stored)
         body = self._body()
         try:
             if path == "/show":

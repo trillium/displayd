@@ -41,3 +41,17 @@ When updating this file, preserve this bar for all agents and keep entries conci
   are never saved, and a too-low restore target falls back to max.
 - Policy config persists in `policy.json` next to the daemon
   (`DISPLAYD_POLICY` overrides); feed buffers do not persist.
+
+## MCP + display feedback
+
+- Agent entry point is `mcp_server.py` (stdlib-only MCP over stdio,
+  `DISPLAYD_URL` env, no auth to configure); per-view/per-input tools are
+  derived live from `GET /renderers`, so a new renderer file is new tools
+  with no server change.
+- Display feedback log is JSONL next to the daemon (`DISPLAYD_FEEDBACK`
+  overrides) with per-note PNG frames in `<log>_frames/`; API is
+  `POST`/`GET /feedback`, `GET /feedback/summary`, `GET /feedback/<id>`,
+  `GET /feedback/<id>/frame`, plus `GET /feed/<view>/<input>` for feed
+  health. Feedback never resets the idle clock.
+- Headless testing: `DISPLAYD_FAKE_FB=1` selects the in-memory framebuffer
+  double (CI/local demos only; never set on the host).

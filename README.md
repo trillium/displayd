@@ -110,6 +110,12 @@ publishes an unauthenticated control surface to everything that can route to it.
 | POST | `/clear` | – | blank the screen to black |
 | POST | `/screen` | `{"power":"on"\|"off"}` | screen power |
 | POST | `/screen/on`, `/screen/off` | – | screen power shorthand |
+| GET | `/feed/<renderer>/<input>` | – | one feed's health (cold/warm/stale) + latest value |
+| GET | `/feedback` | `?view=&limit=` | accumulated display feedback, newest first |
+| POST | `/feedback` | `{"view","rating"}`, `categories`?, `notes`?, `params`?, `agent`?, `include_frame`? | record a judgement; captures a `/snapshot` frame |
+| GET | `/feedback/summary` | – | per-view counts, mean rating, category histograms |
+| GET | `/feedback/<id>` | – | one feedback entry |
+| GET | `/feedback/<id>/frame` | – | the PNG frame the note judged |
 
 Example — put a message on the screen:
 
@@ -126,6 +132,37 @@ Save a picture of the current screen:
 
 Every mutating call returns the new `/state` payload, so a caller never has to
 poll to find out what happened.
+
+## MCP server (`mcp_server.py`)
+
+A stdlib-only MCP server fronting this HTTP API, so an agent can drive the
+wall as a normal tool action. One tool per route (`show`, `notify`, `feed`,
+`feed_status`, `state`, `snapshot`, `renderers`, `policy_get`, `policy_set`,
+`clear`, `screen`, `feedback_*`), plus per-view `show_<view>` and per-input
+`feed_<view>_<input>` tools derived live from `GET /renderers` on every
+`tools/list` — a new renderer file appears as tools with no server change.
+
+    DISPLAYD_URL=http://100.81.88.113:8980 python3 mcp_server.py
+
+`DISPLAYD_URL` defaults to `http://127.0.0.1:8980`; `DISPLAYD_TIMEOUT`
+defaults to 10s. displayd has no auth, so there is no credential to
+configure. If displayd is unreachable every tool fails loudly (`isError`)
+and `feedback_record` refuses rather than storing a frameless note silently.
+
+## Display feedback (`feedback.py` + `/feedback` routes)
+
+Records whether something on the panel actually *worked as a display*
+(readable at distance, right colours, sensible layout) so later work can
+learn across notes instead of repeating mistakes. Each entry carries the
+view, the params in play, a required 1–5 rating, optional categories from a
+fixed taxonomy (`readability layout color content timing size other`), free
+text, the agent, and a `/snapshot` PNG captured at feedback time and stored
+beside the log — feedback without the artifact is nearly useless, and a
+stored PNG cannot rot the way a live reference can. The log is JSONL next
+to the daemon (`DISPLAYD_FEEDBACK` overrides), so it survives restarts;
+`/feedback/summary` aggregates per-view means and category histograms.
+Recording never changes rendering and never resets the idle clock: it is
+evidence for later human-guided work, not a control loop.
 
 ## Bundled renderers
 
