@@ -78,25 +78,64 @@ def _font(screen, name, size):
 
 
 def _fit(draw, text, font, max_w, max_chars=90):
+    """Shrink text to fit max_w pixels wide (and max_chars characters).
+
+    Guarantee: with a working font the return value is never wider than
+    max_w. Text that fits is returned unchanged; longer text is shaved
+    until it fits. When even a single glyph overflows max_w, the result
+    is an ellipsis if it fits, else an empty string -- a cut is always
+    signalled without overflowing. Callers (e.g. the beads attention
+    rows, which fit the title into the width left over by the reason)
+    rely on this: a fitted string always honours the budget it was
+    given, so measuring a fitted string gives a truthful remainder.
+
+    No-font fallback is deliberate: with font None there are no pixel
+    metrics, so _fit keeps the character budget only (text[:max_chars])
+    and ignores max_w. A missing font must truncate, never blank a row.
+    """
     text = str(text or "")
-    if font is not None:
-        try:
-            while len(text) > 4 and draw.textlength(text, font=font) > max_w:
-                text = text[:-2]
-            if draw.textlength(text, font=font) > max_w:
-                text = text[:4]
+    if not text:
+        return ""
+    if len(text) > max_chars:
+        text = text[:max_chars]
+    if font is None:
+        return text  # intentional: no metrics, character budget only
+    try:
+        if max_w <= 0:
+            return ""
+        while draw.textlength(text, font=font) > max_w and len(text) > 1:
+            text = text[:-2] if len(text) > 8 else text[:-1]
+        if draw.textlength(text, font=font) <= max_w:
             return text
+        # Even one glyph overflows: ellipsis if it fits, else empty.
+        try:
+            return ("\u2026" if draw.textlength("\u2026", font=font)
+                    <= max_w else "")
         except Exception:
-            pass
-    return text[:max_chars] if len(text) > max_chars else text
+            return ""
+    except Exception:
+        return text[:max_chars] if len(text) > max_chars else text
 
 
 def _wrap(draw, text, font, max_w, max_rows=3):
-    """Greedy word-wrap to pixel width; returns at most max_rows rows."""
+    """Greedy word-wrap to pixel width; returns at most max_rows rows.
+
+    When words are dropped to respect max_rows, the final row keeps a
+    trailing ellipsis marker: room for the marker is reserved before
+    fitting, so the fit can never shave the marker itself back off.
+    Rows that fit without dropping anything carry no marker. A single
+    word wider than max_w stays whole on its own row (it cannot wrap),
+    so _wrap always terminates with a non-empty result.
+
+    Guarantee: with a working font no returned row is wider than max_w.
+    Whole words that already fit pass through untouched; only a row that
+    still overflows (a single word wider than the budget) is rescued via
+    _fit, which may cut it mid-word rather than let it run off-panel."""
     words = str(text or "").split()
     if not words:
         return [""]
     rows, cur = [], ""
+    truncated = False
     for word in words:
         trial = (cur + " " + word).strip()
         try:
@@ -107,15 +146,46 @@ def _wrap(draw, text, font, max_w, max_rows=3):
             rows.append(cur)
             cur = word
             if len(rows) >= max_rows:
+                truncated = True
                 break
         else:
             cur = trial
     else:
         rows.append(cur)
     rows = rows[:max_rows]
-    if len(rows) == max_rows:
-        rows[-1] = _fit(draw, rows[-1] + " \u2026", font, max_w, len(rows[-1]) + 2)
+    if font is not None:
+        # Rescue-fit only: _fit returns fitting text unchanged, so whole
+        # words pass through byte-identical and only an overflowing row
+        # (a single word wider than the budget) gets cut down to size.
+        # max_chars=len(row) keeps the character budget out of the way:
+        # this pass is purely about pixel width.
+        for i in range(len(rows)):
+            if truncated and i == len(rows) - 1:
+                continue  # marker fit below owns the final row
+            rows[i] = _fit(draw, rows[i], font, max_w, len(rows[i]))
+    if truncated and rows:
+        rows[-1] = _fit_with_marker(draw, rows[-1], font, max_w)
     return rows or [""]
+
+
+def _fit_with_marker(draw, text, font, max_w, marker=" \u2026"):
+    """Fit text reserving room for a trailing marker, then append it.
+
+    Used for the final wrapped row: unlike _fit(text + marker), which
+    would shave the marker itself back off a full row, this guarantees
+    the marker survives whenever it fits at all."""
+    try:
+        marker_w = (draw.textlength(marker, font=font)
+                    if font is not None else len(marker))
+    except Exception:
+        marker_w = len(marker)
+    if font is None:
+        # No metrics: character budget only, marker always survives.
+        return (text + marker)[:len(text) + len(marker)]
+    if marker_w > max_w:
+        return _fit(draw, "\u2026", font, max_w)
+    budget = len(text) + len(marker)
+    return _fit(draw, text, font, max_w - marker_w, budget) + marker
 
 
 # ---- loading -----------------------------------------------------------
