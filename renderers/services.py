@@ -375,22 +375,46 @@ def _draw(screen, title, bg, url):
     draw.line([(PAD, y), (screen.W - PAD, y)], fill=C_LINE, width=2)
     y += 26
 
-    # Containers, then ports: one line each, capped for wall space.
+    # Containers: one per segment, green when running, amber otherwise.
     if snap["containers"]:
-        bits = []
+        x = PAD
+        try:
+            head_w = draw.textlength("CONTAINERS  ", font=row_font)
+        except Exception:
+            head_w = 0
+        draw.text((x, y), "CONTAINERS", font=row_font, fill=C_DIM)
+        x += head_w
         for c in snap["containers"][:4]:
-            dot_c = "\u25cf" if c["state"] == "running" else "\u25cb"
-            bits.append("%s %s (%s)" % (dot_c, c["name"], c["state"]))
-        draw.text((PAD, y),
-                  _fit(draw, "CONTAINERS  " + "   ".join(bits), row_font, col_w),
-                  font=row_font, fill=C_TEXT)
+            running = c["state"] == "running"
+            seg = "%s %s (%s)" % ("\u25cf" if running else "\u25cb",
+                                     c["name"], c["state"])
+            color = C_UP if running else C_WARN
+            try:
+                seg_w = draw.textlength(seg + "   ", font=row_font)
+            except Exception:
+                seg_w = len(seg) * 20
+            if x + seg_w > screen.W - PAD and x > PAD + head_w:
+                break  # wall space is finite: show fewer, never truncate
+            draw.text((x, y), seg, font=row_font, fill=color)
+            x += seg_w
         y += 58
     if snap["ports"]:
-        bits = ["%d/%s" % (p["port"], p["process"]) for p in snap["ports"]]
-        draw.text((PAD, y),
-                  _fit(draw, "PORTS  " + "   ".join(bits), sub_font, col_w),
-                  font=sub_font, fill=C_DIM)
-        y += 56
+        # Drop trailing ports until the whole line fits: a cut "pyth"
+        # helps nobody, fewer complete entries do.
+        shown = list(snap["ports"])
+        while shown:
+            line = "PORTS  " + "   ".join(
+                "%d/%s" % (p["port"], p["process"]) for p in shown)
+            try:
+                fits = draw.textlength(line, font=sub_font) <= col_w
+            except Exception:
+                fits = len(line) <= 120
+            if fits:
+                break
+            shown.pop()
+        if shown:
+            draw.text((PAD, y), line, font=sub_font, fill=C_DIM)
+            y += 56
 
     # Footer: host uptime, and the poll error when stale (honest staleness).
     foot = snap["host_uptime"]
