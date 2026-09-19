@@ -7,7 +7,9 @@ After=systemd-user-sessions.service
 Type=simple
 User=root
 Environment=DISPLAYD_PORT=8980
-Environment=DISPLAYD_BIND=0.0.0.0
+# Loopback only by default, because the API has no authentication. To serve a
+# private network (a VPN or tailnet address) instead, add --bind <address> to
+# ExecStart below and firewall the port.
 ExecStart=/usr/bin/python3 /opt/displayd/displayd.py
 Restart=always
 RestartSec=2

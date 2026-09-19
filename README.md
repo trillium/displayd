@@ -65,17 +65,33 @@ both require it.
 
 ### Configuration
 
-Both are environment variables, set in the unit file:
+The defaults listen on **loopback only**. The API has no authentication, so
+binding it wider is a deliberate choice you make, not something the daemon does
+for you.
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `DISPLAYD_PORT` | `8980` | TCP port to listen on |
-| `DISPLAYD_BIND` | `0.0.0.0` | address to bind |
+| Flag | Variable | Default | Meaning |
+| --- | --- | --- | --- |
+| `--port` | `DISPLAYD_PORT` | `8980` | TCP port to listen on |
+| `--bind` | `DISPLAYD_BIND` | `127.0.0.1` | address to listen on |
 
-The default binds every interface. If the machine is reachable from anywhere you
-do not control, set `DISPLAYD_BIND` to the address you actually use — a loopback
-address behind a reverse proxy, or a private-network address such as a Tailscale
-one.
+Flags win over environment variables, and environment variables win over the
+defaults. To reach the daemon from another machine, bind the address you actually
+use and pair it with one of:
+
+* a **host firewall** that allows only the clients you expect, or
+* a **private network** — a VPN or a Tailscale address — so the port is never
+  reachable from the open internet.
+
+For example, to serve a Tailscale address:
+
+    displayd --bind 100.x.y.z
+
+or, in the unit file:
+
+    Environment=DISPLAYD_BIND=100.x.y.z
+
+Do not bind `0.0.0.0` on a machine reachable from an untrusted network: that
+publishes an unauthenticated control surface to everything that can route to it.
 
 ## API
 

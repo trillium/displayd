@@ -13,8 +13,12 @@ API
   POST /show    {"renderer":"name","params":{...}}
   POST /clear                        blank the screen to black
   POST /screen  {"power":"on"|"off"} also /screen/on and /screen/off
+
+The API has no authentication, so it listens on 127.0.0.1 by default.  Bind
+wider only deliberately -- see --bind / --port (or DISPLAYD_BIND / DISPLAYD_PORT).
 """
 
+import argparse
 import importlib.util
 import io
 import json
@@ -28,8 +32,11 @@ from PIL import Image
 FB = "/dev/fb0"
 FB_SYS = "/sys/class/graphics/fb0/"
 BACKLIGHT_GLOB = "/sys/class/backlight"
+# The API is unauthenticated, so the default is loopback only: reaching it from
+# another machine is a deliberate choice (--bind or DISPLAYD_BIND), and should be
+# paired with a host firewall or a private network such as a VPN or tailnet.
 PORT = int(os.environ.get("DISPLAYD_PORT", "8980"))
-BIND = os.environ.get("DISPLAYD_BIND", "0.0.0.0")
+BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
 RENDERER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "renderers")
 VT = os.environ.get("DISPLAYD_VT", "/dev/tty1")
 
@@ -484,10 +491,16 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     global DAEMON
+    parser = argparse.ArgumentParser(description="displayd - API-driven display server")
+    parser.add_argument("--bind", default=BIND,
+                        help="address to listen on (default: %(default)s, loopback only)")
+    parser.add_argument("--port", type=int, default=PORT,
+                        help="TCP port to listen on (default: %(default)s)")
+    args = parser.parse_args()
     DAEMON = DisplayDaemon()
     DAEMON.clear()
-    server = ThreadingHTTPServer((BIND, PORT), Handler)
-    print("displayd listening on %s:%d with %d renderer(s)" % (BIND, PORT, len(DAEMON.renderers)))
+    server = ThreadingHTTPServer((args.bind, args.port), Handler)
+    print("displayd listening on %s:%d with %d renderer(s)" % (args.bind, args.port, len(DAEMON.renderers)))
     try:
         server.serve_forever()
     finally:
