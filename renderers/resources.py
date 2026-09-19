@@ -202,8 +202,9 @@ def _poll_once(cfg, prev_cpu):
             if dev is not None:
                 seen_devs.add(dev)
             total_b = st.f_frsize * st.f_blocks
-            avail_b = st.f_frsize * st.f_bavail
-            used_b = max(0, total_b - avail_b)
+            # f_bfree (not f_bavail): matches `df` Used/Use% exactly, so the
+            # wall agrees with the terminal. Reserved blocks count as used.
+            used_b = max(0, total_b - st.f_frsize * st.f_bfree)
             disks.append({
                 "mount": mount,
                 "used": used_b,
@@ -386,16 +387,16 @@ def _draw(screen, title, bg):
     mem_line = "%s / %s GB" % (_gb(snap["mem_used"]), _gb(snap["mem_total"]))
     mem_frac = (float(snap["mem_used"]) / snap["mem_total"]) if snap["mem_total"] else 0.0
     draw.text((PAD, y + 30),
-              _fit(draw, mem_line, big_font, col_w - 620),
+              _fit(draw, mem_line, big_font, col_w - 500),
               font=big_font, fill=C_TEXT)
-    _bar(draw, PAD + 1180, y + 90, col_w - 1180, 44, mem_frac,
+    _bar(draw, PAD + 1300, y + 90, col_w - 1300, 44, mem_frac,
          C_OK if mem_frac < 0.8 else (C_WARN if mem_frac < 0.93 else C_BAD))
     if snap["swap_total"]:
         swap_line = "swap %s / %s GB" % (_gb(snap["swap_used"]), _gb(snap["swap_total"]))
     else:
         swap_line = "no swap"
-    draw.text((PAD + 1180, y + 150),
-              _fit(draw, swap_line, sub_font, col_w - 1180),
+    draw.text((PAD + 1300, y + 150),
+              _fit(draw, swap_line, sub_font, col_w - 1300),
               font=sub_font, fill=C_DIM)
     y += 260
     draw.line([(PAD, y), (screen.W - PAD, y)], fill=C_LINE, width=2)
