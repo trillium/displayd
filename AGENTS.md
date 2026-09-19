@@ -73,6 +73,10 @@ When updating this file, preserve this bar for all agents and keep entries conci
   `DISPLAYD_URL` env, no auth to configure); per-view/per-input tools are
   derived live from `GET /renderers`, so a new renderer file is new tools
   with no server change.
+- Feed health states live in `FeedStore` (`displayd.py`): cold/warm/stale/error
+  (`classify_health`; a failed push marks error until a later push succeeds).
+  `POST /show {"renderer": "feed_health"}` renders the dashboard
+  (`renderers/feed_health.py`, auto-refreshes every 5s).
 - Display feedback log is JSONL next to the daemon (`DISPLAYD_FEEDBACK`
   overrides) with per-note PNG frames in `<log>_frames/`; API is
   `POST`/`GET /feedback`, `GET /feedback/summary`, `GET /feedback/<id>`,
