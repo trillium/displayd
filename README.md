@@ -97,6 +97,7 @@ publishes an unauthenticated control surface to everything that can route to it.
 
 | Method | Path | Body | Meaning |
 | --- | --- | --- | --- |
+| GET | `/` | – | web control panel (live preview, renderer picker, power) |
 | GET | `/health` | – | liveness |
 | GET | `/state` | – | what is showing, screen power, display facts |
 | GET | `/renderers` | – | available renderers and their params |

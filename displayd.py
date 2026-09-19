@@ -6,6 +6,7 @@ small JSON API.  All content comes from renderer plugins dropped into
 renderers/ -- the core knows nothing about any particular one.
 
 API
+  GET  /                             web control page (this panel)
   GET  /health                       liveness
   GET  /state                        what is showing + screen power
   GET  /renderers                    available renderers and their params
@@ -423,6 +424,247 @@ class DisplayDaemon:
         return buf.getvalue()
 
 
+CONTROL_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>displayd control</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background: #111; color: #eee; font-family: system-ui, sans-serif;
+         max-width: 860px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4em; margin: 0 0 4px; }
+  h2 { font-size: 1.1em; margin-top: 24px; border-bottom: 1px solid #333;
+       padding-bottom: 4px; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .card { background: #1c1c1c; border: 1px solid #333; border-radius: 8px;
+          padding: 12px; flex: 1 1 240px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+         background: #666; margin-right: 6px; vertical-align: baseline; }
+  .dot.ok { background: #3d3; } .dot.bad { background: #f44; }
+  #preview { width: 100%; aspect-ratio: 16/9; background: #000; object-fit: contain;
+             border: 1px solid #333; border-radius: 8px; }
+  label { display: block; margin: 8px 0 2px; font-size: 0.9em; }
+  label .req { color: #f88; }
+  label .help { color: #999; font-size: 0.85em; display: block; }
+  input[type=text], input[type=number], select {
+    width: 100%; box-sizing: border-box; padding: 6px;
+    background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; }
+  button { padding: 8px 14px; margin: 8px 8px 0 0; cursor: pointer;
+           background: #2a5; color: #061; border: 0; border-radius: 4px;
+           font-weight: bold; }
+  button.warn { background: #a53; color: #fff; }
+  button.ghost { background: #333; color: #eee; }
+  #result { margin-top: 12px; min-height: 1.4em; font-size: 0.9em; color: #9cf; }
+  .meta { color: #aaa; font-size: 0.9em; }
+  code { background: #222; padding: 1px 5px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>displayd control</h1>
+<div class="meta"><span id="health" class="dot"></span><span id="healthtext">connecting&hellip;</span></div>
+
+<h2>Now showing</h2>
+<div class="row">
+  <div class="card">
+    <div>Renderer: <code id="cur-renderer">&ndash;</code></div>
+    <div>On screen for: <span id="cur-age">&ndash;</span></div>
+    <div>Power: <code id="cur-power">&ndash;</code></div>
+    <div>Backlight: <span id="cur-bl">&ndash;</span></div>
+    <div>Framebuffer blank: <code id="cur-blank">&ndash;</code></div>
+    <div>Last error: <span id="cur-err">none</span></div>
+  </div>
+  <div class="card">
+    <img id="preview" alt="live preview of the panel">
+  </div>
+</div>
+
+<h2>Show something</h2>
+<div class="card">
+  <label for="renderer">Renderer</label>
+  <select id="renderer"></select>
+  <div id="rdesc" class="meta"></div>
+  <div id="params"></div>
+  <button id="show">Show</button>
+  <button id="clear" class="ghost">Blank screen</button>
+</div>
+
+<h2>Screen power</h2>
+<div class="card">
+  <button id="pon">Turn on</button>
+  <button id="poff" class="warn">Turn off</button>
+  <span class="meta">Off darkens the backlight and blanks the framebuffer;
+  on restores both and repaints the last frame.</span>
+</div>
+
+<div id="result"></div>
+
+<script>
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const ct = r.headers.get("content-type") || "";
+  const body = ct.includes("json") ? await r.json() : await r.text();
+  if (!r.ok) throw new Error((body && body.error) || ("HTTP " + r.status));
+  return body;
+}
+function say(msg, isErr) {
+  const el = document.getElementById("result");
+  el.textContent = msg; el.style.color = isErr ? "#f88" : "#9cf";
+}
+let SCHEMAS = {};
+async function refreshState() {
+  try {
+    await api("/health");
+    const s = await api("/state");
+    document.getElementById("health").className = "dot ok";
+    document.getElementById("healthtext").textContent =
+      "healthy \u00b7 " + s.display.width + "x" + s.display.height +
+      " \u00b7 " + Object.keys(SCHEMAS).length + " renderers";
+    document.getElementById("cur-renderer").textContent = s.renderer || "(blank)";
+    document.getElementById("cur-age").textContent =
+      s.age_seconds == null ? "\u2013" : Math.round(s.age_seconds) + "s";
+    document.getElementById("cur-power").textContent = s.screen.power;
+    const bl = s.screen.backlight;
+    document.getElementById("cur-bl").textContent = bl.available
+      ? (bl.value + " / " + bl.max) : "no backlight device";
+    document.getElementById("cur-blank").textContent = s.screen.fb_blank;
+    const e = document.getElementById("cur-err");
+    e.textContent = s.last_error || "none";
+    e.style.color = s.last_error ? "#f88" : "";
+  } catch (err) {
+    document.getElementById("health").className = "dot bad";
+    document.getElementById("healthtext").textContent = "unreachable: " + err.message;
+  }
+}
+function buildParams(name) {
+  const box = document.getElementById("params");
+  box.innerHTML = "";
+  const schema = (SCHEMAS[name] && SCHEMAS[name].params) || {};
+  for (const [key, spec] of Object.entries(schema)) {
+    const t = (spec && spec.type) || "string";
+    const lab = document.createElement("label");
+    lab.htmlFor = "p_" + key;
+    lab.appendChild(document.createTextNode(key));
+    if (spec && spec.required) {
+      const r = document.createElement("span");
+      r.className = "req"; r.textContent = " *";
+      lab.appendChild(r);
+    }
+    if (spec && spec.help) {
+      const h = document.createElement("span");
+      h.className = "help"; h.textContent = spec.help + " (" + t + ")";
+      lab.appendChild(h);
+    }
+    box.appendChild(lab);
+    let inp;
+    if (t === "boolean") {
+      inp = document.createElement("input");
+      inp.type = "checkbox";
+    } else if (t === "integer" || t === "number") {
+      inp = document.createElement("input");
+      inp.type = "number";
+      if (t === "number") inp.step = "any";
+    } else {
+      inp = document.createElement("input");
+      inp.type = "text";
+    }
+    inp.id = "p_" + key;
+    inp.dataset.pname = key;
+    box.appendChild(inp);
+  }
+}
+async function refreshRenderers(keep) {
+  const data = await api("/renderers");
+  const sel = document.getElementById("renderer");
+  const prev = keep ? sel.value : null;
+  sel.innerHTML = "";
+  SCHEMAS = {};
+  for (const r of data.renderers) {
+    SCHEMAS[r.name] = r;
+    const o = document.createElement("option");
+    o.value = r.name;
+    o.textContent = r.broken ? (r.name + " (broken: " + r.broken + ")")
+                             : (r.name + (r.description ? (" \u2014 " + r.description) : ""));
+    if (r.broken) o.disabled = true;
+    sel.appendChild(o);
+  }
+  if (prev && SCHEMAS[prev]) sel.value = prev;
+  const showDesc = () => {
+    const r = SCHEMAS[sel.value];
+    document.getElementById("rdesc").textContent = r
+      ? ((r.static ? "static" : "animated") + (r.description ? (" \u00b7 " + r.description) : ""))
+      : "";
+    buildParams(sel.value);
+  };
+  sel.onchange = showDesc;
+  showDesc();
+}
+function collectParams(name) {
+  const schema = (SCHEMAS[name] && SCHEMAS[name].params) || {};
+  const out = {};
+  for (const [key, spec] of Object.entries(schema)) {
+    const el = document.getElementById("p_" + key);
+    if (!el) continue;
+    const t = (spec && spec.type) || "string";
+    if (t === "boolean") { out[key] = el.checked; continue; }
+    const v = el.value.trim();
+    if (v === "") continue;
+    if (t === "integer") { const n = parseInt(v, 10); if (!Number.isNaN(n)) out[key] = n; }
+    else if (t === "number") { const n = parseFloat(v); if (!Number.isNaN(n)) out[key] = n; }
+    else out[key] = v;
+  }
+  return out;
+}
+async function refreshPreview() {
+  const img = document.getElementById("preview");
+  try {
+    const r = await fetch("/snapshot?t=" + Date.now());
+    if (!r.ok) return;
+    const blob = await r.blob();
+    const old = img.src;
+    img.src = URL.createObjectURL(blob);
+    if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+  } catch (e) { /* preview is best-effort; state poll reports health */ }
+}
+document.getElementById("show").onclick = async () => {
+  const name = document.getElementById("renderer").value;
+  try {
+    await api("/show", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ renderer: name, params: collectParams(name) }) });
+    say("showing " + name);
+    refreshState(); refreshPreview();
+  } catch (err) { say("show failed: " + err.message, true); }
+};
+document.getElementById("clear").onclick = async () => {
+  try { await api("/clear", { method: "POST" }); say("screen blanked");
+    refreshState(); refreshPreview(); }
+  catch (err) { say("blank failed: " + err.message, true); }
+};
+document.getElementById("pon").onclick = async () => {
+  try { await api("/screen/on", { method: "POST" }); say("screen on"); refreshState(); }
+  catch (err) { say("power on failed: " + err.message, true); }
+};
+document.getElementById("poff").onclick = async () => {
+  try { await api("/screen/off", { method: "POST" }); say("screen off"); refreshState(); }
+  catch (err) { say("power off failed: " + err.message, true); }
+};
+(async function init() {
+  try { await refreshRenderers(false); }
+  catch (err) { say("could not load renderers: " + err.message, true); }
+  await refreshState();
+  refreshPreview();
+  setInterval(refreshState, 2000);
+  setInterval(refreshPreview, 2000);
+  setInterval(() => refreshRenderers(true), 15000);
+})();
+</script>
+</body>
+</html>
+"""
+
+
 DAEMON = None
 
 
@@ -451,6 +693,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        if path in ("/", "/index.html"):
+            return self._send(200, CONTROL_PAGE.encode("utf-8"), "text/html; charset=utf-8")
         if path in ("/health", "/healthz"):
             return self._send(200, {"ok": True})
         if path == "/state":
