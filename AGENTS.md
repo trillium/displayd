@@ -55,3 +55,17 @@ When updating this file, preserve this bar for all agents and keep entries conci
   health. Feedback never resets the idle clock.
 - Headless testing: `DISPLAYD_FAKE_FB=1` selects the in-memory framebuffer
   double (CI/local demos only; never set on the host).
+
+## Chat view and Firebot bridge (v1)
+
+- `renderers/chat.py` renders the rolling window; feed it with
+  `POST /feed/chat/message` (`{author, text, ...}`) and retract with
+  `POST /feed/chat/delete` (`{messageId}`). Schemas advertised in
+  `GET /renderers`; `/state` shows feed health plus last-switch timings.
+- `bridges/firebot_chat.py` (stdlib only) subscribes to Firebot's overlay WS
+  at `ws://100.74.138.74:7472` and pushes across the tailnet. Runs as the
+  `firebot-chat-bridge` system unit (see `bridges/*.service`); the unit file
+  is deployed by copying to `/etc/systemd/system` + `daemon-reload`.
+- Deploy is `rsync` of the repo to `~/displayd` (no git there), then
+  `sudo systemctl restart displayd`. Chat is quiet late at night: an empty
+  panel with "waiting for chat" is the healthy idle state, not a bug.

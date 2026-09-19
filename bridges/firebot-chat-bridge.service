@@ -1,0 +1,20 @@
+[Unit]
+Description=firebot-chat bridge - Firebot Surrey Hills, NC 27030 chat to displayd feed
+Documentation=file:/home/trillium/displayd/bridges/firebot_chat.py
+After=network-online.target displayd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trillium
+Environment=FIREBOT_HOST=100.74.138.74
+Environment=FIREBOT_PORT=7472
+Environment=DISPLAYD_BASE=http://100.81.88.113:8980
+ExecStart=/usr/bin/python3 /home/trillium/displayd/bridges/firebot_chat.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

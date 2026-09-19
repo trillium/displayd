@@ -131,7 +131,24 @@ Save a picture of the current screen:
     curl -s localhost:8980/snapshot -o screen.png
 
 Every mutating call returns the new `/state` payload, so a caller never has to
-poll to find out what happened.
+poll to find out what happened. `/state` also carries `feeds` (per-input
+buffer counts, last-update age, and `cold`/`warm`/`stale` health) and `switch`
+(request-to-first-pixel and request-to-fresh-frame timings in milliseconds).
+
+## Feeds: pushing live data into a view
+
+`PARAMS` is what a client supplies to *select* a view. `INPUTS` is the
+mirror: what a client may push *into* a view while it runs. Both are
+advertised by `GET /renderers`, and pushes go to `POST /feed/<renderer>/<input>`:
+
+    curl -s -X POST localhost:8980/feed/chat/message -H 'Content-Type: application/json' \
+      -d '{"author":"someone","text":"hello wall"}'
+
+A payload is validated against the input schema and rejected with HTTP 400 if
+it does not fit -- without disturbing whatever is on screen. Inputs buffer
+even while their view is not selected, so switching to the view later is
+instantly populated. A renderer that declares no `INPUTS` behaves exactly as
+it always has.
 
 ## MCP server (`mcp_server.py`)
 
@@ -174,6 +191,7 @@ evidence for later human-guided work, not a control loop.
 | `clock` | no | `format`, `color`, `background` |
 | `life` | no | `cell`, `density`, `speed` |
 | `notice` | yes | `title` (required), `body`, `severity` (`info`/`warn`/`critical`), `color`, `background` |
+| `chat` | no | `title`, `lines` (default 7), `background` — inputs: `message`, `delete` |
 
 Static renderers draw one frame and return; that frame stays on screen.
 Animated renderers loop until the daemon stops them.
@@ -226,6 +244,7 @@ That is the whole extension step. No core edits, no registration, no config.
 | `DESCRIPTION` | no | shown in `GET /renderers` |
 | `STATIC` | no | `True` (default) draws once; `False` loops until `stop` is set |
 | `PARAMS` | no | parameter schema, surfaced verbatim by `GET /renderers` |
+| `INPUTS` | no | feed schema (`{name: {type, required, properties, buffer, help}}`); pushed payloads are validated and buffered |
 | `run(screen, params, stop)` | yes | does the drawing |
 
 `screen` is the handle to the physical display:
@@ -236,10 +255,36 @@ That is the whole extension step. No core edits, no registration, no config.
 * `screen.clear(rgb)` — fill the screen
 * `screen.color(value, default)` — parse `#rgb`, `#rrggbb`, a colour name, or an `(r,g,b)` tuple
 * `screen.font_path(family)` — locate a TrueType font, or `None` if absent
+* `screen.get_input(renderer, name)` — buffered feed payloads, oldest first
+  (empty list when nothing has arrived yet)
+
+Feed buffers live in the daemon, not in the renderer, so inputs pushed while
+another view is selected are still there when this view is selected later.
+Compose one complete PIL image and hand it over with a single
+`screen.present(img)` call -- never draw incrementally to the screen.
 
 A renderer that raises is recorded in `/state` under `last_error` and does not
 take the daemon down; a plugin that fails to import is reported against its own
 name by `GET /renderers`. Neither stops the other renderers from working.
+
+## Bridges: feeding views from the outside world
+
+The daemon never speaks vendor protocols -- bridges do. A bridge is a small
+separate process that subscribes to some external source and pushes plain
+payloads into `POST /feed/<renderer>/<input>`. It owns credentials,
+reconnection, and backoff; the daemon owns pixels.
+
+`bridges/firebot_chat.py` (stdlib only) subscribes to Firebot's overlay
+WebSocket on the captain's MacBook and forwards enriched chat:
+
+    ws://<firebot-host>:7472/  --WS-->  bridge  --HTTP-->  displayd
+
+It sends the `overlay-connected` hello on every (re)connect (Firebot drops
+unregistered sockets after ~5 s), reconnects with backoff, dedupes on
+message id, and forwards retractions to `/feed/chat/delete`. No credential:
+the socket needs none. It runs as its own unit:
+
+    sudo systemctl enable --now firebot-chat-bridge
 
 ## Screen power
 
