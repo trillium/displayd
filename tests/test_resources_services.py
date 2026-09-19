@@ -206,6 +206,18 @@ class TestServicesSnapshot(unittest.TestCase):
         self.assertEqual(len(ports), len(set(ports)))
         self.assertNotIn(56680, ports)
 
+    def test_priority_ports_come_first(self):
+        payload = self._payload()
+        payload["listeners"] = [
+            {"address": "0.0.0.0", "port": 9999, "process": "zzz"},
+            {"address": "0.0.0.0", "port": 8181, "process": "python3"},
+            {"address": "0.0.0.0", "port": 8980, "process": "python3"},
+            {"address": "0.0.0.0", "port": 1111, "process": "aaa"},
+        ]
+        snap = services._build_snapshot(payload, "")
+        self.assertEqual([p["port"] for p in snap["ports"]],
+                         [8181, 8980, 1111, 9999])
+
     def test_malformed_payloads_raise(self):
         for bad in (None, [], {}, {"services": "nope"}, {"services": None}):
             with self.assertRaises(ValueError):

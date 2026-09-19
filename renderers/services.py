@@ -158,17 +158,15 @@ def _build_snapshot(data, watch):
         })
 
     # Notable listening ports: dedupe by port (0.0.0.0:22 and [::]:22 are
-    # one line on a wall), skip ephemeral tailscale noise, cap at 8.
+    # one line on a wall), skip ephemeral tailscale noise, cap at 8. The
+    # panel's own neighbours come first: when the wall runs out of room
+    # it is the high-numbered strangers that drop off, never these.
+    PRIORITY = (8181, 8980, 7080, 22, 53, 631, 443)
     seen_ports, ports = set(), []
-    try:
-        ordered = sorted(
-            (l for l in listeners if isinstance(l, dict)),
-            key=lambda l: (int(l.get("port") or 0) >= 30000,
-                           int(l.get("port") or 0)),
-        )
-    except (TypeError, ValueError):
-        ordered = [l for l in listeners if isinstance(l, dict)]
-    for l in ordered:
+    valid = []
+    for l in listeners:
+        if not isinstance(l, dict):
+            continue
         try:
             port = int(l.get("port") or 0)
         except (TypeError, ValueError):
@@ -176,10 +174,14 @@ def _build_snapshot(data, watch):
         if not port or port in seen_ports or port >= 30000:
             continue
         seen_ports.add(port)
-        ports.append({"port": port,
+        valid.append({"port": port,
                       "process": str(l.get("process") or "?")[:24]})
-        if len(ports) >= 8:
-            break
+    def _rank(p):
+        try:
+            return PRIORITY.index(p["port"])
+        except ValueError:
+            return len(PRIORITY) + p["port"] / 100000.0
+    ports = sorted(valid, key=_rank)[:8]
 
     return {
         "up": up,
