@@ -63,9 +63,16 @@ When updating this file, preserve this bar for all agents and keep entries conci
   `POST /feed/chat/delete` (`{messageId}`). Schemas advertised in
   `GET /renderers`; `/state` shows feed health plus last-switch timings.
 - `bridges/firebot_chat.py` (stdlib only) subscribes to Firebot's overlay WS
-  at `ws://100.74.138.74:7472` and pushes across the tailnet. Runs as the
-  `firebot-chat-bridge` system unit (see `bridges/*.service`); the unit file
-  is deployed by copying to `/etc/systemd/system` + `daemon-reload`.
+  and pushes across the tailnet. The durable home is a Mac LaunchAgent,
+  `com.displayd.firebot-chat-bridge` (plist template in `bridges/`, installed
+  in `~/Library/LaunchAgents`, logs in `~/Library/Logs/`), pointed at
+  `ws://127.0.0.1:7472` since Firebot runs on the MacBook. KeepAlive re-arms
+  it after crashes; its own reconnect loop survives Firebot restarts. The
+  older lnx-server systemd unit (`bridges/*.service`) is retired -- one
+  writer only, or messages double-post.
+- IMPORTANT: the installed plist points at the displayd checkout that holds
+  the script. Repoint `ProgramArguments` to the merged main checkout path
+  whenever the code moves worktrees, then `launchctl kickstart`.
 - Deploy is `rsync` of the repo to `~/displayd` (no git there), then
   `sudo systemctl restart displayd`. Chat is quiet late at night: an empty
   panel with "waiting for chat" is the healthy idle state, not a bug.

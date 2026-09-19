@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.displayd.firebot-chat-bridge — always-on Firebot -> displayd bridge.
+
+  Install: replace __DISPLAYD_DIR__ with the displayd checkout path, copy to
+  ~/Library/LaunchAgents/, then `launchctl bootstrap gui/$UID <file>`.
+  After firstmate merges the chat branch to local main, the canonical path is
+  /Users/trilliumsmith/code/firstmate/projects/displayd.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.displayd.firebot-chat-bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__DISPLAYD_DIR__/bridges/firebot_chat.py</string>
+    <string>--firebot-host</string>
+    <string>127.0.0.1</string>
+    <string>--displayd</string>
+    <string>http://100.81.88.113:8980</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/trilliumsmith/Library/Logs/firebot-chat-bridge.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/trilliumsmith/Library/Logs/firebot-chat-bridge.log</string>
+</dict>
+</plist>
