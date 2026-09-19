@@ -150,10 +150,28 @@ class TestCard(unittest.TestCase):
             common._POLL.update(snapshot=snap, updated=time.time(),
                                 health="warm", source="test")
         screen = FakeScreen()
-        detail._draw_empty(screen, "task-nope", "warm", time.time(), None,
-                           (8, 8, 12), "hint")
+        detail._draw_empty(screen, "no such bead: task-nope", "hint",
+                           None, (8, 8, 12))
         self.assertTrue(screen.frames)
         self.assertTrue(any(screen.frames[-1].tobytes()))
+
+    def test_cold_cache_never_claims_no_such_bead(self):
+        # The wall lie that caused the confusion: snap None + focus set
+        # must admit the poll has not returned, never slander the bead.
+        msg, hint = detail.empty_state("task-nh3y", None, 0)
+        self.assertIn("looking for task-nh3y", msg)
+        self.assertNotIn("no such bead", msg)
+        self.assertIn("waiting for first poll", hint)
+
+    def test_empty_states(self):
+        msg, _ = detail.empty_state(None, None, 0)
+        self.assertIn("no bead selected", msg)
+        snap = snap_of(AC7W)
+        msg, _ = detail.empty_state(None, snap, time.time())
+        self.assertIn("no bead selected", msg)
+        msg, hint = detail.empty_state("task-nope", snap, time.time())
+        self.assertIn("no such bead: task-nope", msg)
+        self.assertIn("still looking", hint)
 
     def test_run_presents_without_data(self):
         screen = FakeScreen()

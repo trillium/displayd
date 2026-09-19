@@ -246,16 +246,12 @@ def _draw_card(screen, issue, bucket, waiters, dependents, snap,
     screen.present(img)
 
 
-def _draw_empty(screen, target, health, updated, error, bg, hint):
+def _draw_empty(screen, msg, hint, error, bg):
     img = screen.new_image(bg)
     draw = ImageDraw.Draw(img)
     row_font = _font(screen, "DejaVuSans", ROW_SIZE)
     small_font = _font(screen, "DejaVuSans", SMALL_SIZE)
     plain = row_font
-    if target:
-        msg = "no such bead: %s" % target
-    else:
-        msg = "no bead selected \u2014 POST /show {\"renderer\":\"beads-detail\", \"params\":{\"focus\":\"<id>\"}}"
     draw.text((PAD, 220), _fit(draw, msg, row_font, screen.W - 2 * PAD),
               font=plain, fill=C_DIM)
     draw.text((PAD, 300), _fit(draw, hint, small_font, screen.W - 2 * PAD),
@@ -266,6 +262,25 @@ def _draw_empty(screen, target, health, updated, error, bg, hint):
                        screen.W - 2 * PAD),
                   font=small_font or plain, fill=(255, 90, 90))
     screen.present(img)
+
+
+def empty_state(target, snap, updated):
+    """The honest empty card, as (headline, subline). Pure: unit-tested.
+
+    The rule that matters: a missing snapshot means the poll has not
+    returned, never that the bead does not exist."""
+    select_hint = ("no bead selected \u2014 POST /show {\"renderer\":\"beads-detail\", "
+                   "\"params\":{\"focus\":\"<id>\"}}")
+    if snap is None:
+        if target:
+            return ("looking for %s \u2026" % target,
+                    "waiting for first poll \u2014 mirrors or store export")
+        return (select_hint,
+                "waiting for first poll \u2014 mirrors or store export")
+    if not target:
+        return (select_hint, _age(updated))
+    return ("no such bead: %s" % target,
+            "still looking \u2014 %s" % _age(updated))
 
 
 def _snapshot_key(target):
@@ -303,18 +318,14 @@ def run(screen, params, stop):
             # Not in the mirror (or no mirror yet): fetch live in a worker.
             # The draw below still goes up immediately from cache.
             common.request_focus(target, store_list)
-        if snap is None:
-            _draw_empty(screen, target, health, updated, error, bg,
-                        "waiting for first poll \u2014 mirrors or store export")
-            return
-        if not target:
-            _draw_empty(screen, None, health, updated, error, bg,
-                        _age(updated))
+        if snap is None or not target:
+            msg, hint = empty_state(target, snap, updated)
+            _draw_empty(screen, msg, hint, error, bg)
             return
         issue, _ = common.resolve_focus(target, snap)
         if issue is None:
-            _draw_empty(screen, target, health, updated, error, bg,
-                        "still looking \u2014 %s" % _age(updated))
+            msg, hint = empty_state(target, snap, updated)
+            _draw_empty(screen, msg, hint, error, bg)
             return
         bucket, waiters = common.bucket_of(issue, snap)
         dependents = common.dependents_of(issue, snap)
