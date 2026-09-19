@@ -23,3 +23,18 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Restarting the daemon blanks the screen (`DisplayDaemon.clear()` on boot),
   so always `POST /show` afterwards; verify backlight value restores on power
   round-trips and never leave the panel black.
+
+## Autonomous behaviour (policy layer)
+
+- One module owns it: `policy.py` (activity clock, transient switch/return,
+  idle-off decision, persisted config). Daemon actuators live in
+  `displayd.py`; transient view is `renderers/notice.py`.
+- API: `POST /notify`, `POST /feed/<renderer>/<input>`, `GET`/`POST /policy`
+  (all on the control page too). Only mutating POSTs count as activity;
+  `GET` polling never resets the idle clock.
+- Priority: notice > chat-attention > idle-off; manual `/show`/`/clear`
+  cancels every transient. Chat-attention and idle-off are OFF by default.
+- Backlight restore is floored (task-i0agw): dimmed readings (<10% of max)
+  are never saved, and a too-low restore target falls back to max.
+- Policy config persists in `policy.json` next to the daemon
+  (`DISPLAYD_POLICY` overrides); feed buffers do not persist.

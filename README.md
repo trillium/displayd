@@ -103,6 +103,10 @@ publishes an unauthenticated control surface to everything that can route to it.
 | GET | `/renderers` | – | available renderers and their params |
 | GET | `/snapshot` | – | PNG of the last frame presented |
 | POST | `/show` | `{"renderer":"text","params":{...}}` | switch content |
+| POST | `/feed/<renderer>/<input>` | any JSON payload | push validated data into a view |
+| POST | `/notify` | `{"title":...}`, `body`?, `severity`? (`info`/`warn`/`critical`), `duration`? | transient notice, then automatic return |
+| GET | `/policy` | – | autonomous-behaviour config + activity clock |
+| POST | `/policy` | `{"idle":{...},"chat_attention":{...},"notifications":{...}}` | update policy (persisted) |
 | POST | `/clear` | – | blank the screen to black |
 | POST | `/screen` | `{"power":"on"\|"off"}` | screen power |
 | POST | `/screen/on`, `/screen/off` | – | screen power shorthand |
@@ -132,6 +136,7 @@ poll to find out what happened.
 | `solid` | yes | `color` |
 | `clock` | no | `format`, `color`, `background` |
 | `life` | no | `cell`, `density`, `speed` |
+| `notice` | yes | `title` (required), `body`, `severity` (`info`/`warn`/`critical`), `color`, `background` |
 
 Static renderers draw one frame and return; that frame stays on screen.
 Animated renderers loop until the daemon stops them.
@@ -211,7 +216,36 @@ whatever is showing:
 
 The daemon and its renderer keep running across a power cycle; only the panel
 goes dark. The brightness value in use before the first power-off is what gets
-restored.
+restored. Only a readable level is ever remembered: a dimmed or near-zero
+reading (under 10% of max) is never captured as the restore target, and a
+restore target that low falls back to full brightness.
+
+## Autonomous behaviour (policy layer)
+
+The daemon is reactive by default -- it changes only on API calls. The
+policy layer (`policy.py`, one module) owns the three ways it acts alone:
+
+* **Notifications** — `POST /notify` shows the `notice` view for `duration`
+  seconds (default from policy), then returns to whatever was showing.
+  Cheap switch-then-return, not composition: it interrupts the current
+  view. That is the documented approximation of ISA decision D6 option B.
+* **Chat attention** — off by default. When enabled, a feed push to the
+  configured view+input (`POST /feed/chat/message`) pulls the panel to the
+  chat view for `return_after` seconds (re-armed per message), then back.
+* **Idle-off** — off by default. When enabled, no mutating API or feed
+  activity for `after_seconds` blanks the panel (backlight to 0); any
+  mutating activity wakes it and restores brightness. Observation (`GET`
+  requests, including the control page's poll) is not activity.
+
+One mechanism serves the first two: a transient switch with a single-level
+return to the last manual selection. Priority is explicit: notice beats
+chat-attention; idle-off fires only when no transient is active. Any manual
+`/show` or `/clear` cancels every in-flight transient -- the manual choice
+wins, and a late timer can never clobber it.
+
+All three are configured over `GET`/`POST /policy` (and the control page)
+and persisted to `policy.json` next to the daemon (`DISPLAYD_POLICY`
+overrides the path), so they survive a restart.
 
 ## The console
 

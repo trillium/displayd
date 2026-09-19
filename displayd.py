@@ -12,6 +12,10 @@ API
   GET  /renderers                    available renderers and their params
   GET  /snapshot                     PNG of the last presented frame
   POST /show    {"renderer":"name","params":{...}}
+  POST /feed/<renderer>/<input>  push a validated payload into a view
+  POST /notify  {"title":...,"body"?,"severity"?,"duration"?} transient notice
+  GET  /policy  autonomous-behaviour config + activity clock
+  POST /policy  {"idle":{...},"chat_attention":{...},"notifications":{...}}
   POST /clear                        blank the screen to black
   POST /screen  {"power":"on"|"off"} also /screen/on and /screen/off
 
@@ -20,6 +24,7 @@ wider only deliberately -- see --bind / --port (or DISPLAYD_BIND / DISPLAYD_PORT
 """
 
 import argparse
+import collections
 import importlib.util
 import io
 import json
@@ -29,6 +34,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from PIL import Image
+
+import policy as policy_module
 
 FB = "/dev/fb0"
 FB_SYS = "/sys/class/graphics/fb0/"
@@ -40,6 +47,10 @@ PORT = int(os.environ.get("DISPLAYD_PORT", "8980"))
 BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
 RENDERER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "renderers")
 VT = os.environ.get("DISPLAYD_VT", "/dev/tty1")
+POLICY_FILE = os.environ.get(
+    "DISPLAYD_POLICY",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "policy.json"),
+)
 
 KDSETMODE = 0x4B3A
 KD_TEXT = 0x00
@@ -168,6 +179,22 @@ class Framebuffer:
             time.sleep(0.15)
         return False
 
+    # A dimmed or near-zero reading is never a sane restore target: only
+    # preserve a value bright enough to actually read (task-i0agw -- the
+    # daemon used to capture the dimmed value, leaving the panel near-black
+    # after an on/off cycle). Floor is 10% of max, minimum 1.
+    def _preserve_floor(self):
+        maxv = self._read_int(os.path.join(self.backlight, "max_brightness")) or 100
+        return max(1, maxv // 10)
+
+    def _restore_target(self):
+        maxv = self._read_int(os.path.join(self.backlight, "max_brightness")) or 100
+        floor = self._preserve_floor()
+        saved = self.saved_brightness
+        if saved and saved >= floor:
+            return saved
+        return maxv
+
     def set_blank(self, value):
         try:
             with open(FB_SYS + "blank", "w") as fh:
@@ -184,7 +211,7 @@ class Framebuffer:
         result = {"fb_blank": False, "backlight": False}
         if self.backlight:
             current = self._read_int(os.path.join(self.backlight, "brightness"))
-            if current and current > 0:
+            if current and current >= self._preserve_floor():
                 self.saved_brightness = current
             result["backlight"] = self.set_brightness(0)
         result["fb_blank"] = self.set_blank(4)
@@ -196,10 +223,7 @@ class Framebuffer:
         result = {"fb_blank": False, "backlight": False, "repaint": False}
         result["fb_blank"] = self.set_blank(0)
         if self.backlight:
-            restore = self.saved_brightness or (
-                self._read_int(os.path.join(self.backlight, "max_brightness")) or 100
-            )
-            result["backlight"] = self.set_brightness(restore)
+            result["backlight"] = self.set_brightness(self._restore_target())
         self.blanked = False
         self.repaint()
         result["repaint"] = self.last_frame is not None
@@ -237,15 +261,30 @@ class Screen:
         self.fb = fb
         self.W = fb.width
         self.H = fb.height
+        self.present_lock = threading.Lock()
+        self.feeds = None  # wired by DisplayDaemon to its FeedStore
+        self.current_view = None
 
     def new_image(self, background=(0, 0, 0)):
         return Image.new("RGB", (self.W, self.H), background)
 
     def present(self, img):
-        self.fb.present(img)
+        with self.present_lock:
+            self.fb.present(img)
 
     def clear(self, background=(0, 0, 0)):
-        self.fb.present(self.new_image(background))
+        self.present(self.new_image(background))
+
+    def get_input(self, renderer, input_name):
+        """Buffered payloads pushed to (renderer, input), oldest first.
+        Empty when nothing has arrived yet -- renderers must handle that."""
+        store = self.feeds
+        if store is None:
+            return []
+        try:
+            return store.get(renderer, input_name)
+        except Exception:
+            return []
 
     @classmethod
     def color(cls, value, default=(255, 255, 255)):
@@ -301,17 +340,168 @@ def load_renderers(directory):
             "module": mod,
             "description": getattr(mod, "DESCRIPTION", ""),
             "params": getattr(mod, "PARAMS", {}),
+            "inputs": getattr(mod, "INPUTS", {}),
             "static": getattr(mod, "STATIC", True),
         }
     return found
 
 
-class DisplayDaemon:
+INPUT_TYPES = {"string", "integer", "number", "boolean", "object", "array"}
+
+
+def _type_ok(value, typename):
+    if typename == "string":
+        return isinstance(value, str)
+    if typename == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if typename == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if typename == "boolean":
+        return isinstance(value, bool)
+    if typename == "object":
+        return isinstance(value, dict)
+    if typename == "array":
+        return isinstance(value, (list, tuple))
+    return False
+
+
+def validate_value(value, spec, where="value"):
+    """Validate a feed payload (or a selection param) against one schema
+    spec. Raises ValueError on mismatch. Unknown object keys are allowed so
+    enriched payloads keep passing when the sender adds a field."""
+    if not isinstance(spec, dict):
+        raise ValueError("%s: bad schema spec" % where)
+    typename = spec.get("type", "string")
+    if typename not in INPUT_TYPES:
+        raise ValueError("%s: unknown type %r" % (where, typename))
+    if not _type_ok(value, typename):
+        raise ValueError("%s: expected %s, got %s"
+                         % (where, typename, type(value).__name__))
+    if typename == "object":
+        for key in spec.get("required") or []:
+            if key not in value:
+                raise ValueError("%s: missing required field %r" % (where, key))
+        for key, subspec in (spec.get("properties") or {}).items():
+            if key in value:
+                validate_value(value[key], subspec, "%s.%s" % (where, key))
+    if typename == "array" and "items" in spec:
+        for i, item in enumerate(value):
+            validate_value(item, spec["items"], "%s[%d]" % (where, i))
+
+
+def validate_params(params, schema):
+    """Selection-time check: required params present, supplied params typed.
+    Unknown params are ignored (forward compatibility)."""
+    params = params or {}
+    if not isinstance(params, dict):
+        raise ValueError("params must be an object")
+    for key, spec in (schema or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        if spec.get("required") and key not in params:
+            raise ValueError("missing required param %r" % key)
+        if key in params:
+            validate_value(params[key], spec, "param %r" % key)
+    return params
+
+
+class FeedStore:
+    """Background feed cache: what bridges push into running views.
+
+    Pushes never touch the draw path -- they append to an in-memory deque
+    under a short lock, so a switch or a draw never awaits I/O. A view that
+    is not currently selected still accumulates inputs, so selecting it later
+    is instantly populated. No framebuffer needed; unit-testable."""
+
+    DEFAULT_BUFFER = 100
+    STALE_AFTER = 300.0  # seconds without a push before health reads "stale"
+
     def __init__(self):
+        self._lock = threading.Lock()
+        self._data = {}  # (renderer, input) -> {values, updated_at}
+
+    @classmethod
+    def _buffer_for(cls, spec):
+        try:
+            return max(1, int((spec or {}).get("buffer", cls.DEFAULT_BUFFER)))
+        except (TypeError, ValueError):
+            return cls.DEFAULT_BUFFER
+
+    def declare(self, renderer, input_name, spec):
+        """Register an input so it shows up as cold before anything arrives."""
+        with self._lock:
+            entry = self._data.get((renderer, input_name))
+            if entry is None:
+                self._data[(renderer, input_name)] = {
+                    "values": collections.deque(maxlen=self._buffer_for(spec)),
+                    "updated_at": None,
+                }
+
+    def push(self, renderer, input_name, payload, spec):
+        validate_value(payload, spec or {}, "%s.%s" % (renderer, input_name))
+        with self._lock:
+            entry = self._data.get((renderer, input_name))
+            if entry is None:
+                entry = {"values": collections.deque(maxlen=self._buffer_for(spec)),
+                         "updated_at": None}
+                self._data[(renderer, input_name)] = entry
+            entry["values"].append(payload)
+            entry["updated_at"] = time.time()
+            return {"count": len(entry["values"]), "updated_at": entry["updated_at"]}
+
+    def get(self, renderer, input_name):
+        """Buffered payloads, oldest first. Never blocks on I/O."""
+        with self._lock:
+            entry = self._data.get((renderer, input_name))
+            if entry is None:
+                return []
+            return list(entry["values"])
+
+    def snapshot(self):
+        """Per-feed last-known value metadata for /state."""
+        now = time.time()
+        with self._lock:
+            items = list(self._data.items())
+        out = {}
+        for (renderer, input_name), entry in items:
+            updated = entry["updated_at"]
+            if updated is None:
+                health, age = "cold", None
+            else:
+                age = round(now - updated, 1)
+                health = "warm" if age < self.STALE_AFTER else "stale"
+            out.setdefault(renderer, {})[input_name] = {
+                "count": len(entry["values"]),
+                "updated_at": updated,
+                "age_seconds": age,
+                "health": health,
+            }
+        return out
+
+
+class DisplayDaemon:
+    def __init__(self, policy_path=None, clock=None):
         self.fb = Framebuffer()
         self.screen = Screen(self.fb)
         self.renderers = load_renderers(RENDERER_DIR)
         self.lock = threading.Lock()
+        self.feeds = FeedStore()
+        self.screen.feeds = self.feeds
+        for name, entry in self.renderers.items():
+            if "module" not in entry:
+                continue
+            for input_name, spec in (entry.get("inputs") or {}).items():
+                self.feeds.declare(name, input_name, spec)
+        # Policy layer: activity clock, transient switching, idle-off.
+        # Only mutating POSTs touch the clock -- GETs (including the
+        # control page's 2s state/snapshot poll) are observation, not
+        # activity, or idle-off could never fire while the page is open.
+        self.policy = policy_module.Policy(
+            policy_path if policy_path is not None else POLICY_FILE,
+            clock=clock)
+        self.transient_timer = None
+        self.watchdog_stop = threading.Event()
+        self.watchdog_thread = None
         self.stop_event = None
         self.thread = None
         self.current = None
@@ -333,7 +523,13 @@ class DisplayDaemon:
         except Exception as err:
             self.last_error = "%s: %s" % (type(err).__name__, err)
 
-    def show(self, name, params):
+    def _start_view(self, name, params):
+        """Put a view on screen without touching policy state.
+
+        Manual entries (show/clear) go through the public methods, which
+        record the base view and cancel transients first. Transient entries
+        and returns come here directly, so a timer firing can never rewrite
+        the base view or defeat a manual selection."""
         entry = self.renderers.get(name)
         if not entry or "module" not in entry:
             raise KeyError("unknown renderer: %s" % name)
@@ -344,19 +540,79 @@ class DisplayDaemon:
             self.current = name
             self.started_at = time.time()
             self.last_error = None
+            self.screen.current_view = name
             self.thread = threading.Thread(
                 target=self._run, args=(entry, params or {}, stop), daemon=True
             )
             self.thread.start()
         return self.state()
 
-    def clear(self):
+    def _clear_internal(self):
         with self.lock:
             self._stop_locked()
             self.current = None
             self.started_at = None
+            self.screen.current_view = None
         self.screen.clear()
         return self.state()
+
+    def _cancel_transient_timer(self):
+        timer, self.transient_timer = self.transient_timer, None
+        if timer is not None:
+            try:
+                timer.cancel()
+            except Exception:
+                pass
+
+    def _arm_transient(self, kind, token, duration):
+        self._cancel_transient_timer()
+        timer = threading.Timer(duration, self._transient_expired,
+                                  args=(kind, token))
+        timer.daemon = True
+        self.transient_timer = timer
+        timer.start()
+
+    def _transient_expired(self, kind, token):
+        """Return timer fired: restore the base view only if nothing
+        manual happened since (generation check inside end_transient)."""
+        base, ok = self.policy.end_transient(kind, token)
+        if not ok:
+            return
+        try:
+            if base is None:
+                self._clear_internal()
+            else:
+                self._start_view(base["renderer"], base["params"])
+        except (KeyError, ValueError):
+            pass
+
+    def _wake_if_idle(self):
+        """Activity arrived while idle-off held the panel dark: power back
+        on and repaint. Manual power-off is NOT woken -- the operator owns
+        that state; only the watchdog's own power-off auto-wakes."""
+        if self.policy.idle_off and self.fb.blanked:
+            self.fb.power_on()
+            self.policy.idle_off = False
+
+    def show(self, name, params):
+        entry = self.renderers.get(name)
+        if not entry or "module" not in entry:
+            raise KeyError("unknown renderer: %s" % name)
+        # Validate before touching what is on screen: a bad selection is
+        # rejected and the current view keeps running undisturbed.
+        validate_params(params or {}, entry.get("params") or {})
+        self.policy.note_select(name, params)
+        with self.lock:
+            self._cancel_transient_timer()
+            self._wake_if_idle()
+        return self._start_view(name, params)
+
+    def clear(self):
+        self.policy.note_clear()
+        with self.lock:
+            self._cancel_transient_timer()
+            self._wake_if_idle()
+        return self._clear_internal()
 
     def _stop_locked(self):
         if self.stop_event is not None:
@@ -364,13 +620,172 @@ class DisplayDaemon:
         self.thread = None
         self.stop_event = None
 
+    # ---- feeds + policy-driven behaviour -------------------------------
+
+    def feed(self, renderer, input_name, payload):
+        """Deliver a validated payload to a view's buffer, then consult
+        the policy: a chat event may pull the panel to the chat view.
+        Pure cache write first -- never disturbs what is on screen.
+        Raises KeyError (unknown renderer/input) or ValueError (schema
+        mismatch); both map to HTTP errors without side effects."""
+        entry = self.renderers.get(renderer)
+        if not entry or "module" not in entry:
+            raise KeyError("unknown renderer: %s" % renderer)
+        spec = (entry.get("inputs") or {}).get(input_name)
+        if spec is None:
+            raise KeyError("unknown input: %s.%s" % (renderer, input_name))
+        pushed = self.feeds.push(renderer, input_name, payload, spec)
+        self.policy.note_feed()
+        with self.lock:
+            self._wake_if_idle()
+        return {"feed": pushed,
+                "attention": self._maybe_attention(renderer, input_name)}
+
+    def _maybe_attention(self, fed_renderer, fed_input):
+        """Chat-attention decision point. OFF by default; when enabled, a
+        chat event pulls the panel to the configured view for return_after
+        seconds (re-armed by each new event), then back to the base view.
+        Only a feed to the configured view+input counts as a chat event;
+        manual selections always win; a notice in flight suppresses."""
+        cfg = self.policy.get_config()["chat_attention"]
+        if not cfg["enabled"]:
+            return {"switched": False, "reason": "disabled"}
+        if fed_renderer != cfg["view"] or fed_input != cfg["input"]:
+            return {"switched": False, "reason": "not-a-chat-event"}
+        view = cfg["view"]
+        if self.current == view:
+            active = self.policy.active
+            if active is not None and active["kind"] == "attention":
+                token, _ = self.policy.begin_transient("attention", cfg["return_after"])
+                with self.lock:
+                    self._arm_transient("attention", token, cfg["return_after"])
+                return {"switched": True, "reason": "re-armed"}
+            return {"switched": False, "reason": "already-showing"}
+        if self.fb.blanked:
+            return {"switched": False, "reason": "screen-off"}
+        entry = self.renderers.get(view)
+        if not entry or "module" not in entry:
+            return {"switched": False, "reason": "unknown-view"}
+        token, superseded = self.policy.begin_transient("attention", cfg["return_after"])
+        if token is None:
+            return {"switched": False, "reason": "notice-active"}
+        with self.lock:
+            self._arm_transient("attention", token, cfg["return_after"])
+        try:
+            self._start_view(view, {})
+        except (KeyError, ValueError):
+            return {"switched": False, "reason": "unknown-view"}
+        out = {"switched": True, "reason": "pulled", "view": view}
+        if superseded:
+            out["superseded"] = superseded
+        return out
+
+    SEVERITIES = ("info", "warn", "critical")
+
+    def notify(self, title, body="", severity="info", color=None, duration=None):
+        """Show a transient notice, then return to the base view.
+
+        Cheap switch-then-return, not composition (ISA D6 option B would
+        draw over the current view; this interrupts it instead -- said
+        plainly so the captain can decide). Notices preempt chat-attention;
+        the return always goes to the base view. Raises ValueError on bad
+        input."""
+        cfg = self.policy.get_config()["notifications"]
+        title = str(title or "").strip()
+        if not title:
+            raise ValueError("title is required")
+        severity = str(severity or "info").lower()
+        if severity not in self.SEVERITIES:
+            raise ValueError("severity must be one of %s" % "/".join(self.SEVERITIES))
+        if duration is None:
+            duration = cfg["default_duration"]
+        try:
+            duration = float(duration)
+        except (TypeError, ValueError):
+            raise ValueError("duration must be a number of seconds")
+        if not (1 <= duration <= 300):
+            raise ValueError("duration must be within [1, 300]")
+        params = {"title": title, "severity": severity}
+        if body:
+            params["body"] = str(body)
+        if color:
+            params["color"] = str(color)
+        entry = self.renderers.get("notice")
+        if not entry or "module" not in entry:
+            raise KeyError("notice renderer is not installed")
+        validate_params(params, entry.get("params") or {})
+        self.policy.note_api()
+        token, superseded = self.policy.begin_transient("notice", duration)
+        with self.lock:
+            self._arm_transient("notice", token, duration)
+            self._wake_if_idle()
+        self._start_view("notice", params)
+        out = {"view": "notice", "params": params, "return_in": duration}
+        if superseded:
+            out["superseded"] = superseded
+        return out
+
+    # ---- policy configuration surface ------------------------------------
+
+    def get_policy(self):
+        return {
+            "config": self.policy.get_config(),
+            "activity": self.policy.activity_snapshot(),
+            "transient": self.policy.transient_status(),
+            "idle_off": self.policy.idle_off,
+        }
+
+    def set_policy(self, patch):
+        config, persisted = self.policy.update_config(patch or {})
+        self.policy.note_api()
+        state = self.get_policy()
+        state["persisted"] = persisted
+        return state
+
+    # ---- idle watchdog ------------------------------------------------------
+
+    def check_idle(self):
+        """One watchdog tick: blank the panel when the inactivity window
+        has elapsed. Public so tests can drive it deterministically."""
+        if not self.policy.idle_due():
+            return {"idle_off": self.policy.idle_off}
+        with self.lock:
+            if not self.policy.idle_due() or self.fb.blanked:
+                return {"idle_off": self.policy.idle_off}
+            self.fb.power_off()
+            self.policy.idle_off = True
+            return {"idle_off": True, "at": self.policy.last_activity()}
+
+    def start_watchdog(self, interval=1.0):
+        if self.watchdog_thread is not None:
+            return
+        self.watchdog_stop.clear()
+
+        def _tick():
+            while not self.watchdog_stop.wait(interval):
+                try:
+                    self.check_idle()
+                except Exception:
+                    pass
+
+        self.watchdog_thread = threading.Thread(target=_tick, daemon=True)
+        self.watchdog_thread.start()
+
+    def stop_watchdog(self):
+        self.watchdog_stop.set()
+        self.watchdog_thread = None
+
     # ---- screen power --------------------------------------------------
 
     def set_power(self, power):
         power = (power or "").lower()
         if power not in ("on", "off"):
             raise ValueError("power must be 'on' or 'off'")
+        self.policy.note_api()
         with self.lock:
+            # A manual power call means the operator owns the power state:
+            # it clears the watchdog's idle_off claim either way.
+            self.policy.idle_off = False
             if power == "off":
                 result = self.fb.power_off()
             else:
@@ -395,6 +810,11 @@ class DisplayDaemon:
             },
             "display": self.fb.status(),
             "last_error": self.last_error,
+            "feeds": self.feeds.snapshot(),
+            "policy": {
+                "transient": self.policy.transient_status(),
+                "idle_off": self.policy.idle_off,
+            },
         }
 
     def renderer_list(self):
@@ -408,6 +828,7 @@ class DisplayDaemon:
                     "name": name,
                     "description": entry["description"],
                     "params": entry["params"],
+                    "inputs": entry.get("inputs", {}),
                     "static": entry["static"],
                 }
             )
@@ -496,6 +917,36 @@ CONTROL_PAGE = """<!DOCTYPE html>
   <button id="poff" class="warn">Turn off</button>
   <span class="meta">Off darkens the backlight and blanks the framebuffer;
   on restores both and repaints the last frame.</span>
+</div>
+
+<h2>Policy: what the screen does on its own</h2>
+<div class="card">
+  <label><input type="checkbox" id="pol-idle-en" style="width:auto"> Screen off after inactivity</label>
+  <label for="pol-idle-after">Idle window (seconds)<span class="help">no mutating API or feed activity for this long blanks the panel; any activity wakes it (number, 5-86400)</span></label>
+  <input type="number" id="pol-idle-after" min="5" max="86400">
+  <label><input type="checkbox" id="pol-att-en" style="width:auto"> Chat attention: pull panel to chat on new message (off by default)</label>
+  <label for="pol-att-view">Attention view<span class="help">renderer a chat event pulls to (string)</span></label>
+  <input type="text" id="pol-att-view">
+  <label for="pol-att-ret">Stay on chat per message (seconds)<span class="help">re-armed by each new message, then returns (number, 5-600)</span></label>
+  <input type="number" id="pol-att-ret" min="5" max="600">
+  <label for="pol-notify-dur">Notice duration default (seconds)<span class="help">how long a notification stays up when unset (number, 1-300)</span></label>
+  <input type="number" id="pol-notify-dur" min="1" max="300">
+  <div class="meta" id="pol-status">policy: loading&hellip;</div>
+  <button id="polsave">Save policy</button>
+</div>
+
+<h2>Notify</h2>
+<div class="card">
+  <label for="nt-title">Title<span class="req"> *</span></label>
+  <input type="text" id="nt-title">
+  <label for="nt-body">Body</label>
+  <input type="text" id="nt-body">
+  <label for="nt-sev">Severity</label>
+  <select id="nt-sev"><option>info</option><option>warn</option><option>critical</option></select>
+  <label for="nt-dur">Duration (seconds, blank for policy default)</label>
+  <input type="number" id="nt-dur" min="1" max="300">
+  <button id="notify">Show notice</button>
+  <span class="meta">Interrupts what is showing, then returns. Cheap switch-then-return, not composition (ISA D6).</span>
 </div>
 
 <div id="result"></div>
@@ -650,11 +1101,59 @@ document.getElementById("poff").onclick = async () => {
   try { await api("/screen/off", { method: "POST" }); say("screen off"); refreshState(); }
   catch (err) { say("power off failed: " + err.message, true); }
 };
+async function refreshPolicy() {
+  try {
+    const p = await api("/policy");
+    const c = p.config;
+    document.getElementById("pol-idle-en").checked = !!c.idle.enabled;
+    document.getElementById("pol-idle-after").value = c.idle.after_seconds;
+    document.getElementById("pol-att-en").checked = !!c.chat_attention.enabled;
+    document.getElementById("pol-att-view").value = c.chat_attention.view;
+    document.getElementById("pol-att-ret").value = c.chat_attention.return_after;
+    document.getElementById("pol-notify-dur").value = c.notifications.default_duration;
+    const t = p.transient;
+    document.getElementById("pol-status").textContent =
+      "policy: idle " + (c.idle.enabled ? ("on after " + c.idle.after_seconds + "s") : "off") +
+      " · attention " + (c.chat_attention.enabled ? ("on → " + c.chat_attention.view) : "off") +
+      " · transient " + (t.active || "none") +
+      (p.idle_off ? " · PANEL IDLE-OFF" : "");
+  } catch (err) { say("policy load failed: " + err.message, true); }
+}
+document.getElementById("polsave").onclick = async () => {
+  const num = (id) => { const v = document.getElementById(id).value.trim();
+    return v === "" ? undefined : Number(v); };
+  const patch = { idle: {}, chat_attention: {}, notifications: {} };
+  patch.idle.enabled = document.getElementById("pol-idle-en").checked;
+  const ia = num("pol-idle-after"); if (ia !== undefined) patch.idle.after_seconds = ia;
+  patch.chat_attention.enabled = document.getElementById("pol-att-en").checked;
+  const av = document.getElementById("pol-att-view").value.trim();
+  if (av !== "") patch.chat_attention.view = av;
+  const ar = num("pol-att-ret"); if (ar !== undefined) patch.chat_attention.return_after = ar;
+  const nd = num("pol-notify-dur"); if (nd !== undefined) patch.notifications.default_duration = nd;
+  try { await api("/policy", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch) });
+    say("policy saved"); refreshPolicy(); }
+  catch (err) { say("policy save failed: " + err.message, true); }
+};
+document.getElementById("notify").onclick = async () => {
+  const body = { title: document.getElementById("nt-title").value,
+    body: document.getElementById("nt-body").value,
+    severity: document.getElementById("nt-sev").value };
+  const d = document.getElementById("nt-dur").value.trim();
+  if (d !== "") body.duration = Number(d);
+  try { await api("/notify", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) });
+    say("notice showing"); refreshState(); refreshPreview(); }
+  catch (err) { say("notify failed: " + err.message, true); }
+};
 (async function init() {
   try { await refreshRenderers(false); }
   catch (err) { say("could not load renderers: " + err.message, true); }
   await refreshState();
   refreshPreview();
+  refreshPolicy();
   setInterval(refreshState, 2000);
   setInterval(refreshPreview, 2000);
   setInterval(() => refreshRenderers(true), 15000);
@@ -682,14 +1181,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _body(self):
+    def _body_raw(self):
         length = int(self.headers.get("Content-Length") or 0)
         if not length:
-            return {}
+            return None, "empty body"
         try:
-            return json.loads(self.rfile.read(length).decode() or "{}")
+            return json.loads(self.rfile.read(length).decode() or "null"), None
         except ValueError:
-            return {}
+            return None, "invalid JSON"
+
+    def _body(self):
+        payload, _ = self._body_raw()
+        return payload if isinstance(payload, dict) else {}
 
     def do_GET(self):
         path = self.path.split("?")[0]
@@ -706,10 +1209,47 @@ class Handler(BaseHTTPRequestHandler):
             if png is None:
                 return self._send(404, {"error": "nothing has been drawn yet"})
             return self._send(200, png, "image/png")
+        if path == "/policy":
+            return self._send(200, DAEMON.get_policy())
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
         path = self.path.split("?")[0]
+        if path.startswith("/feed/"):
+            parts = path.split("/")
+            if len(parts) != 4 or not parts[2] or not parts[3]:
+                return self._send(404, {"error": "use /feed/<renderer>/<input>"})
+            payload, err = self._body_raw()
+            if err:
+                return self._send(400, {"error": err})
+            try:
+                result = DAEMON.feed(parts[2], parts[3], payload)
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, {"ok": True, "renderer": parts[2],
+                                    "input": parts[3], "feed": result["feed"],
+                                    "attention": result["attention"]})
+        if path == "/notify":
+            body = self._body()
+            if not DAEMON.policy.get_config()["notifications"]["enabled"]:
+                return self._send(409, {"error": "notifications are disabled"})
+            try:
+                result = DAEMON.notify(
+                    body.get("title"), body.get("body", ""),
+                    body.get("severity", "info"), body.get("color"),
+                    body.get("duration"))
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, result)
+        if path == "/policy":
+            try:
+                return self._send(200, DAEMON.set_policy(self._body()))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
         body = self._body()
         try:
             if path == "/show":
@@ -743,6 +1283,7 @@ def main():
     args = parser.parse_args()
     DAEMON = DisplayDaemon()
     DAEMON.clear()
+    DAEMON.start_watchdog()
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     print("displayd listening on %s:%d with %d renderer(s)" % (args.bind, args.port, len(DAEMON.renderers)))
     try:
