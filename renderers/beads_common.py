@@ -522,12 +522,8 @@ def _poll_loop():
                       if s.strip()]
         if sig != last_sig:
             last_sig = sig
-        # TEMP-DEBUG: proves the loop iterates in the daemon.
-        print("beads DBG poll tick", flush=True)
         try:
             pairs, source = _poll_once(cfg)
-            print("beads DBG poll loaded %d pairs from %s" % (
-                len(pairs), source), flush=True)
             snap = _classify(pairs)
             if focus_param and find_in_snapshot(snap, focus_param) is None:
                 request_focus(focus_param, stores)
@@ -538,7 +534,6 @@ def _poll_loop():
                 _POLL["error"] = None
                 _POLL["source"] = source
         except Exception as err:
-            print("beads DBG poll FAIL %r" % err, flush=True)
             with _POLL["lock"]:
                 _POLL["error"] = str(err)[:160]
                 # A failed poll never discards the last good frame's data:
@@ -552,13 +547,9 @@ def _poll_loop():
 
 
 def ensure_poll(cfg):
-    # TEMP-DEBUG: proves run() reaches the poll starter in the daemon.
-    print("beads DBG ensure_poll stores=%r focus=%r" % (
-        cfg.get("stores"), cfg.get("focus")), flush=True)
     with _POLL["lock"]:
         _POLL["cfg"] = dict(cfg)
         alive = _POLL["thread"] is not None and _POLL["thread"].is_alive()
-        print("beads DBG poll thread alive=%r" % alive, flush=True)
         if not alive:
             thread = threading.Thread(target=_poll_loop, daemon=True)
             _POLL["thread"] = thread
