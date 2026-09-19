@@ -148,6 +148,15 @@ class TestFeedStore(unittest.TestCase):
             store.push("chat", "message", {"author": "a", "text": "t%d" % i}, spec)
         self.assertEqual(len(store.get("chat", "message")), 3)
 
+    def test_zero_buffer_is_persistent(self):
+        store = FeedStore()
+        spec = dict(chat_spec(), buffer=0)
+        for i in range(120):
+            store.push("chat", "message", {"author": "a", "text": "t%d" % i}, spec)
+        got = store.get("chat", "message")
+        self.assertEqual(len(got), 120)
+        self.assertEqual(got[0]["text"], "t0")
+
 
 class FakeFb:
     def __init__(self, w=960, h=540):
@@ -219,6 +228,95 @@ class TestChatRenderer(unittest.TestCase):
         finally:
             stop.set()
             thread.join(timeout=5)
+
+
+class TestChatPersistence(unittest.TestCase):
+    """Retention contract: a chat message leaves panel state ONLY on
+    moderation delete -- never for age, never for count. There is no TTL,
+    max-age, or expiry sweep anywhere on this path (FeedStore keeps an
+    unbounded deque for the chat inputs; _snapshot returns everything
+    minus retractions), so these tests pin the behaviour past the old
+    60-message boundary and across a long quiet period."""
+
+    OLD_BOUNDARY = 60
+
+    def make_screen(self):
+        screen = displayd.Screen(FakeFb())
+        store = FeedStore()
+        store.declare("chat", "message", chat_spec())
+        found = displayd.load_renderers(displayd.RENDERER_DIR)
+        store.declare("chat", "delete", found["chat"]["inputs"]["delete"])
+        screen.feeds = store
+        return screen, store
+
+    def load_chat(self, name):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            name, os.path.join(displayd.RENDERER_DIR, "chat.py"))
+        chat = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(chat)
+        return chat
+
+    def burst(self, store, spec_msg, n, start=0, timestamp=None):
+        for i in range(start, start + n):
+            store.push("chat", "message",
+                       dict(CHAT_MSG, id="msg-%d" % i, text="line %d" % i,
+                            timestamp=(timestamp if timestamp is not None
+                                       else CHAT_MSG["timestamp"])),
+                       spec_msg)
+
+    def test_message_survives_past_old_60_boundary(self):
+        screen, store = self.make_screen()
+        chat = self.load_chat("chatpersist1")
+        self.burst(store, chat.INPUTS["message"], self.OLD_BOUNDARY + 15)
+        got = store.get("chat", "message")
+        self.assertEqual(len(got), self.OLD_BOUNDARY + 15)
+        self.assertEqual(got[0]["id"], "msg-0")  # oldest NOT evicted
+        snap = chat._snapshot(screen)
+        self.assertEqual(len(snap), self.OLD_BOUNDARY + 15)
+        self.assertEqual(snap[0]["id"], "msg-0")
+
+    def test_old_message_survives_long_idle(self):
+        # Messages stamped 24h ago, then a long quiet period: everything
+        # is still retained and reachable. Age is not consulted anywhere
+        # on this path -- not even the stale-health label drops anything.
+        screen, store = self.make_screen()
+        chat = self.load_chat("chatpersist2")
+        ancient = CHAT_MSG["timestamp"] - 24 * 3600 * 1000
+        self.burst(store, chat.INPUTS["message"], 5, timestamp=ancient)
+        # White-box: age the feed past STALE_AFTER without new pushes.
+        store._data[("chat", "message")]["updated_at"] -= 3600
+        meta = store.snapshot()["chat"]["message"]
+        self.assertEqual(meta["health"], "stale")  # label only
+        self.assertEqual(meta["count"], 5)
+        snap = chat._snapshot(screen)
+        self.assertEqual(len(snap), 5)
+        self.assertEqual(snap[0]["text"], "line 0")
+
+    def test_visible_window_stays_screen_bounded(self):
+        screen, store = self.make_screen()
+        chat = self.load_chat("chatpersist3")
+        self.burst(store, chat.INPUTS["message"], self.OLD_BOUNDARY + 15)
+        snap = chat._snapshot(screen)
+        img = chat._draw(screen, "CHAT", snap, 7, (10, 10, 14))
+        self.assertEqual(img.size, (screen.W, screen.H))
+        small = img.resize((160, 90)).convert("L")
+        self.assertGreater(sum(1 for p in small.getdata() if p > 24), 60)
+        # Overflow scrolls the visible window only: the oldest line is off
+        # screen yet still present in state.
+        self.assertEqual(snap[0]["id"], "msg-0")
+        self.assertNotIn("msg-0", [m["id"] for m in snap[-7:]])
+
+    def test_moderation_delete_is_the_only_removal(self):
+        screen, store = self.make_screen()
+        chat = self.load_chat("chatpersist4")
+        self.burst(store, chat.INPUTS["message"], self.OLD_BOUNDARY + 5)
+        store.push("chat", "delete", {"messageId": "msg-0"},
+                   chat.INPUTS["delete"])
+        snap = chat._snapshot(screen)
+        self.assertEqual(len(snap), self.OLD_BOUNDARY + 4)
+        self.assertNotIn("msg-0", [m["id"] for m in snap])
+        self.assertEqual(snap[0]["id"], "msg-1")
 
 
 # ---- bridge reconnect test ----------------------------------------------------

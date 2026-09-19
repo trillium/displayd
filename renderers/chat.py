@@ -36,7 +36,10 @@ INPUTS = {
             "badges": {"type": "array"},
             "timestamp": {"type": "number"},
         },
-        "buffer": 60,
+        # Persistent retention: 0 means unbounded -- a message leaves
+        # state only on moderation delete, never for age or count. The
+        # visible window stays screen-bounded in _draw via max_lines.
+        "buffer": 0,
     },
     "delete": {
         "type": "object",
@@ -46,7 +49,9 @@ INPUTS = {
             "messageId": {"type": "string"},
             "animate": {"type": "boolean"},
         },
-        "buffer": 60,
+        # Unbounded like message: an evicted retraction would let its
+        # (retained) message resurface, so deletes persist too.
+        "buffer": 0,
     },
 }
 

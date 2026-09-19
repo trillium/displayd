@@ -486,10 +486,21 @@ class FeedStore:
 
     @classmethod
     def _buffer_for(cls, spec):
+        """Backlog cap for one input. A spec of {"buffer": 0} (or null)
+        means retain everything: the deque is unbounded and entries leave
+        state only when the consumer drops them (chat keeps messages until
+        a moderation delete; the visible window stays screen-bounded in
+        the renderer, not here)."""
+        raw = (spec or {}).get("buffer", cls.DEFAULT_BUFFER)
+        if raw is None:
+            return None
         try:
-            return max(1, int((spec or {}).get("buffer", cls.DEFAULT_BUFFER)))
+            size = int(raw)
         except (TypeError, ValueError):
             return cls.DEFAULT_BUFFER
+        if size <= 0:
+            return None
+        return size
 
     def declare(self, renderer, input_name, spec):
         """Register an input so it shows up as cold before anything arrives."""

@@ -62,6 +62,10 @@ When updating this file, preserve this bar for all agents and keep entries conci
   `POST /feed/chat/message` (`{author, text, ...}`) and retract with
   `POST /feed/chat/delete` (`{messageId}`). Schemas advertised in
   `GET /renderers`; `/state` shows feed health plus last-switch timings.
+- Chat retention is persistent: both chat inputs declare `buffer: 0`
+  (unbounded), so a message leaves panel state only on moderation
+  delete -- never for age or count. The visible window stays
+  screen-bounded (`lines` param, default 7) in the renderer.
 - `bridges/firebot_chat.py` (stdlib only) subscribes to Firebot's overlay WS
   and pushes across the tailnet. The durable home is a Mac LaunchAgent,
   `com.displayd.firebot-chat-bridge` (plist template in `bridges/`, installed
