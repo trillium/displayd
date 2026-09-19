@@ -318,13 +318,23 @@ class Screen:
         self.present_lock = threading.Lock()
         self.feeds = None  # wired by DisplayDaemon to its FeedStore
         self.current_view = None
+        self.on_present = None  # daemon hook(img): frame cache + switch timing
 
     def new_image(self, background=(0, 0, 0)):
         return Image.new("RGB", (self.W, self.H), background)
 
     def present(self, img):
+        """Compose-then-swap: the caller hands over one complete frame and
+        the daemon swaps it in with a single write -- never a blank or a
+        partial frame."""
         with self.present_lock:
             self.fb.present(img)
+            hook = self.on_present
+        if hook is not None:
+            try:
+                hook(img)
+            except Exception:
+                pass
 
     def clear(self, background=(0, 0, 0)):
         self.present(self.new_image(background))
@@ -566,13 +576,20 @@ class DisplayDaemon:
         self.screen = Screen(self.fb)
         self.renderers = load_renderers(RENDERER_DIR)
         self.lock = threading.Lock()
+        self.cache_lock = threading.Lock()
         self.feeds = FeedStore()
         self.screen.feeds = self.feeds
+        self.screen.on_present = self._note_frame
         for name, entry in self.renderers.items():
             if "module" not in entry:
                 continue
             for input_name, spec in (entry.get("inputs") or {}).items():
                 self.feeds.declare(name, input_name, spec)
+        self.frame_cache = {}   # renderer name -> last composed PIL image
+        self.switch_pending = None  # start time of the in-flight switch
+        self.last_switch_at = None
+        self.last_switch_ms = None  # request -> first presented pixel
+        self.last_frame_ms = None   # request -> first freshly drawn frame
         # Policy layer: activity clock, transient switching, idle-off.
         # Only mutating POSTs touch the clock -- GETs (including the
         # control page's 2s state/snapshot poll) are observation, not
@@ -600,6 +617,25 @@ class DisplayDaemon:
             if cur == 0:
                 self.fb.set_brightness(maxv)
 
+    def _note_frame(self, img):
+        """Every composed frame lands here: cached per view for instant
+        re-entry, and timed when a switch is in flight. Never blocks: the
+        copy is a memcpy, no I/O."""
+        now = time.time()
+        with self.cache_lock:
+            if self.current is not None:
+                try:
+                    self.frame_cache[self.current] = img.copy()
+                except Exception:
+                    pass
+            if self.switch_pending is not None:
+                self.last_frame_ms = round((now - self.switch_pending) * 1000, 1)
+                if self.last_switch_ms is None:
+                    # No cached frame covered this switch: the fresh draw
+                    # is also the first pixel.
+                    self.last_switch_ms = self.last_frame_ms
+                self.switch_pending = None
+
     # ---- content -------------------------------------------------------
 
     def _run(self, entry, params, stop):
@@ -618,14 +654,33 @@ class DisplayDaemon:
         entry = self.renderers.get(name)
         if not entry or "module" not in entry:
             raise KeyError("unknown renderer: %s" % name)
+        started = time.time()
         with self.lock:
+            with self.cache_lock:
+                cached = self.frame_cache.get(name)
+            with self.screen.present_lock:
+                self.screen.current_view = name
+                if cached is not None:
+                    # Stale frame beats a pause: memcpy the last known good
+                    # frame now; the fresh draw follows on the new thread.
+                    try:
+                        self.fb.present(cached)
+                    except Exception:
+                        cached = None
             self._stop_locked()
             stop = threading.Event()
             self.stop_event = stop
             self.current = name
-            self.started_at = time.time()
+            self.started_at = started
             self.last_error = None
-            self.screen.current_view = name
+            self.last_switch_at = started
+            with self.cache_lock:
+                if cached is not None:
+                    self.last_switch_ms = round((time.time() - started) * 1000, 1)
+                    self.switch_pending = started  # still time the fresh draw
+                else:
+                    self.last_switch_ms = None
+                    self.switch_pending = started
             self.thread = threading.Thread(
                 target=self._run, args=(entry, params or {}, stop), daemon=True
             )
@@ -638,6 +693,8 @@ class DisplayDaemon:
             self.current = None
             self.started_at = None
             self.screen.current_view = None
+            with self.cache_lock:
+                self.switch_pending = None
         self.screen.clear()
         return self.state()
 
@@ -940,6 +997,11 @@ class DisplayDaemon:
                 "transient": self.policy.transient_status(),
                 "idle_off": self.policy.idle_off,
             },
+            "switch": {
+                "at": self.last_switch_at,
+                "first_pixel_ms": self.last_switch_ms,
+                "fresh_frame_ms": self.last_frame_ms,
+            },
         }
 
     def renderer_list(self):
@@ -1019,6 +1081,8 @@ CONTROL_PAGE = """<!DOCTYPE html>
     <div>Power: <code id="cur-power">&ndash;</code></div>
     <div>Backlight: <span id="cur-bl">&ndash;</span></div>
     <div>Framebuffer blank: <code id="cur-blank">&ndash;</code></div>
+    <div>Feeds: <span id="cur-feeds">&ndash;</span></div>
+    <div>Last switch: <span id="cur-switch">&ndash;</span></div>
     <div>Last error: <span id="cur-err">none</span></div>
   </div>
   <div class="card">
@@ -1105,6 +1169,18 @@ async function refreshState() {
     document.getElementById("cur-bl").textContent = bl.available
       ? (bl.value + " / " + bl.max) : "no backlight device";
     document.getElementById("cur-blank").textContent = s.screen.fb_blank;
+    const feeds = s.feeds || {};
+    const bits = [];
+    for (const [r, inputs] of Object.entries(feeds)) {
+      for (const [i, f] of Object.entries(inputs)) {
+        bits.push(r + "." + i + ":" + f.health + "(" + f.count + ")");
+      }
+    }
+    document.getElementById("cur-feeds").textContent = bits.length ? bits.join(" ") : "none";
+    const sw = s.switch || {};
+    document.getElementById("cur-switch").textContent =
+      (sw.first_pixel_ms == null ? "\u2013" : (sw.first_pixel_ms + " ms to pixel")) +
+      (sw.fresh_frame_ms == null ? "" : (" / " + sw.fresh_frame_ms + " ms fresh"));
     const e = document.getElementById("cur-err");
     e.textContent = s.last_error || "none";
     e.style.color = s.last_error ? "#f88" : "";
