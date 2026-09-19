@@ -20,6 +20,19 @@ run in the poll thread with timeouts, off the draw path.
 
 Bucket derivation, loading, and the poll cache live in beads_common so the
 detail view (beads-detail) cannot drift from this overview.
+
+Store colours and icons live in beads_style plus a JSON config the captain
+can edit without touching code. Lookup order (highest first): the
+"store_config" renderer param (a path), $DISPLAYD_BEADS_STORES,
+<daemon-root>/state/beads-stores.json (survives redeploys), the shipped
+renderers/beads_stores.json, then built-in defaults. The file has the shape
+{"stores": {"task": {"color": "#6EB4FF", "icon": "\u25cf"}, ...},
+"default_icon": "\u25c7"}; only the stores you name need entries, and the
+mapping reloads live when the file's mtime changes -- no restart needed.
+Unknown stores get a deterministic name-derived colour and the default
+icon, so a new store never crashes, never blanks, and never collides with
+another unknown store. To add a store, append one entry to
+<daemon-root>/state/beads-stores.json. See beads_style for the full contract.
 """
 
 import os
@@ -31,6 +44,7 @@ from PIL import ImageDraw
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import beads_common as common
+import beads_style as style_mod
 from beads_common import (
     BUCKETS,
     C_BG,
@@ -63,6 +77,7 @@ PARAMS = {
     "mirror": {"type": "string", "help": "mirror file(s), comma-separated JSON/JSONL; auto-discovered when omitted"},
     "stores": {"type": "string", "help": "live fallback stores, comma-separated CLI names; default task,brain,robots,review,ideas; empty disables"},
     "interval": {"type": "integer", "help": "poll seconds, default 60"},
+    "store_config": {"type": "string", "help": "store colour/icon JSON path; overrides the shipped mapping, no restart needed"},
     "background": {"type": "string", "help": "background colour, default near-black"},
 }
 
@@ -75,6 +90,16 @@ BUCKET_LABEL = 44
 BUCKET_SUB = 32
 ROW_SIZE = 40
 FOOT_SIZE = 30
+
+
+def _text_w(draw, text, font):
+    """Pixel width of text, 0 when unmeasurable -- never raises."""
+    if font is None:
+        return 0
+    try:
+        return draw.textlength(text, font=font)
+    except Exception:
+        return 0
 
 
 def _draw(screen, title, bg):
@@ -156,31 +181,81 @@ def _draw(screen, title, bg):
         snap["closed"], snap["total"], int(frac * 100))
     draw.text((PAD, bar_y + 38), tally, font=sub_font or plain, fill=C_DIM)
 
-    # What needs the captain.
+    # What needs the captain. Each row leads with the store's icon and the
+    # bead hash in the store's colour -- '[bead-hash]' alone, no duplicated
+    # store prefix -- then the title in body text and the reason dimmed.
+    # The reason is the actionable part: never truncate it, fit the
+    # title into whatever width is left.
     draw.text((PAD, 500), "NEEDS THE CAPTAIN", font=lab_font or plain,
               fill=C_STALLED)
+    try:
+        styles, _, _ = style_mod.load_store_styles(
+            (cfg or {}).get(style_mod.PARAM_KEY))
+    except Exception:
+        styles = {}
+    icon_fonts = {}
+
+    def _icon_font(family):
+        if not family:
+            return row_font
+        if family not in icon_fonts:
+            try:
+                path = screen.font_path(family)
+            except Exception:
+                path = None
+            if path is None:
+                icon_fonts[family] = row_font
+            else:
+                try:
+                    from PIL import ImageFont as _IF
+                    icon_fonts[family] = _IF.truetype(path, ROW_SIZE)
+                except Exception:
+                    icon_fonts[family] = row_font
+        return icon_fonts[family]
+
     y = 562
     for item in snap["attention"]:
         issue, reason = item["issue"], item["reason"]
-        # The reason is the actionable part: never truncate it, fit the
-        # title into whatever width is left.
-        tag = "[%s %s] " % (issue["store"], issue["id"])
+        try:
+            color, icon, _ = style_mod.style_for(issue["store"], styles)
+        except Exception:
+            color, icon = C_TEXT, style_mod.DEFAULT_ICON
+        try:
+            entry = (styles or {}).get(str(issue["store"]).lower()) or {}
+            glyph_font = _icon_font(entry.get("font"))
+        except Exception:
+            glyph_font = row_font
+        lead = "%s %s " % (icon, style_mod.format_tag(issue))
+        icon_txt = "%s " % icon
+        tag_txt = "%s " % style_mod.format_tag(issue)
         width = screen.W - 2 * PAD - 24  # slack for rasterizer rounding
         # Cap the reason first (~40% of the row), then fit the title
         # into the remainder: the full line always fits the panel.
         reason = _fit(draw, reason, row_font, width * 0.40, max_chars=56)
         tail = " \u2014 " + reason
-        title_w = width
-        if row_font is not None:
-            try:
-                fixed = (draw.textlength(tag, font=row_font)
-                         + draw.textlength(tail, font=row_font))
-                title_w = max(120, width - fixed)
-            except Exception:
-                pass
+        title_w = max(120, width - _text_w(draw, lead, row_font)
+                      - _text_w(draw, tail, row_font))
         title = _fit(draw, issue["title"], row_font, title_w)
-        draw.text((PAD, y), tag + title + tail,
-                  font=row_font or plain, fill=C_TEXT)
+        x = PAD
+        if row_font is None and glyph_font is None:
+            # No TrueType at all: one bitmap-font line, no segmentation.
+            draw.text((PAD, y), lead + title + tail,
+                      font=plain, fill=C_TEXT)
+        else:
+            try:
+                draw.text((x, y), icon_txt, font=glyph_font or plain,
+                          fill=color)
+                x += _text_w(draw, icon_txt, glyph_font)
+                draw.text((x, y), tag_txt, font=row_font or plain,
+                          fill=color)
+                x += _text_w(draw, tag_txt, row_font)
+                draw.text((x, y), title, font=row_font or plain,
+                          fill=C_TEXT)
+                x += _text_w(draw, title, row_font)
+                draw.text((x, y), tail, font=row_font or plain, fill=C_DIM)
+            except Exception:
+                draw.text((PAD, y), lead + title + tail,
+                          font=row_font or plain, fill=C_TEXT)
         y += 72
     if not snap["attention"]:
         draw.text((PAD, y), "nothing waiting on the captain",
@@ -223,7 +298,8 @@ def run(screen, params, stop):
     if stores is None:
         stores = "task,brain,robots,review,ideas"
     _ensure_poll({"mirror": params.get("mirror") or "",
-                  "stores": stores, "interval": interval})
+                  "stores": stores, "interval": interval,
+                  "store_config": params.get("store_config") or ""})
 
     # First frame goes up immediately from cache (or the cold frame) --
     # switching here never waits on I/O.

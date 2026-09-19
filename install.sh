@@ -25,6 +25,11 @@ fi
 mkdir -p "$PREFIX/renderers"
 install -m 0644 "$HERE/displayd.py" "$PREFIX/displayd.py"
 install -m 0644 "$HERE"/renderers/*.py "$PREFIX/renderers/"
+# Shipped renderer data (e.g. renderers/beads_stores.json): install whatever
+# exists, without failing when there is nothing to copy.
+for extra in "$HERE"/renderers/*.json; do
+    [ -e "$extra" ] && install -m 0644 "$extra" "$PREFIX/renderers/"
+done
 install -m 0644 "$HERE/README.md" "$PREFIX/README.md"
 
 # The unit ships with the default path; rewrite it when a different prefix is used.

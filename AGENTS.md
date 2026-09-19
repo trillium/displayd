@@ -23,6 +23,9 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Restarting the daemon blanks the screen (`DisplayDaemon.clear()` on boot),
   so always `POST /show` afterwards; verify backlight value restores on power
   round-trips and never leave the panel black.
+- Beads overview store colours/icons: edit `~/displayd/state/beads-stores.json`
+  on the host (format in `renderers/beads_style.py` docstring); the panel
+  reloads it live, no restart needed.
 
 ## Autonomous behaviour (policy layer)
 

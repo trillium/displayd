@@ -1,0 +1,25 @@
+{
+  "default_icon": "◇",
+  "stores": {
+    "task": {
+      "color": "#6EB4FF",
+      "icon": "●"
+    },
+    "brain": {
+      "color": "#BE82FF",
+      "icon": "◆"
+    },
+    "robots": {
+      "color": "#50DCDC",
+      "icon": "⚙"
+    },
+    "review": {
+      "color": "#FF78B4",
+      "icon": "★"
+    },
+    "ideas": {
+      "color": "#DCDC64",
+      "icon": "☀"
+    }
+  }
+}
