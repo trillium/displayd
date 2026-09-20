@@ -18,6 +18,8 @@ API
   DELETE /layout                     clear the layout (blank screen)
   POST /feed/<renderer>/<input>  push a validated payload into a view
   POST /notify  {"title":...,"body"?,"severity"?,"duration"?} transient notice
+  POST /reload  {"sha":...,"duration"?} transient reload confirmation,
+               then automatic return
   GET  /policy  autonomous-behaviour config + activity clock
   POST /policy  {"idle":{...},"chat_attention":{...},"notifications":{...}}
   POST /clear                        blank the screen to black
@@ -33,6 +35,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -58,6 +61,15 @@ POLICY_FILE = os.environ.get(
     "DISPLAYD_POLICY",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "policy.json"),
 )
+# Reload confirmation (POST /reload): the QR payload is always the commit
+# page for the posted SHA -- never the repository homepage, never a
+# caller-supplied URL. Mirrors renderers/reload.py COMMIT_URL_PREFIX and
+# SHA_RE; tests/test_reload.py asserts the two agree so the rule cannot
+# drift between validation and rendering.
+RELOAD_COMMIT_URL_PREFIX = "https://github.com/trillium/displayd/commit/"
+RELOAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+RELOAD_DEFAULT_DURATION = 10  # seconds the reload screen stays up when unset
+RELOAD_DURATION_MIN, RELOAD_DURATION_MAX = 1, 300
 
 KDSETMODE = 0x4B3A
 KD_TEXT = 0x00
@@ -1352,9 +1364,12 @@ class DisplayDaemon:
         entry = self.renderers.get(view)
         if not entry or "module" not in entry:
             return {"switched": False, "reason": "unknown-view"}
-        token, superseded = self.policy.begin_transient("attention", cfg["return_after"])
+        token, active_kind = self.policy.begin_transient("attention", cfg["return_after"])
         if token is None:
-            return {"switched": False, "reason": "notice-active"}
+            # A higher-or-equal transient holds the screen: the attention
+            # pull is suppressed. The reason names the holder ("notice" in
+            # the long-standing case), so the panel state stays legible.
+            return {"switched": False, "reason": "%s-active" % active_kind}
         with self.lock:
             self._arm_transient("attention", token, cfg["return_after"])
         try:
@@ -1362,8 +1377,8 @@ class DisplayDaemon:
         except (KeyError, ValueError):
             return {"switched": False, "reason": "unknown-view"}
         out = {"switched": True, "reason": "pulled", "view": view}
-        if superseded:
-            out["superseded"] = superseded
+        if active_kind:
+            out["superseded"] = active_kind
         return out
 
     # ---- display feedback --------------------------------------------
@@ -1453,6 +1468,60 @@ class DisplayDaemon:
             self._wake_if_idle()
         self._start_view("notice", params)
         out = {"view": "notice", "params": params, "return_in": duration}
+        if superseded:
+            out["superseded"] = superseded
+        return out
+
+    def reload(self, sha=None, duration=None):
+        """Show a transient reload confirmation, then return to the base view.
+
+        `sha` must be the full 40-character hexadecimal deployed commit
+        SHA; the screen shows RELOADED, the SHA, and a QR code whose payload
+        is exactly the commit page (RELOAD_COMMIT_URL_PREFIX + sha). The URL
+        is derived here -- the request supplies no URL, so an arbitrary QR
+        payload cannot be smuggled in. Raises ValueError on bad input (HTTP
+        400) or KeyError when the reload renderer is not installed (404).
+
+        Same switch-then-return machinery as notify(): the prior explicit
+        view (currently the clock) resumes when the duration elapses, a
+        manual /show or /clear cancels the transient outright, and reload
+        shares notice's top priority level so the newest of the two wins."""
+        if sha is None or (isinstance(sha, str) and not sha.strip()):
+            raise ValueError("sha is required: post the full 40-character "
+                             "deployed commit SHA")
+        if not isinstance(sha, str):
+            raise ValueError("sha must be a string, got %s"
+                             % type(sha).__name__)
+        if len(sha) != 40:
+            raise ValueError("sha must be a full 40-character commit SHA, "
+                             "got %d characters" % len(sha))
+        if not RELOAD_SHA_RE.match(sha):
+            raise ValueError("sha must be hexadecimal (0-9, a-f): "
+                             "%r is not a commit SHA" % sha)
+        sha = sha.lower()
+        if duration is None:
+            duration = RELOAD_DEFAULT_DURATION
+        try:
+            duration = float(duration)
+        except (TypeError, ValueError):
+            raise ValueError("duration must be a number of seconds")
+        if not (RELOAD_DURATION_MIN <= duration <= RELOAD_DURATION_MAX):
+            raise ValueError("duration must be within [%d, %d]"
+                             % (RELOAD_DURATION_MIN, RELOAD_DURATION_MAX))
+        params = {"sha": sha}
+        entry = self.renderers.get("reload")
+        if not entry or "module" not in entry:
+            raise KeyError("reload renderer is not installed")
+        validate_params(params, entry.get("params") or {})
+        self.policy.note_api()
+        token, superseded = self.policy.begin_transient("reload", duration)
+        with self.lock:
+            self._arm_transient("reload", token, duration)
+            self._wake_if_idle()
+        self._start_view("reload", params)
+        out = {"view": "reload", "params": params,
+               "commit_url": RELOAD_COMMIT_URL_PREFIX + sha,
+               "return_in": duration}
         if superseded:
             out["superseded"] = superseded
         return out
@@ -2110,6 +2179,15 @@ class Handler(BaseHTTPRequestHandler):
                     body.get("title"), body.get("body", ""),
                     body.get("severity", "info"), body.get("color"),
                     body.get("duration"))
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, result)
+        if path == "/reload":
+            body = self._body()
+            try:
+                result = DAEMON.reload(body.get("sha"), body.get("duration"))
             except KeyError as exc:
                 return self._send(404, {"error": str(exc)})
             except ValueError as exc:

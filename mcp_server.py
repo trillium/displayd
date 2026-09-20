@@ -19,7 +19,7 @@ Tool discovery is driven live from ``GET /renderers``: every ``tools/list``
 re-reads the view list, so a new renderer file (or a new INPUTS entry)
 appears as ``show_<view>`` / ``feed_<view>_<input>`` tools with no code
 change here. The highest-value agent tools are ``show``, ``notify``,
-``feed``, ``state``, ``snapshot``, ``renderers``, and the ``feedback_*``
+``reload``, ``feed``, ``state``, ``snapshot``, ``renderers``, and the ``feedback_*``
 family.
 
 If displayd is unreachable every tool fails LOUDLY -- ``isError`` with
@@ -187,6 +187,14 @@ def static_tools():
                               "duration": {"type": "number"},
                               "color": {"type": "string"}},
                           "required": ["title"]}},
+        {"name": "reload",
+         "description": "Transient reload confirmation (RELOADED + commit QR), then auto-return.",
+         "inputSchema": {"type": "object",
+                          "properties": {
+                              "sha": {"type": "string",
+                                        "description": "full 40-character deployed commit SHA"},
+                              "duration": {"type": "number"}},
+                          "required": ["sha"]}},
         {"name": "policy_get", "description": "Policy config + activity clock.",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "policy_set",
@@ -363,6 +371,11 @@ def call_tool(name, args):
                 if args.get(key) is not None:
                     body[key] = args[key]
             return ok_text(api_post("/notify", body))
+        if name == "reload":
+            body = {"sha": args.get("sha")}
+            if args.get("duration") is not None:
+                body["duration"] = args["duration"]
+            return ok_text(api_post("/reload", body))
         if name == "policy_get":
             return ok_text(api_get("/policy"))
         if name == "policy_set":

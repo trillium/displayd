@@ -7,14 +7,16 @@ displayd's core is purely reactive -- it changes only when someone POSTs
   selection) that all three autonomous behaviours read;
 - the configuration surface for all three behaviours (validated, persisted
   to disk so it survives a restart);
-- the switch-away/return mechanism shared by notifications and
-  chat-attention ("temporarily show something else, then go back");
+- the switch-away/return mechanism shared by notifications,
+  reload confirmations, and chat-attention ("temporarily show something
+  else, then go back");
 - the idle-off decision ("nothing happened for X, blank the panel").
 
-Priority is explicit, not emergent: notice (2) > attention (1). A higher
-priority transient preempts a lower one; a lower one arriving while a
-higher is active is ignored. The return target is always the last explicit
-(manual) selection -- never another transient -- so stacked transients can
+Priority is explicit, not emergent: notice and reload (2) > attention
+(1). A higher priority transient preempts a lower one; equal priorities
+re-arm (the newest event owns the return timer); a lower one arriving
+while a higher is active is ignored. The return target is always the last
+explicit (manual) selection -- never another transient -- so stacked transients can
 never strand the panel. Any manual /show or /clear bumps the generation
 counter, which cancels every in-flight transient: the manual choice wins,
 and a late timer can never clobber it.
@@ -35,8 +37,10 @@ import time
 import playlist as playlist_module
 
 # Priority: higher preempts lower. Idle-off is not a transient; it only
-# fires when no transient is active.
-PRIORITY = {"attention": 1, "notice": 2}
+# fires when no transient is active. notice and reload share the top
+# level: a deploy confirmation and an operator notice are equally
+# interruptive, so the newest of the two owns the return timer.
+PRIORITY = {"attention": 1, "notice": 2, "reload": 2}
 
 DEFAULTS = {
     "notifications": {

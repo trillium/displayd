@@ -105,6 +105,7 @@ publishes an unauthenticated control surface to everything that can route to it.
 | POST | `/show` | `{"renderer":"text","params":{...}}` | switch content |
 | POST | `/feed/<renderer>/<input>` | any JSON payload | push validated data into a view |
 | POST | `/notify` | `{"title":...}`, `body`?, `severity`? (`info`/`warn`/`critical`), `duration`? | transient notice, then automatic return |
+| POST | `/reload` | `{"sha":...}`, `duration`? | transient reload confirmation (RELOADED + full SHA + commit QR), then automatic return |
 | GET | `/policy` | – | autonomous-behaviour config + activity clock |
 | POST | `/policy` | `{"idle":{...},"chat_attention":{...},"notifications":{...},"playlist":{...}}` | update policy (persisted) |
 | GET | `/playlist` | – | rotation status: view, index, progress, hold reason |
@@ -193,6 +194,7 @@ evidence for later human-guided work, not a control loop.
 | `clock` | no | `format`, `color`, `background` |
 | `life` | no | `cell`, `density`, `speed` |
 | `notice` | yes | `title` (required), `body`, `severity` (`info`/`warn`/`critical`), `color`, `background` |
+| `reload` | yes | `sha` (required, full 40-char deployed commit SHA; QR encodes its commit page) |
 | `chat` | no | `title`, `lines` (default 7), `background` — inputs: `message`, `delete` |
 
 Static renderers draw one frame and return; that frame stays on screen.
@@ -342,6 +344,28 @@ wins, and a late timer can never clobber it.
 All three are configured over `GET`/`POST /policy` (and the control page)
 and persisted to `policy.json` next to the daemon (`DISPLAYD_POLICY`
 overrides the path), so they survive a restart.
+
+## Reload confirmation
+
+After deploying a new build, `POST /reload` puts a transient confirmation
+on the panel: the word RELOADED, the full deployed commit SHA, and a QR
+code. The QR payload is always exactly
+
+    https://github.com/trillium/displayd/commit/<full-sha>
+
+the commit page -- never the repository homepage, and never a
+caller-supplied URL. The request carries only the SHA (plus an optional
+`duration`); the daemon derives the URL itself, so an arbitrary QR payload
+cannot be smuggled in. Like a notice, the screen returns to whatever was
+showing when the duration elapses (default 10 s, range 1-300), and a manual
+`/show` or `/clear` cancels it outright. Anything but a full 40-character
+hexadecimal commit SHA -- missing, short, non-hex, or over-long -- is a
+clear HTTP 400.
+
+Example -- confirming the currently deployed lnx-server commit:
+
+    curl -s -X POST 100.81.88.113:8980/reload -H 'Content-Type: application/json' \
+      -d '{"sha":"25e0e740074740b6b98896a6076bf2763fe598f1"}'
 
 ## Playlist mode (automatic rotation)
 

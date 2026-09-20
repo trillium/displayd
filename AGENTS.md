@@ -21,7 +21,10 @@ When updating this file, preserve this bar for all agents and keep entries conci
   drivable from a MacBook while refusing LAN/localhost clients (host-local
   callers must use the tailnet address too).
 - Restarting the daemon blanks the screen (`DisplayDaemon.clear()` on boot),
-  so always `POST /show` afterwards; verify backlight value restores on power
+  so always `POST /show` afterwards; to prove the new build instead, `POST
+  /reload {"sha": "<full-40-char-sha>"}` shows a transient RELOADED +
+  SHA + commit-QR screen that returns to the prior view on its own
+  (rule + example in README "Reload confirmation"). Verify backlight value restores on power
   round-trips and never leave the panel black.
 - Beads overview store colours/icons: edit `~/displayd/state/beads-stores.json`
   on the host (format in `renderers/beads_style.py` docstring); the panel
@@ -35,8 +38,12 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - API: `POST /notify`, `POST /feed/<renderer>/<input>`, `GET`/`POST /policy`
   (all on the control page too). Only mutating POSTs count as activity;
   `GET` polling never resets the idle clock.
-- Priority: notice > chat-attention > idle-off; manual `/show`/`/clear`
-  cancels every transient. Chat-attention and idle-off are OFF by default.
+- Priority: notice = reload (2) > attention (1); newest of the top pair wins.
+  Manual `/show`/`/clear` cancels every transient. Chat-attention and idle-off are OFF by default.
+- Reload QR rule: payload is always
+  `https://github.com/trillium/displayd/commit/<full-sha>` (derived
+  server-side in `renderers/reload.py` + `DisplayDaemon.reload()`; the
+  request carries only the SHA, so no arbitrary QR URL is possible).
 - Backlight restore is floored (task-i0agw): dimmed readings (<10% of max)
   are never saved, and a too-low restore target falls back to max.
 - Policy config persists in `policy.json` next to the daemon
