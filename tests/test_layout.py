@@ -281,6 +281,28 @@ class LayoutDaemonTestCase(unittest.TestCase):
         after = self._frame().crop((0, 0, 1920, 540)).tobytes()
         self.assertEqual(before, after)
 
+    def test_rotation_yields_to_layout(self):
+        """An enabled playlist must not clobber an active layout: the
+        manual hold fires on set_layout, and even with it explicitly
+        resumed the layout-active safety net holds rotation (bar hidden)
+        across full dwells."""
+        self.daemon.set_policy({
+            "playlist": {"enabled": True, "views": [
+                {"renderer": "solid", "params": {"color": "red"},
+                 "dwell": 3}]}})
+        self._layout([{"name": "top", "height": "50%",
+                       "renderer": "solid",
+                       "params": {"color": "green"}}])
+        self.daemon.playlist.resume()  # clear the manual hold on purpose
+        self.assertEqual(self.daemon.playlist.status()["hold"],
+                         "layout-active")
+        self.assertIsNone(self.daemon.playlist.status()["progress"])
+        time.sleep(3.5)  # a full dwell passes under the hold
+        state = self.daemon.state()
+        self.assertIsNotNone(state["layout"],
+                             "rotation clobbered the layout")
+        self.assertIsNone(state["renderer"])
+
     def test_renderer_error_contained(self):
         self._layout([
             {"name": "bad", "height": "50%", "renderer": "boom"},
