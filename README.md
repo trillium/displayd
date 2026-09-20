@@ -357,8 +357,10 @@ the commit page -- never the repository homepage, and never a
 caller-supplied URL. The request carries only the SHA (plus an optional
 `duration`); the daemon derives the URL itself, so an arbitrary QR payload
 cannot be smuggled in. Like a notice, the screen returns to whatever was
-showing when the duration elapses (default 10 s, range 1-300), and a manual
-`/show` or `/clear` cancels it outright. Anything but a full 40-character
+showing when the duration elapses (default 10 s, range 1-300) -- with no
+explicit base view (a fresh restart) it returns to the clock instead of a
+blank panel -- and a manual `/show` or `/clear` cancels it outright.
+Anything but a full 40-character
 hexadecimal commit SHA -- missing, short, non-hex, or over-long -- is a
 clear HTTP 400.
 

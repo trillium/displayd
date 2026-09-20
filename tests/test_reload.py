@@ -291,6 +291,36 @@ class TestReloadTransient(ReloadDaemonTestCase):
         time.sleep(1.6)  # duration elapses: automatic return
         self.assertEqual(daemon.current, "solid")
 
+    def test_reload_without_base_view_returns_to_clock(self):
+        # Fresh restart: no explicit base view. The transient must still
+        # show, then fall back to the clock instead of a blank panel.
+        daemon = self.make_daemon()
+        self.assertIsNone(daemon.policy.base)
+        result = daemon.reload(DEPLOYED_SHA, duration=60)
+        self.assertEqual(daemon.current, "reload")
+        self.assertEqual(result["view"], "reload")
+        token = daemon.policy.active["token"]
+        daemon._transient_expired("reload", token)
+        self.assertEqual(daemon.current, "clock")
+
+    def test_reload_without_base_view_returns_automatically(self):
+        daemon = self.make_daemon(clock=None)  # real clock: timers fire
+        daemon.reload(DEPLOYED_SHA, duration=1)
+        self.assertEqual(daemon.current, "reload")
+        time.sleep(1.6)  # duration elapses: automatic return to clock
+        self.assertEqual(daemon.current, "clock")
+
+    def test_manual_show_during_no_base_reload_wins(self):
+        daemon = self.make_daemon()
+        daemon.reload(DEPLOYED_SHA, duration=60)
+        token = daemon.policy.active["token"]
+        daemon.show("text", {"text": "captain takes over"})
+        self.assertEqual(daemon.current, "text")
+        # The stale return timer fires late: it must not clobber the
+        # manual choice with the clock fallback.
+        daemon._transient_expired("reload", token)
+        self.assertEqual(daemon.current, "text")
+
     def test_default_duration_is_short(self):
         daemon = self.make_daemon()
         daemon.show("solid", {"color": "blue"})

@@ -1051,13 +1051,22 @@ class DisplayDaemon:
 
     def _transient_expired(self, kind, token):
         """Return timer fired: restore the base view only if nothing
-        manual happened since (generation check inside end_transient)."""
+        manual happened since (generation check inside end_transient).
+        A reload with no explicit base view (the normal state right
+        after a restart) falls back to the clock renderer instead of
+        blanking the panel; every other kind keeps the blank return."""
         base, ok = self.policy.end_transient(kind, token)
         if not ok:
             return
         try:
             if base is None:
-                self._clear_internal()
+                if kind == "reload":
+                    try:
+                        self._start_view("clock", {})
+                    except (KeyError, ValueError):
+                        self._clear_internal()
+                else:
+                    self._clear_internal()
             else:
                 self._start_view(base["renderer"], base["params"])
         except (KeyError, ValueError):
@@ -1483,9 +1492,11 @@ class DisplayDaemon:
         400) or KeyError when the reload renderer is not installed (404).
 
         Same switch-then-return machinery as notify(): the prior explicit
-        view (currently the clock) resumes when the duration elapses, a
-        manual /show or /clear cancels the transient outright, and reload
-        shares notice's top priority level so the newest of the two wins."""
+        view resumes when the duration elapses -- with no explicit base
+        view (a fresh restart) the clock resumes instead of a blank
+        panel -- a manual /show or /clear cancels the transient outright,
+        and reload shares notice's top priority level so the newest of
+        the two wins."""
         if sha is None or (isinstance(sha, str) and not sha.strip()):
             raise ValueError("sha is required: post the full 40-character "
                              "deployed commit SHA")
