@@ -23,10 +23,74 @@ Quick start (foreground smoke test)::
   auth and does not need any: run it on the same host (loopback) or over the
   tailnet, never across the open internet. Do not bind displayd wider to
   accommodate touch -- point touch at displayd, not the other way round.
-- The action model is a closed allowlist (`playlist_next/pause/resume`,
-  `screen_on/off`, `clear`, `show`, `notify`). There is no generic "POST any
-  path" or shell action, so a bad config cannot become command execution.
-  No credentials live in source control; there are none to configure.
+- **Caller rule (closed): the configured `endpoint` must be loopback
+  (`127.0.0.0/8`, `::1`, `localhost`) or a tailnet address
+  (`100.64.0.0/10`)**, else `load_config()` refuses it before the device
+  is opened and `DisplaydClient.dispatch()` refuses it without sending a
+  byte. LAN literals, public IPs, non-local hostnames (including tailnet
+  MagicDNS -- use the tailnet IP literal), and non-http(s) schemes all
+  fail closed. See "Named-action allowlist + caller rule" below.
+- The action model is a closed allowlist (today: `playlist_next/pause/resume`,
+  `screen_on/off`, `clear`, `show`, `notify`, `feedback`). There is no generic
+  "POST any path" or shell action, so a bad config cannot become command
+  execution. No credentials live in source control; there are none to
+  configure.
+
+## Named-action allowlist + caller rule (parlay guard shape)
+
+The structure mirrors trillium/parlay's chat guard
+(`packages/server/src/guard/paths.ts`, `origin.ts`, `index.ts`):
+
+- `paths.ts` owns WHICH routes are guarded -- a closed set classified by
+  handler effect, with the accepted residue named. Its classification rule,
+  quoted: the guarded set is "the routes that write server state, drive a
+  device, or hand out an identifier the rest of the surface can then be aimed
+  with. Within that surface, membership is decided by what the handler DOES,
+  REGARDLESS OF HTTP METHOD."
+- `origin.ts` owns WHO may call them (loopback / private-LAN / allow-list).
+- `index.ts` applies the policy with silent denies (refusals carrying no CORS
+  headers, so a refused caller learns nothing back).
+
+Mapped onto touch (`touch.py`):
+
+- **Action table (`ACTION_TABLE`)** = WHICH named actions may ever run. Each
+  entry maps an action name to its handler effect: the displayd endpoint the
+  tap drives plus the fixed body shape (the touch analogue of "what the
+  handler does"). The table is closed by default: `resolve_action()` returns
+  `None` for unknown names (logged, no HTTP, no exception in the service
+  loop -- the index.ts silent-deny shape), while `action_request()` raises
+  `ValueError` for the same input so `load_config()` fails fast on a bad
+  config before the device is opened. `DisplaydClient.dispatch()` applies
+  both halves at dispatch time and returns an error summary on denial.
+- **Caller rule (`endpoint_allowed()`)** = WHO may be called: loopback or
+  tailnet only. Deliberately stricter than parlay's `origin.ts` (which also
+  admits private-LAN for the phone panel): touch has no LAN caller, so LAN
+  literals fail closed here.
+- **Named residue** (deliberately outside the table, recorded in `touch.py`
+  next to `ACTION_TABLE`): no generic "POST any path" action, no shell-out
+  action, no free-text feedback notes/params passthrough, no MagicDNS / LAN
+  / public endpoint. Each stays out until a named action with a fixed body
+  shape justifies it.
+
+How to add a named action (all four, no shortcuts):
+
+1. Add one `ACTION_TABLE` entry: name, one-sentence `effect` (the panel
+   state it changes -- this is the classification), `method`/`path`, and
+   the `params` it reads.
+2. Validate its parameters in `_resolve()` in `touch.py`: required fields,
+   types, and ranges (ratings are `int` 1-5, `bool` excluded); build a
+   fixed-shape body and ignore everything else in the dict.
+3. Add tests in `tests/test_touch.py`: valid dispatch, malformed payloads
+   denied by both `action_request()` (raises) and `resolve_action()`
+   (silent `None`), and an end-to-end region tap where it fits.
+4. Document it here and add an example entry to `touch.json.example`.
+
+The first action added under this table is `feedback`: a tap records a
+fixed-shape panel rating -- `{"name": "feedback", "view": "clock",
+"rating": 5}` posts `{"view", "rating", "agent": "touch"}` (plus an
+optional `categories` list) to `POST /feedback`. The `agent` field is pinned
+to `"touch"` so a tap cannot spoof authorship, and free-text notes/params
+stay out per the residue rule above.
 
 ## Device discovery
 

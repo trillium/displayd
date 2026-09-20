@@ -32,6 +32,11 @@
       "id": "screen-on",
       "rect": [0, 0, 640, 1080],
       "action": {"name": "screen_on"}
+    },
+    {
+      "id": "tap-to-rate",
+      "rect": [640, 840, 640, 240],
+      "action": {"name": "feedback", "view": "clock", "rating": 5}
     }
   ]
 }

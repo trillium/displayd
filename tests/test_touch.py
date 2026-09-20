@@ -19,11 +19,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 import touch
 from touch import (
     ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_SLOT, ABS_MT_TRACKING_ID,
-    ABS_X, ABS_Y, BTN_TOUCH, CONFIDENCE_DEFAULTS, EV_ABS, EV_KEY, EV_SYN,
-    SYN_REPORT, DisplaydClient, EvdevParser, TapDetector, TouchEvent,
-    TouchService, action_request, confidence_env_override, default_config,
-    hit_test, load_config, normalize, normalize_confidence_feedback,
-    pack_event, parse_event,
+    ABS_X, ABS_Y, BTN_TOUCH, ACTION_TABLE, CONFIDENCE_DEFAULTS, EV_ABS,
+    EV_KEY, EV_SYN, SYN_REPORT, DisplaydClient, EvdevParser, TapDetector,
+    TouchEvent, TouchService, action_request, confidence_env_override,
+    default_config, endpoint_allowed, hit_test, load_config, normalize,
+    normalize_confidence_feedback, pack_event, parse_event, resolve_action,
 )
 
 
@@ -743,6 +743,213 @@ class ConfidenceFeedbackTest(unittest.TestCase):
         svc.handle_frame([TouchEvent("up", 1, 4095, 2047)])
         self.assertEqual([e[0] for e in events],
                          ["dispatch", "feedback"])
+
+
+class GuardShapeTest(unittest.TestCase):
+    """The parlay-guard-shaped allowlist: closed table + silent denies.
+
+    Mirrors trillium/parlay packages/server/src/guard/ (paths.ts: closed
+    set classified by handler effect; index.ts: silent denies)."""
+
+    def test_table_is_the_closed_set(self):
+        self.assertEqual(set(ACTION_TABLE), {
+            "playlist_next", "playlist_pause", "playlist_resume",
+            "screen_on", "screen_off", "clear", "show", "notify",
+            "feedback",
+        })
+        # Every entry classifies by handler effect: a daemon endpoint the
+        # tap drives, never just a name.
+        for name, spec in ACTION_TABLE.items():
+            self.assertTrue(spec.get("effect"), name)
+            self.assertEqual(spec["method"], "POST", name)
+            self.assertTrue(spec["path"].startswith("/"), name)
+
+    def test_named_residue_stays_out(self):
+        # No generic call-any-URL action, no shell-out, no free-text
+        # feedback passthrough: a bad config cannot become command
+        # execution. If a future diff adds one of these names, this test
+        # forces the decision to be deliberate.
+        for forbidden in ("exec", "shell", "post", "get", "fetch",
+                          "url", "command", "run"):
+            self.assertNotIn(forbidden, ACTION_TABLE)
+            self.assertIsNone(resolve_action({"name": forbidden}))
+
+    def test_unknown_action_denied_silently(self):
+        # Silent (index.ts shape): None, no exception -- the service loop
+        # keeps serving touches.
+        for bad in ({"name": "exec"}, {"name": "POST /screen/off"},
+                    {}, {"name": None}, "playlist_next"):
+            self.assertIsNone(resolve_action(bad))
+        # Strict variant still raises for fail-fast config validation.
+        with self.assertRaises(ValueError):
+            action_request({"name": "exec"})
+
+    def test_dispatch_denies_unknown_without_http(self):
+        posted = []
+
+        class RecordingClient(DisplaydClient):
+            def post(self, path, body):
+                posted.append((path, body))
+                return 200, {"ok": True}
+
+        client = RecordingClient("http://127.0.0.1:9")
+        summary = client.dispatch({"name": "exec"})
+        self.assertIn("error", summary)
+        self.assertEqual(summary["action"], "exec")
+        self.assertEqual(posted, [])  # not a byte on the wire
+
+
+class CallerRuleTest(unittest.TestCase):
+    """endpoint_allowed(): loopback or tailnet only (origin.ts shape)."""
+
+    def test_loopback_allowed(self):
+        for url in ("http://127.0.0.1:8980", "http://127.9.9.9/",
+                    "http://localhost:8980",
+                    "http://LOCALHOST:8980",
+                    "http://[::1]:8980",
+                    "https://127.0.0.1:8980"):
+            self.assertTrue(endpoint_allowed(url), url)
+
+    def test_tailnet_allowed(self):
+        for url in ("http://100.81.88.113:8980",  # lnx-server
+                    "http://100.64.0.1:8980",
+                    "http://100.127.255.254:8980"):
+            self.assertTrue(endpoint_allowed(url), url)
+
+    def test_everything_else_denied(self):
+        for url in ("http://192.168.1.5:8980",   # LAN is NOT enough
+                    "http://10.0.0.2:8980",
+                    "http://172.16.0.2:8980",
+                    "http://8.8.8.8:8980",        # open internet
+                    "http://100.63.255.255:8980",  # just below CGNAT
+                    "http://100.128.0.0:8980",     # just above CGNAT
+                    "http://lnx-server:8980",      # MagicDNS: use the IP
+                    "http://displayd.local:8980",
+                    "https://example.com/",
+                    "file:///etc/passwd",
+                    "", "not-a-url", "http://"):
+            self.assertFalse(endpoint_allowed(url), url)
+
+    def test_bad_endpoint_fails_config_before_device_open(self):
+        overlay = {"endpoint": "http://8.8.8.8:8980"}
+        with tempfile.NamedTemporaryFile("w", suffix=".json",
+                                         delete=False) as fh:
+            json.dump(overlay, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                load_config(path)
+        finally:
+            os.unlink(path)
+
+    def test_dispatch_refuses_disallowed_endpoint_without_http(self):
+        posted = []
+
+        class RecordingClient(DisplaydClient):
+            def post(self, path, body):
+                posted.append((path, body))
+                return 200, {"ok": True}
+
+        # Constructed directly (bypassing load_config, as --endpoint
+        # once allowed): dispatch still refuses, silently.
+        client = RecordingClient("http://8.8.8.8:8980")
+        summary = client.dispatch({"name": "screen_on"})
+        self.assertIn("error", summary)
+        self.assertEqual(posted, [])
+
+
+class FeedbackActionTest(unittest.TestCase):
+    """The first named action under the new table: tap-to-rate."""
+
+    def test_feedback_resolves_to_fixed_shape(self):
+        method, path, body = action_request(
+            {"name": "feedback", "view": "clock", "rating": 5})
+        self.assertEqual((method, path), ("POST", "/feedback"))
+        self.assertEqual(body, {"view": "clock", "rating": 5,
+                                "agent": "touch"})
+
+    def test_feedback_categories_optional_but_closed(self):
+        _, _, body = action_request(
+            {"name": "feedback", "view": "clock", "rating": 4,
+             "categories": ["legible"]})
+        self.assertEqual(body["categories"], ["legible"])
+        # notes/params are NOT passed through (named residue): the body
+        # stays a fixed-shape rating.
+        _, _, body = action_request(
+            {"name": "feedback", "view": "clock", "rating": 4,
+             "notes": "hello", "params": {"x": 1}})
+        self.assertNotIn("notes", body)
+        self.assertNotIn("params", body)
+
+    def test_feedback_validation(self):
+        for bad in ({"name": "feedback"},
+                    {"name": "feedback", "view": "", "rating": 5},
+                    {"name": "feedback", "view": "clock"},
+                    {"name": "feedback", "view": "clock",
+                     "rating": 0},
+                    {"name": "feedback", "view": "clock",
+                     "rating": 6},
+                    {"name": "feedback", "view": "clock",
+                     "rating": True},
+                    {"name": "feedback", "view": "clock",
+                     "rating": "5"},
+                    {"name": "feedback", "view": "clock",
+                     "rating": 5, "categories": "legible"},
+                    {"name": "feedback", "view": "clock",
+                     "rating": 5, "categories": [""]}):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                action_request(bad)
+            self.assertIsNone(resolve_action(bad))
+
+    def test_feedback_dispatches(self):
+        calls = []
+
+        class FakeHTTP:
+            def post(self, path, body):
+                calls.append((path, body))
+                return 201, {"ok": True}
+
+        client = DisplaydClient("http://127.0.0.1:9")
+        client.post = FakeHTTP().post
+        summary = client.dispatch({"name": "feedback", "view": "clock",
+                                   "rating": 5})
+        self.assertEqual(calls, [("/feedback", {"view": "clock",
+                                                  "rating": 5,
+                                                  "agent": "touch"})])
+        self.assertEqual(summary["status"], 201)
+
+    def test_feedback_in_region_end_to_end(self):
+        cfg = default_config()
+        cfg.update({
+            "width": 1920, "height": 1080,
+            "calibration": dict(CAL),
+            "tap_max_seconds": 60, "debounce_seconds": 0,
+            "endpoint": "http://127.0.0.1:8980",
+            "regions": [
+                {"id": "rate-it", "rect": [640, 840, 640, 240],
+                 "action": {"name": "feedback", "view": "clock",
+                             "rating": 5}},
+            ],
+        })
+        posted = []
+
+        class FakeClient:
+            def dispatch(self, action, dry_run=False):
+                method, path, body = action_request(action)
+                posted.append((path, body))
+                return {"action": action["name"], "method": method,
+                        "path": path, "body": body, "status": 201}
+
+        svc = TouchService(cfg, client=FakeClient())
+        # Raw (2047, 3900) -> display ~(959, 1029): inside the rate strip.
+        svc.handle_frame([TouchEvent("down", 0, 2047, 3900)],
+                         dry_run=True)
+        summary = svc.handle_frame([TouchEvent("up", 0, 2047, 3900)],
+                                   dry_run=True)
+        self.assertEqual(summary["path"], "/feedback")
+        self.assertEqual(posted, [("/feedback", {"view": "clock",
+                                                   "rating": 5,
+                                                   "agent": "touch"})])
 
 
 if __name__ == "__main__":

@@ -135,6 +135,11 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - evdev `value` is signed (`<qqHHi`, 24-byte 64-bit records); packing it unsigned breaks
   `ABS_MT_TRACKING_ID -1` (lift). Synthetic-stream tests live in
   `tests/test_touch.py`; smoke live with `--dry-run` before enabling.
+- Touch allowlist is guard-shaped (parlay `packages/server/src/guard/`
+  mirror): `ACTION_TABLE` in `touch.py` (closed, classified by handler
+  effect) + `endpoint_allowed()` (loopback/tailnet-CGNAT only) + silent
+  denies at dispatch; first table action is tap-to-rate `feedback`.
+  Procedure to add actions: TOUCH.md "how to add a named action".
 - Touchscreen confidence mode (opt-in tap test): `renderers/touch_confidence.py`
   draws the configured regions + live tap diagnostics; `touch.py`
   `confidence_feedback` switch (off by default, `DISPLAYD_TOUCH_CONFIDENCE=1`

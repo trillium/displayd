@@ -25,6 +25,7 @@ and rollback. See tests/test_touch.py for the deterministic fixture suite
 
 import argparse
 import glob
+import ipaddress
 import json
 import logging
 import os
@@ -34,6 +35,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
+from urllib.parse import urlsplit
 
 LOG = logging.getLogger("displayd-touch")
 
@@ -84,19 +86,147 @@ assert EVENT_SIZE == 24, "64-bit input_event must be 24 bytes"
 DEFAULT_DEVICE = "/dev/input/event8"
 DEFAULT_ENDPOINT = "http://127.0.0.1:8980"
 
-# Actions this module may ever invoke. Anything not listed here is rejected
-# by dispatch_action(); there is deliberately no "run arbitrary POST" entry,
-# so a compromised/mis-edited config cannot become command execution.
-ALLOWED_ACTIONS = (
-    "playlist_next",
-    "playlist_pause",
-    "playlist_resume",
-    "screen_on",
-    "screen_off",
-    "clear",
-    "show",
-    "notify",
-)
+# ---------------------------------------------------------------------------
+# Named-action allowlist + caller rule (parlay guard shape)
+# ---------------------------------------------------------------------------
+# This section mirrors trillium/parlay's chat guard,
+# packages/server/src/guard/paths.ts, origin.ts, index.ts:
+#
+#   paths.ts  owns WHICH routes are guarded -- a closed set classified by
+#             handler effect, with the accepted residue named there.
+#   origin.ts owns WHO may call them (loopback / private-LAN / allow-list).
+#   index.ts  applies the policy with silent denies (403/415 carrying no
+#             CORS headers, so a refused caller learns nothing back).
+#
+# Mapped onto touch:
+#   ACTION_TABLE      (this module)  <-> paths.ts:  WHICH named actions may
+#                                        ever run, classified by handler
+#                                        effect (which daemon endpoint the
+#                                        tap drives + the fixed body shape),
+#                                        never by the action's name. Closed
+#                                        by default; unknown names are
+#                                        denied silently (resolve_action()
+#                                        returns None: logged, no HTTP, no
+#                                        exception in the service loop).
+#   endpoint_allowed() (this module) <-> origin.ts: WHO/WHERE may be called
+#                                        -- loopback or tailnet only, never
+#                                        the open internet. Deliberately
+#                                        stricter than parlay (which also
+#                                        admits private-LAN for the phone
+#                                        panel): touch has no LAN caller.
+#   DisplaydClient.dispatch()        <-> index.ts:  applies both halves at
+#                                        dispatch time; denials return an
+#                                        error summary, never an exception
+#                                        and never a byte on the wire.
+#
+# Parlay's classification rule, quoted (paths.ts, guarded-route-set
+# comment): the guarded set is "the routes that write server state, drive
+# a device, or hand out an identifier the rest of the surface can then be
+# aimed with. Within that surface, membership is decided by what the
+# handler DOES, REGARDLESS OF HTTP METHOD." The touch analogue: the table
+# is the PANEL-STATE-CHANGING surface -- every entry POSTs one displayd
+# endpoint that changes what the panel shows or records. Membership is
+# decided by that handler effect, never by the action name's spelling.
+#
+# Named residue (deliberately outside the table, not a queue that grows
+# one entry per request): no generic "POST any path" action, no shell-out
+# action, no free-text feedback notes/params passthrough, no MagicDNS /
+# LAN / public endpoint. Each is the same class of defect this table
+# exists to prevent (a bad config becoming command execution or an
+# internet-reachable caller), so each stays out until a named action with
+# a fixed body shape justifies it -- see TOUCH.md "how to add a named
+# action".
+#
+# ACTION_TABLE maps action name -> handler effect. "method"/"path" are
+# the daemon endpoint the tap drives; "effect" states the classification
+# (what changes on the panel) for the next reader. Actions needing
+# config-supplied parameters declare them under "params" and validate
+# them in _resolve(); anything else in the action dict is ignored.
+ACTION_TABLE = {
+    "playlist_next": {
+        "effect": "advance playlist rotation",
+        "method": "POST", "path": "/playlist/next",
+    },
+    "playlist_pause": {
+        "effect": "hold playlist rotation",
+        "method": "POST", "path": "/playlist/pause",
+    },
+    "playlist_resume": {
+        "effect": "resume playlist rotation",
+        "method": "POST", "path": "/playlist/resume",
+    },
+    "screen_on": {
+        "effect": "drive panel backlight on",
+        "method": "POST", "path": "/screen/on",
+    },
+    "screen_off": {
+        "effect": "drive panel backlight off",
+        "method": "POST", "path": "/screen/off",
+    },
+    "clear": {
+        "effect": "blank the panel",
+        "method": "POST", "path": "/clear",
+    },
+    "show": {
+        "effect": "replace the shown view (renderer named in config)",
+        "method": "POST", "path": "/show",
+        "params": ("renderer", "params"),
+    },
+    "notify": {
+        "effect": "interrupt the panel with a transient notice",
+        "method": "POST", "path": "/notify",
+        "params": ("title", "body", "severity", "duration",
+                   "color"),
+    },
+    "feedback": {
+        "effect": "record a fixed-shape tap-to-rate feedback rating",
+        "method": "POST", "path": "/feedback",
+        "params": ("view", "rating", "categories"),
+    },
+}
+
+# Backwards-compatible name list (was the whole allowlist before the
+# guard-shaped table above). New code should read ACTION_TABLE.
+ALLOWED_ACTIONS = tuple(ACTION_TABLE)
+
+# Tailnet carrier-grade NAT range: 100.64.0.0/10. An endpoint whose host
+# is inside it is a tailnet address; anything else non-loopback is not.
+TAILNET_CGNAT = "100.64.0.0/10"
+
+
+def endpoint_allowed(url):
+    """Caller rule: loopback or tailnet only, never the open internet.
+
+    Mirrors origin.ts (WHO may call): parlay allows no-Origin
+    server-to-server callers plus loopback / private-LAN / allow-listed
+    origins and denies "null"; touch is stricter because it has no LAN
+    caller -- only 127.0.0.0/8, ::1, localhost, or 100.64.0.0/10. Closed
+    by default: LAN literals, public IPs, non-local hostnames (including
+    MagicDNS -- use the tailnet IP literal), and non-http(s) schemes all
+    fail. Unparseable input fails rather than defaulting open.
+    """
+    try:
+        parts = urlsplit(url)
+    except Exception:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    host = parts.hostname or ""
+    host = host.strip().strip("[]").lower()
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False  # non-local hostname: closed (see residue note)
+    if addr.is_loopback:
+        return True
+    try:
+        return addr in ipaddress.ip_network(TAILNET_CGNAT)
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -338,46 +468,83 @@ def hit_test(x, y, regions):
     return None
 
 
-def action_request(action):
-    """Translate a validated action dict into (method, path, body).
-
-    Raises ValueError for unknown action names (closed allowlist) or
-    malformed payloads. Returned bodies are fixed-shape; free-form renderer
-    params are allowed only for the `show` target renderer named in config.
-    """
-    name = action.get("name")
-    if name not in ALLOWED_ACTIONS:
-        raise ValueError("refusing unknown action: %r" % (name,))
-    if name == "playlist_next":
-        return "POST", "/playlist/next", {}
-    if name == "playlist_pause":
-        return "POST", "/playlist/pause", {}
-    if name == "playlist_resume":
-        return "POST", "/playlist/resume", {}
-    if name == "screen_on":
-        return "POST", "/screen/on", {}
-    if name == "screen_off":
-        return "POST", "/screen/off", {}
-    if name == "clear":
-        return "POST", "/clear", {}
+def _resolve(action):
+    """Pure resolver: action dict -> ((method, path, body), None) on
+    success, (None, reason) on denial. Both public variants below go
+    through here so the table has exactly one reader."""
+    name = action.get("name") if isinstance(action, dict) else None
+    spec = ACTION_TABLE.get(name)
+    if spec is None:
+        return None, "refusing unknown action: %r" % (name,)
+    if name in ("playlist_next", "playlist_pause", "playlist_resume",
+                "screen_on", "screen_off", "clear"):
+        return (spec["method"], spec["path"], {}), None
     if name == "show":
         renderer = action.get("renderer")
         if not renderer or not isinstance(renderer, str):
-            raise ValueError("show action needs a renderer name")
+            return None, "show action needs a renderer name"
         params = action.get("params") or {}
         if not isinstance(params, dict):
-            raise ValueError("show params must be an object")
-        return "POST", "/show", {"renderer": renderer, "params": params}
+            return None, "show params must be an object"
+        return ("POST", "/show",
+                {"renderer": renderer, "params": params}), None
     if name == "notify":
         title = action.get("title")
         if not title or not isinstance(title, str):
-            raise ValueError("notify action needs a title")
+            return None, "notify action needs a title"
         body = {"title": title}
         for key in ("body", "severity", "duration", "color"):
             if key in action:
                 body[key] = action[key]
-        return "POST", "/notify", body
-    raise ValueError("refusing unknown action: %r" % (name,))  # pragma: no cover
+        return ("POST", "/notify", body), None
+    if name == "feedback":
+        view = action.get("view")
+        if not view or not isinstance(view, str):
+            return None, "feedback action needs a view name"
+        rating = action.get("rating")
+        if (isinstance(rating, bool) or not isinstance(rating, int)
+                or not 1 <= rating <= 5):
+            return None, "feedback rating must be an integer 1-5"
+        body = {"view": view, "rating": rating, "agent": "touch"}
+        # Categories only: notes/params stay out (named residue above),
+        # so a tap records a fixed-shape rating and nothing else.
+        if "categories" in action:
+            categories = action["categories"]
+            if (not isinstance(categories, (list, tuple))
+                    or any(not c or not isinstance(c, str)
+                           for c in categories)):
+                return None, "feedback categories must be a list of names"
+            body["categories"] = list(categories)
+        return ("POST", "/feedback", body), None
+    return None, "refusing unknown action: %r" % (name,)  # pragma: no cover
+
+
+def resolve_action(action):
+    """Silent variant (index.ts shape): (method, path, body), or None
+    when the action is denied. The denial is logged and nothing else
+    happens -- no HTTP, no exception in the service loop."""
+    resolved, reason = _resolve(action)
+    if resolved is None:
+        name = action.get("name") if isinstance(action, dict) else None
+        LOG.warning("touch action denied (closed allowlist): %s", reason)
+        return None
+    return resolved
+
+
+def action_request(action):
+    """Strict variant: translate a validated action dict into
+    (method, path, body).
+
+    Raises ValueError for unknown action names (closed allowlist) or
+    malformed payloads. Used for fail-fast config validation in
+    load_config(); runtime dispatch prefers resolve_action() above.
+    Returned bodies are fixed-shape; free-form renderer params are
+    allowed only for the `show` target renderer named in config.
+    """
+    resolved, reason = _resolve(action)
+    if resolved is None:
+        raise ValueError(reason)
+    return resolved
 
 
 class DisplaydClient:
@@ -412,10 +579,27 @@ class DisplaydClient:
 
     def dispatch(self, action, dry_run=False):
         """Validate + (unless dry_run) POST an action dict. Returns a
-        summary dict describing what was (or would be) done."""
-        method, path, body = action_request(action)
-        summary = {"action": action.get("name"), "method": method,
+        summary dict describing what was (or would be) done.
+
+        Policy application point (index.ts shape): unknown actions and
+        disallowed endpoints are denied silently -- an error summary, no
+        exception, no byte on the wire -- so a bad config can neither
+        crash the service loop nor reach an unexpected caller."""
+        name = action.get("name") if isinstance(action, dict) else None
+        resolved = resolve_action(action)
+        if resolved is None:
+            return {"action": name, "dry_run": bool(dry_run),
+                    "error": "refusing unknown action: %r" % (name,)}
+        method, path, body = resolved
+        summary = {"action": name, "method": method,
                    "path": path, "body": body, "dry_run": bool(dry_run)}
+        if not endpoint_allowed(self.base_url):
+            LOG.warning("touch dispatch denied: endpoint %r is not "
+                        "loopback or tailnet (closed caller rule)",
+                        self.base_url)
+            summary["error"] = ("refusing endpoint %r: not loopback or "
+                                  "tailnet" % (self.base_url,))
+            return summary
         if dry_run:
             return summary
         status, resp = self.post(path, body)
@@ -468,14 +652,15 @@ def default_config():
 def load_config(path=None):
     """Load JSON config file over the defaults. Env overrides (highest
     precedence): DISPLAYD_TOUCH_DEVICE, DISPLAYD_URL/DISPLAYD_ENDPOINT,
-    DISPLAYD_TOUCH_WIDTH/HEIGHT. Validates regions/actions eagerly so a
-    bad config fails before the device is opened."""
+    DISPLAYD_TOUCH_WIDTH/HEIGHT. Validates regions/actions and the endpoint
+    caller rule eagerly so a bad config fails before the device is opened."""
     cfg = default_config()
     if path:
         with open(path, "r", encoding="utf-8") as fh:
             overlay = json.load(fh)
         if not isinstance(overlay, dict):
             raise ValueError("touch config must be a JSON object")
+
         for key, value in overlay.items():
             if key == "calibration" and isinstance(value, dict):
                 cfg["calibration"].update(value)
@@ -500,6 +685,11 @@ def load_config(path=None):
             confidence_env_override(env["DISPLAYD_TOUCH_CONFIDENCE"]))
     if cfg["width"] <= 0 or cfg["height"] <= 0:
         raise ValueError("width/height must be positive")
+    if not endpoint_allowed(cfg["endpoint"]):
+        raise ValueError(
+            "endpoint %r is not loopback or tailnet: touch only calls "
+            "displayd on the same host or over the tailnet, never the "
+            "open internet (see TOUCH.md)" % (cfg["endpoint"],))
     regions = cfg.get("regions") or []
     seen = set()
     for region in regions:
@@ -835,7 +1025,8 @@ def build_arg_parser():
 
 
 def main(argv=None):
-    args = build_arg_parser().parse_args(argv)
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     if args.list_devices:
@@ -851,6 +1042,12 @@ def main(argv=None):
         cfg["width"] = args.width
     if args.height:
         cfg["height"] = args.height
+    # CLI overrides bypass load_config's fail-fast, so re-apply the
+    # caller rule here before the device is opened.
+    if not endpoint_allowed(cfg["endpoint"]):
+        parser.error("endpoint %r is not loopback or tailnet: touch "
+                     "only calls displayd on the same host or over the "
+                     "tailnet" % (cfg["endpoint"],))
     if args.confidence_feedback:
         cfg["confidence_feedback"] = normalize_confidence_feedback(
             dict(cfg.get("confidence_feedback") or {}, enabled=True))
