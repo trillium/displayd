@@ -27,8 +27,9 @@ When updating this file, preserve this bar for all agents and keep entries conci
   callers must use the tailnet address too).
 - Restarting the daemon blanks the screen (`DisplayDaemon.clear()` on boot),
   so always `POST /show` afterwards; to prove the new build instead, `POST
-  /reload {"sha": "<full-40-char-sha>"}` shows a transient RELOADED +
-  SHA + commit-QR screen that returns to the prior view on its own
+  /reload {"sha": "<full-40-char-sha>"}` shows a RELOADED +
+  SHA + commit-QR screen that stays until a touchscreen tap (`POST
+  /touch/tap`, auto-sent by `touch.py`) returns it to the prior view
   (rule + example in README "Reload confirmation"). Verify backlight value restores on power
   round-trips and never leave the panel black.
 - Beads overview store colours/icons: edit `~/displayd/state/beads-stores.json`
@@ -167,6 +168,11 @@ When updating this file, preserve this bar for all agents and keep entries conci
   override) POSTs resolved taps best-effort to its feed after action
   dispatch. Reversible procedure + lnx-server calls in TOUCH.md;
   tests in `tests/test_touch_confidence.py`.
+- Every valid tap sends `POST /touch/tap` before region hit-testing: it
+  dismisses only an active `reload` view (saved base, else clock) and is a
+  server-side no-op otherwise, so center/dead-zone taps still clear reload
+  while region actions are unchanged. A failed dismissal never blocks the
+  region action that follows.
 
 ## Stream monitor (jumbotron live frames)
 

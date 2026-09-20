@@ -18,8 +18,10 @@ API
   DELETE /layout                     clear the layout (blank screen)
   POST /feed/<renderer>/<input>  push a validated payload into a view
   POST /notify  {"title":...,"body"?,"severity"?,"duration"?} transient notice
-  POST /reload  {"sha":...,"duration"?} transient reload confirmation,
-               then automatic return
+  POST /reload  {"sha":...} reload confirmation (RELOADED + SHA + QR),
+               stays until a tap dismisses it (POST /touch/tap)
+  POST /touch/tap  dismiss an active reload transient (tap-to-return),
+               no-op for anything else
   GET  /policy  autonomous-behaviour config + activity clock
   POST /policy  {"idle":{...},"chat_attention":{...},"notifications":{...}}
   POST /clear                        blank the screen to black
@@ -98,7 +100,12 @@ def read_deploy_stamp(path=None):
 # drift between validation and rendering.
 RELOAD_COMMIT_URL_PREFIX = "https://github.com/trillium/displayd/commit/"
 RELOAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
-RELOAD_DEFAULT_DURATION = 10  # seconds the reload screen stays up when unset
+# Reload confirmation (POST /reload) stays up indefinitely until dismissed
+# by a touchscreen tap (POST /touch/tap) or cancelled by a manual /show or
+# /clear -- it never expires by duration. The duration constants below are
+# kept only to validate a legacy `duration` field when callers still send
+# one (accepted, ignored for expiry); new clients should omit it.
+RELOAD_DEFAULT_DURATION = None  # indefinite: no automatic return
 RELOAD_DURATION_MIN, RELOAD_DURATION_MAX = 1, 300
 
 KDSETMODE = 0x4B3A
@@ -1551,7 +1558,7 @@ class DisplayDaemon:
         return out
 
     def reload(self, sha=None, duration=None):
-        """Show a transient reload confirmation, then return to the base view.
+        """Show the reload confirmation until a tap dismisses it.
 
         `sha` must be the full 40-character hexadecimal deployed commit
         SHA; the screen shows RELOADED, the SHA, and a QR code whose payload
@@ -1560,12 +1567,15 @@ class DisplayDaemon:
         payload cannot be smuggled in. Raises ValueError on bad input (HTTP
         400) or KeyError when the reload renderer is not installed (404).
 
-        Same switch-then-return machinery as notify(): the prior explicit
-        view resumes when the duration elapses -- with no explicit base
-        view (a fresh restart) the clock resumes instead of a blank
-        panel -- a manual /show or /clear cancels the transient outright,
-        and reload shares notice's top priority level so the newest of
-        the two wins."""
+        Unlike notify(), there is no return timer: the screen stays on the
+        reload view indefinitely. A touchscreen tap (POST /touch/tap via
+        dismiss_reload()) returns through the existing return path -- the
+        saved base view, or the clock after a fresh restart with no base
+        view. A manual /show or /clear cancels the transient outright, and
+        reload shares notice's top priority level so the newest of the
+        two wins. A legacy `duration` field is still validated when
+        supplied but never armed: it is accepted and ignored, and the
+        response reports "return_in": None (indefinite)."""
         if sha is None or (isinstance(sha, str) and not sha.strip()):
             raise ValueError("sha is required: post the full 40-character "
                              "deployed commit SHA")
@@ -1579,29 +1589,33 @@ class DisplayDaemon:
             raise ValueError("sha must be hexadecimal (0-9, a-f): "
                              "%r is not a commit SHA" % sha)
         sha = sha.lower()
-        if duration is None:
-            duration = RELOAD_DEFAULT_DURATION
-        try:
-            duration = float(duration)
-        except (TypeError, ValueError):
-            raise ValueError("duration must be a number of seconds")
-        if not (RELOAD_DURATION_MIN <= duration <= RELOAD_DURATION_MAX):
-            raise ValueError("duration must be within [%d, %d]"
-                             % (RELOAD_DURATION_MIN, RELOAD_DURATION_MAX))
+        if duration is not None:
+            # Legacy field: validated for compatibility, ignored for
+            # expiry -- the reload view never returns on its own.
+            try:
+                legacy = float(duration)
+            except (TypeError, ValueError):
+                raise ValueError("duration must be a number of seconds")
+            if not (RELOAD_DURATION_MIN <= legacy <= RELOAD_DURATION_MAX):
+                raise ValueError("duration must be within [%d, %d]"
+                                 % (RELOAD_DURATION_MIN, RELOAD_DURATION_MAX))
         params = {"sha": sha}
         entry = self.renderers.get("reload")
         if not entry or "module" not in entry:
             raise KeyError("reload renderer is not installed")
         validate_params(params, entry.get("params") or {})
         self.policy.note_api()
-        token, superseded = self.policy.begin_transient("reload", duration)
+        token, superseded = self.policy.begin_transient("reload", None)
         with self.lock:
-            self._arm_transient("reload", token, duration)
+            # Indefinite: cancel any in-flight return timer and arm none.
+            # A stale timer holding an older token is then harmless --
+            # end_transient's token check rejects it.
+            self._cancel_transient_timer()
             self._wake_if_idle()
         self._start_view("reload", params)
         out = {"view": "reload", "params": params,
                "commit_url": RELOAD_COMMIT_URL_PREFIX + sha,
-               "return_in": duration}
+               "return_in": None}
         if superseded:
             out["superseded"] = superseded
         return out
@@ -1612,6 +1626,34 @@ class DisplayDaemon:
         """Last delivery stamp (see read_deploy_stamp). Read-only: the
         file is written host-side by deploy.sh, never through the API."""
         return read_deploy_stamp()
+
+    def dismiss_reload(self):
+        """Dismiss an active reload transient after a touchscreen tap.
+
+        Takes the same return path as the old expiry timer: the saved base
+        view resumes, or the clock after a fresh restart with no base
+        view. Dismissing anything but an active reload -- a notice, an
+        attention pull, a plain view, or nothing at all -- is a harmless
+        no-op reporting dismissed False, so repeated taps are safe. A tap
+        is operator presence, so a successful dismissal notes API activity."""
+        base, ok = self.policy.dismiss_transient("reload")
+        if not ok:
+            return {"dismissed": False, "view": self.current}
+        self.policy.note_api()
+        with self.lock:
+            self._cancel_transient_timer()
+            self._wake_if_idle()
+        try:
+            if base is None:
+                try:
+                    self._start_view("clock", {})
+                except (KeyError, ValueError):
+                    self._clear_internal()
+            else:
+                self._start_view(base["renderer"], base["params"])
+        except (KeyError, ValueError):
+            pass
+        return {"dismissed": True, "view": self.current}
 
     # ---- policy configuration surface ------------------------------------
 
@@ -2544,6 +2586,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
             return self._send(200, result)
+        if path == "/touch/tap":
+            # Touchscreen tap dismissal: clears only an active reload
+            # transient (saved base view, or clock after a fresh restart).
+            # Always 200 -- dismissing anything else is a harmless no-op.
+            self._body()  # drained for keep-alive; no fields read
+            return self._send(200, DAEMON.dismiss_reload())
         if path == "/policy":
             try:
                 return self._send(200, DAEMON.set_policy(self._body()))

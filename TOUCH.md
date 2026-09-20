@@ -147,6 +147,13 @@ Then set in `touch.json`:
 host; the shipped built-in default is two wide zones (right third =
 playlist-next, left third = screen-on, middle = dead).
 
+Every valid tap also sends `POST /touch/tap` first, which dismisses an
+active reload confirmation (`POST /reload` stays up indefinitely until a
+tap returns it to the base view, or the clock after a fresh restart).
+Dismissal runs before region hit-testing, so even middle/dead-zone taps
+dismiss reload while dispatching no region action; a failed dismissal never
+blocks the configured region action that follows.
+
 ## Foreground smoke testing
 
     python3 touch.py --config touch.json --dry-run     # no HTTP, logs taps

@@ -227,6 +227,12 @@ def endpoint_allowed(url):
         return addr in ipaddress.ip_network(TAILNET_CGNAT)
     except ValueError:
         return False
+# Dismissal path for the reload confirmation (displayd POST /touch/tap):
+# sent before hit-testing on every valid tap, so a tap anywhere returns an
+# active reload view through its normal return path. Dismissing anything
+# but an active reload is a server-side no-op, and a failed dismissal must
+# never block the configured region action that follows.
+TAP_DISMISS_PATH = "/touch/tap"
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +613,22 @@ class DisplaydClient:
         summary["response"] = resp
         return summary
 
+    def tap_dismiss(self, dry_run=False):
+        """Dismiss an active reload confirmation (POST /touch/tap).
+
+        Harmless server-side unless a reload transient is showing; raises
+        like post() on transport failure so the caller can log-and-continue
+        without disturbing the region action that follows."""
+        summary = {"action": "tap_dismiss", "method": "POST",
+                   "path": TAP_DISMISS_PATH, "body": {},
+                   "dry_run": bool(dry_run)}
+        if dry_run:
+            return summary
+        status, resp = self.post(TAP_DISMISS_PATH, {})
+        summary["status"] = status
+        summary["response"] = resp
+        return summary
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -891,10 +913,41 @@ class TouchService:
                         "(best-effort, action already dispatched): %s",
                         path, exc)
             return None
+    def dismiss_reload(self, dry_run=False):
+        """Best-effort reload dismissal for one valid tap. Never raises:
+        transport failures (and clients without the dismissal method, such
+        as older test fakes) are logged and ignored so the configured
+        region action that follows always dispatches."""
+        dismiss = getattr(self.client, "tap_dismiss", None)
+        if dismiss is None:
+            legacy = getattr(self.client, "post", None)
+            if legacy is None:
+                return None
+            def dismiss(dry_run=False, _post=legacy):  # noqa: E306
+                if dry_run:
+                    return {"action": "tap_dismiss", "method": "POST",
+                            "path": TAP_DISMISS_PATH, "body": {},
+                            "dry_run": True}
+                status, resp = _post(TAP_DISMISS_PATH, {})
+                return {"action": "tap_dismiss", "status": status,
+                        "response": resp}
+        try:
+            return dismiss(dry_run=dry_run)
+        except Exception as exc:
+            LOG.warning("reload dismissal failed (region action follows): %s",
+                        exc)
+            return {"action": "tap_dismiss", "error": str(exc)}
 
     def handle_frame(self, touch_events, dry_run=False):
         """Process one SYN_REPORT frame's TouchEvents. Returns the dispatch
         summary for a tap that hit a region, else None.
+
+        Every valid tap dismisses an active reload confirmation first
+        (POST /touch/tap, best-effort), then hit-tests the configured
+        regions as before -- so center/unmatched taps still dismiss reload
+        while leaving the region actions unchanged. Gestures the tap
+        detector rejects (swipes, long presses, debounced echoes) never
+        dismiss anything.
 
         When confidence_feedback is enabled, every *resolved* tap -- region
         hit and dead-zone miss alike -- is reported to the confidence feed
@@ -909,6 +962,7 @@ class TouchService:
             tap = self.taps.feed(event, timestamp=now)
             if tap is None:
                 continue
+            self.dismiss_reload(dry_run=dry_run)
             region_id = hit_test(tap[0], tap[1],
                                  self.config.get("regions") or [])
             if region_id is None:

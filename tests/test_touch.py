@@ -394,6 +394,139 @@ class ServiceHandleFrameTest(unittest.TestCase):
                                    (EV_SYN, SYN_REPORT, 0)])
 
 
+class TapDismissServiceTest(unittest.TestCase):
+    """Reload tap-dismissal: every valid tap dismisses first.
+
+    touch.py sends POST /touch/tap before hit-testing on every valid
+    short stationary tap, so even center/dead-zone taps return an active
+    reload view while region actions are unchanged. Rejected gestures
+    (swipes, long presses, debounced echoes, incomplete lifecycles)
+    dismiss nothing, and a failed dismissal never blocks the region
+    action that follows."""
+
+    CAL = {"x_min": 0, "x_max": 4095, "y_min": 0, "y_max": 4095}
+
+    def _service(self, **overrides):
+        cfg = default_config()
+        cfg.update({"width": 1920, "height": 1080,
+                    "calibration": dict(self.CAL),
+                    "tap_max_seconds": 60,
+                    "debounce_seconds": 0})
+        cfg.update(overrides)
+        calls = []
+
+        class FakeClient:
+            fail_dismiss = False
+
+            def tap_dismiss(self, dry_run=False):
+                calls.append(("dismiss", dry_run))
+                if self.fail_dismiss:
+                    raise RuntimeError("connection refused")
+                return {"action": "tap_dismiss", "dry_run": dry_run}
+
+            def dispatch(self, action, dry_run=False):
+                calls.append(("dispatch", action["name"], dry_run))
+                return {"action": action["name"], "dry_run": dry_run}
+
+        client = FakeClient()
+        svc = TouchService(cfg, client=client)
+        return svc, calls, client
+
+    def _tap(self, svc, raw_x, raw_y, dry_run=True):
+        svc.handle_frame([TouchEvent("down", 0, raw_x, raw_y)],
+                         dry_run=dry_run)
+        return svc.handle_frame([TouchEvent("up", 0, raw_x, raw_y)],
+                                dry_run=dry_run)
+
+    def test_matched_tap_dismisses_first_then_dispatches(self):
+        svc, calls, _ = self._service()
+        # Raw (4095, 2047) -> display right edge -> playlist-next region.
+        result = self._tap(svc, 4095, 2047)
+        self.assertEqual(calls, [("dismiss", True),
+                                 ("dispatch", "playlist_next", True)])
+        self.assertEqual(result["action"], "playlist_next")
+
+    def test_unmatched_center_tap_dismisses_without_dispatch(self):
+        svc, calls, _ = self._service()
+        # Raw (2047, 2047) -> display middle: the dead zone by design --
+        # no region action, but the reload dismissal still goes out.
+        result = self._tap(svc, 2047, 2047)
+        self.assertEqual(calls, [("dismiss", True)])
+        self.assertIsNone(result)
+
+    def test_left_region_tap_preserves_action(self):
+        svc, calls, _ = self._service()
+        result = self._tap(svc, 0, 2047)
+        self.assertEqual(calls, [("dismiss", True),
+                                 ("dispatch", "screen_on", True)])
+        self.assertEqual(result["action"], "screen_on")
+
+    def test_down_without_up_dismisses_nothing(self):
+        svc, calls, _ = self._service()
+        svc.handle_frame([TouchEvent("down", 0, 4095, 2047)], dry_run=True)
+        self.assertEqual(calls, [])
+
+    def test_up_without_down_dismisses_nothing(self):
+        svc, calls, _ = self._service()
+        svc.handle_frame([TouchEvent("up", 0, 4095, 2047)], dry_run=True)
+        self.assertEqual(calls, [])
+
+    def test_swipe_dismisses_nothing(self):
+        svc, calls, _ = self._service()
+        svc.handle_frame([TouchEvent("down", 0, 500, 2047)], dry_run=True)
+        # A far move cancels the candidate: it was a swipe, not a tap.
+        svc.handle_frame([TouchEvent("move", 0, 2500, 2047)], dry_run=True)
+        svc.handle_frame([TouchEvent("up", 0, 2500, 2047)], dry_run=True)
+        self.assertEqual(calls, [])
+
+    def test_long_press_dismisses_nothing(self):
+        import unittest.mock as mock
+        svc, calls, _ = self._service(tap_max_seconds=0.5)
+        ticks = iter([100.0, 200.0])  # down now, up far later
+        with mock.patch.object(touch.time, "monotonic",
+                               side_effect=lambda: next(ticks)):
+            svc.handle_frame([TouchEvent("down", 0, 4095, 2047)],
+                             dry_run=True)
+            svc.handle_frame([TouchEvent("up", 0, 4095, 2047)],
+                             dry_run=True)
+        self.assertEqual(calls, [])
+
+    def test_debounced_second_tap_dismisses_nothing(self):
+        svc, calls, _ = self._service(debounce_seconds=60)
+        self._tap(svc, 4095, 2047)
+        self.assertEqual(len(calls), 2)  # dismiss + dispatch
+        # The immediate echo (multitouch bounce) is debounced: neither
+        # dismissal nor dispatch goes out again.
+        self._tap(svc, 4095, 2047)
+        self.assertEqual(len(calls), 2)
+
+    def test_dismiss_failure_still_dispatches_region_action(self):
+        svc, calls, client = self._service()
+        client.fail_dismiss = True
+        result = self._tap(svc, 4095, 2047, dry_run=False)
+        kinds = [c[0] for c in calls]
+        self.assertEqual(kinds, ["dismiss", "dispatch"])
+        self.assertEqual(calls[1][1], "playlist_next")
+        self.assertEqual(result["action"], "playlist_next")
+
+    def test_client_tap_dismiss_posts_touch_tap(self):
+        posted = []
+
+        class FakeHTTP:
+            def post(self, path, body):
+                posted.append((path, body))
+                return 200, {"dismissed": True}
+
+        client = DisplaydClient("http://127.0.0.1:9")
+        client.post = FakeHTTP().post
+        summary = client.tap_dismiss()
+        self.assertEqual(posted, [("/touch/tap", {})])
+        self.assertEqual(summary["status"], 200)
+        dry = client.tap_dismiss(dry_run=True)
+        self.assertTrue(dry["dry_run"])
+        self.assertEqual(len(posted), 1)  # dry run sends nothing
+
+
 class ConfigTest(unittest.TestCase):
     def test_defaults_validate(self):
         cfg = load_config(None)
@@ -544,6 +677,10 @@ class ConfidenceFeedbackTest(unittest.TestCase):
         events = []
 
         class RecordingClient:
+            def tap_dismiss(self, dry_run=False):
+                events.append(("dismiss", dry_run))
+                return {"action": "tap_dismiss", "dry_run": dry_run}
+
             def dispatch(self, action, dry_run=False):
                 events.append(("dispatch", action.get("name"), dry_run))
                 return {"action": action.get("name"), "status": 200,
@@ -569,9 +706,10 @@ class ConfidenceFeedbackTest(unittest.TestCase):
         self.assertEqual(summary["action"], "playlist_next")
         self.assertEqual(summary["status"], 200)
         # ...and feedback follows the dispatch, never precedes it.
+        # (Every valid tap also dismisses reload first, best-effort.)
         self.assertEqual([e[0] for e in events],
-                         ["dispatch", "feedback"])
-        kind, path, payload = events[1]
+                         ["dismiss", "dispatch", "feedback"])
+        kind, path, payload = events[2]
         self.assertEqual(path, "/feed/touch_confidence/tap")
         self.assertEqual(payload["region"], "playlist-next")
         self.assertEqual(payload["action"], "playlist_next")
@@ -601,8 +739,10 @@ class ConfidenceFeedbackTest(unittest.TestCase):
         svc, events = self._service(enabled=True)
         summary = self._tap(svc, self.DEAD_RAW)
         self.assertIsNone(summary)  # no ordinary action
-        self.assertEqual([e[0] for e in events], ["feedback"])
-        kind, path, payload = events[0]
+        # Dead-zone tap: reload dismissal still goes out, then feedback.
+        self.assertEqual([e[0] for e in events],
+                         ["dismiss", "feedback"])
+        kind, path, payload = events[1]
         self.assertEqual(path, "/feed/touch_confidence/tap")
         self.assertFalse(payload["hit"])
         self.assertNotIn("region", payload)
@@ -615,7 +755,7 @@ class ConfidenceFeedbackTest(unittest.TestCase):
             confidence_feedback={"enabled": True, "renderer": "tc2",
                                  "input": "taps"})
         self._tap(svc, self.LEFT_RAW)
-        self.assertEqual(events[1][1], "/feed/tc2/taps")
+        self.assertEqual(events[2][1], "/feed/tc2/taps")
 
     def test_best_effort_feedback_failure_keeps_action(self):
         cfg = default_config()
@@ -652,6 +792,9 @@ class ConfidenceFeedbackTest(unittest.TestCase):
         posted = []
 
         class BoomDispatch:
+            def tap_dismiss(self, dry_run=False):
+                return {"action": "tap_dismiss", "dry_run": dry_run}
+
             def dispatch(self, action, dry_run=False):
                 raise RuntimeError("connection refused")
 
@@ -674,9 +817,11 @@ class ConfidenceFeedbackTest(unittest.TestCase):
         svc.client.post = boom_post
         summary = self._tap(svc, self.RIGHT_RAW)
         self.assertEqual(summary["action"], "playlist_next")
-        self.assertEqual([e[0] for e in events], ["dispatch"])
+        self.assertEqual([e[0] for e in events],
+                         ["dismiss", "dispatch"])
         self.assertIsNone(self._tap(svc, self.DEAD_RAW))
-        self.assertEqual([e[0] for e in events], ["dispatch"])
+        self.assertEqual([e[0] for e in events],
+                         ["dismiss", "dispatch", "dismiss"])
 
     def test_absent_switch_behaves_as_disabled(self):
         cfg = default_config()
@@ -702,10 +847,12 @@ class ConfidenceFeedbackTest(unittest.TestCase):
         svc, events = self._service(enabled=True)
         summary = self._tap(svc, self.RIGHT_RAW, dry_run=True)
         self.assertTrue(summary["dry_run"])
-        self.assertEqual([e[0] for e in events], ["dispatch"])
-        self.assertTrue(events[0][2])  # dispatch itself was dry-run
+        self.assertEqual([e[0] for e in events],
+                         ["dismiss", "dispatch"])
+        self.assertTrue(events[1][2])  # dispatch itself was dry-run
         self.assertIsNone(self._tap(svc, self.DEAD_RAW, dry_run=True))
-        self.assertEqual([e[0] for e in events], ["dispatch"])
+        self.assertEqual([e[0] for e in events],
+                         ["dismiss", "dispatch", "dismiss"])
 
     def test_swipe_emits_nothing(self):
         svc, events = self._service(enabled=True)
@@ -737,12 +884,12 @@ class ConfidenceFeedbackTest(unittest.TestCase):
             enabled=True, tap_max_seconds=60, debounce_seconds=0.3)
         self._tap(svc, self.RIGHT_RAW)
         self.assertEqual([e[0] for e in events],
-                         ["dispatch", "feedback"])
+                         ["dismiss", "dispatch", "feedback"])
         # Immediate second tap: the detector eats it as bounce echo.
         svc.handle_frame([TouchEvent("down", 1, 4095, 2047)])
         svc.handle_frame([TouchEvent("up", 1, 4095, 2047)])
         self.assertEqual([e[0] for e in events],
-                         ["dispatch", "feedback"])
+                         ["dismiss", "dispatch", "feedback"])
 
 
 class GuardShapeTest(unittest.TestCase):

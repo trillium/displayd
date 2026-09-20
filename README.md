@@ -105,7 +105,7 @@ publishes an unauthenticated control surface to everything that can route to it.
 | POST | `/show` | `{"renderer":"text","params":{...}}` | switch content |
 | POST | `/feed/<renderer>/<input>` | any JSON payload | push validated data into a view |
 | POST | `/notify` | `{"title":...}`, `body`?, `severity`? (`info`/`warn`/`critical`), `duration`? | transient notice, then automatic return |
-| POST | `/reload` | `{"sha":...}`, `duration`? | transient reload confirmation (RELOADED + full SHA + commit QR), then automatic return |
+| POST | `/reload` | `{"sha":...}` | reload confirmation (RELOADED + full SHA + commit QR), stays until a tap dismisses it |
 | GET | `/policy` | – | autonomous-behaviour config + activity clock |
 | POST | `/policy` | `{"idle":{...},"chat_attention":{...},"notifications":{...},"playlist":{...}}` | update policy (persisted) |
 | GET | `/playlist` | – | rotation status: view, index, progress, hold reason |
@@ -350,19 +350,24 @@ overrides the path), so they survive a restart.
 
 ## Reload confirmation
 
-After deploying a new build, `POST /reload` puts a transient confirmation
+After deploying a new build, `POST /reload` puts a confirmation
 on the panel: the word RELOADED, the full deployed commit SHA, and a QR
 code. The QR payload is always exactly
 
     https://github.com/trillium/displayd/commit/<full-sha>
 
 the commit page -- never the repository homepage, and never a
-caller-supplied URL. The request carries only the SHA (plus an optional
-`duration`); the daemon derives the URL itself, so an arbitrary QR payload
-cannot be smuggled in. Like a notice, the screen returns to whatever was
-showing when the duration elapses (default 10 s, range 1-300) -- with no
+caller-supplied URL. The request carries only the SHA; the daemon derives
+the URL itself, so an arbitrary QR payload cannot be smuggled in. Unlike
+a notice, the screen stays on the reload view indefinitely -- it never
+expires by duration (a legacy `duration` field is still validated when
+supplied but ignored, and the response reports `"return_in": null`). A
+touchscreen tap (`POST /touch/tap`, sent automatically by `touch.py` on
+every valid tap) returns to whatever was showing -- with no
 explicit base view (a fresh restart) it returns to the clock instead of a
 blank panel -- and a manual `/show` or `/clear` cancels it outright.
+Dismissing anything but an active reload is a harmless no-op, so repeated
+taps are safe.
 Anything but a full 40-character
 hexadecimal commit SHA -- missing, short, non-hex, or over-long -- is a
 clear HTTP 400.

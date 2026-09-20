@@ -271,7 +271,9 @@ class Policy:
         """Request a transient switch. Returns (token, superseded_kind) or
         (None, active_kind) when a higher-or-equal transient holds the
         screen. Equal priority preempts (re-arm): the newest event owns the
-        return timer."""
+        return timer. A duration of None means indefinite: no deadline is
+        stored and no return timer should be armed -- the transient stays
+        until dismissed or cancelled (the reload confirmation uses this)."""
         if kind not in PRIORITY:
             raise ValueError("unknown transient kind %r" % (kind,))
         with self._lock:
@@ -285,7 +287,8 @@ class Policy:
             self.generation += 1
             token = self.generation
             self.active = {"kind": kind, "token": token,
-                           "deadline": self._clock() + duration,
+                           "deadline": (None if duration is None
+                                        else self._clock() + duration),
                            "return_to": copy.deepcopy(self.base)}
             return token, superseded
 
@@ -306,6 +309,22 @@ class Policy:
             self.active = None
             return copy.deepcopy(self.base), True
 
+    def dismiss_transient(self, kind):
+        """Dismiss the active transient of one kind, by kind only.
+
+        Unlike end_transient (which fires a return timer holding a token),
+        this is the tap-dismiss path: the caller holds no token, only the
+        knowledge that a tap happened. Returns (base, True) when an
+        active transient of that kind was cleared, (None, False) otherwise
+        -- dismissing anything else, or nothing at all, is a harmless
+        no-op and a stale token can never clear a newer transient."""
+        with self._lock:
+            if (self.active is None
+                    or self.active["kind"] != kind):
+                return None, False
+            self.active = None
+            return copy.deepcopy(self.base), True
+
     def transient_status(self):
         now = self._clock()
         with self._lock:
@@ -313,7 +332,9 @@ class Policy:
                 return {"active": None, "generation": self.generation}
             out = dict(self.active)
             out["active"] = out.pop("kind")
-            out["in_seconds"] = round(max(0.0, out.pop("deadline") - now), 1)
+            deadline = out.pop("deadline")
+            out["in_seconds"] = (None if deadline is None
+                                   else round(max(0.0, deadline - now), 1))
             out["generation"] = self.generation
             return out
 

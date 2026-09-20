@@ -268,51 +268,110 @@ class ReloadDaemonTestCase(unittest.TestCase):
 
 
 class TestReloadTransient(ReloadDaemonTestCase):
-    def test_reload_shows_and_returns(self):
+    def test_reload_shows_indefinitely(self):
         daemon = self.make_daemon()
         daemon.show("solid", {"color": "blue"})
-        result = daemon.reload(DEPLOYED_SHA, duration=60)
+        result = daemon.reload(DEPLOYED_SHA)
         self.assertEqual(daemon.current, "reload")
         self.assertEqual(result["view"], "reload")
         self.assertEqual(result["params"], {"sha": DEPLOYED_SHA})
         self.assertEqual(result["commit_url"], COMMIT_URL)
-        self.assertEqual(result["return_in"], 60)
+        self.assertIsNone(result["return_in"])  # indefinite: no auto-return
         self.assertEqual(daemon.policy.transient_status()["active"], "reload")
-        token = daemon.policy.active["token"]
-        daemon._transient_expired("reload", token)
-        self.assertEqual(daemon.current, "solid")
+        self.assertIsNone(daemon.policy.transient_status()["in_seconds"])
+        self.assertIsNone(daemon.transient_timer)  # no return timer armed
 
-    def test_reload_returns_automatically(self):
-        daemon = self.make_daemon(clock=None)  # real clock: timers fire
+    def test_reload_ignores_legacy_duration_but_validates_it(self):
+        # Old clients still sending duration keep working; the value is
+        # accepted and ignored -- the screen stays until a tap.
+        daemon = self.make_daemon()
+        daemon.show("solid", {"color": "blue"})
+        result = daemon.reload(DEPLOYED_SHA, duration=60)
+        self.assertIsNone(result["return_in"])
+        self.assertIsNone(daemon.transient_timer)
+        self.assertEqual(daemon.current, "reload")
+
+    def test_reload_never_returns_on_its_own(self):
+        daemon = self.make_daemon(clock=None)  # real clock: timers would fire
         daemon.show("solid", {"color": "blue"})
         time.sleep(0.1)
-        daemon.reload(DEPLOYED_SHA, duration=1)
+        daemon.reload(DEPLOYED_SHA)
         self.assertEqual(daemon.current, "reload")
-        time.sleep(1.6)  # duration elapses: automatic return
-        self.assertEqual(daemon.current, "solid")
+        time.sleep(1.6)  # past every historical default: still showing
+        self.assertEqual(daemon.current, "reload")
+        self.assertEqual(daemon.policy.transient_status()["active"], "reload")
 
-    def test_reload_without_base_view_returns_to_clock(self):
-        # Fresh restart: no explicit base view. The transient must still
-        # show, then fall back to the clock instead of a blank panel.
+    def test_tap_dismiss_returns_to_saved_base(self):
+        daemon = self.make_daemon()
+        daemon.show("solid", {"color": "blue"})
+        daemon.reload(DEPLOYED_SHA)
+        self.assertEqual(daemon.current, "reload")
+        out = daemon.dismiss_reload()
+        self.assertTrue(out["dismissed"])
+        self.assertEqual(daemon.current, "solid")
+        self.assertEqual(out["view"], "solid")
+        self.assertIsNone(daemon.policy.transient_status()["active"])
+
+    def test_tap_dismiss_without_base_view_returns_to_clock(self):
+        # Fresh restart: no explicit base view. The tap return must still
+        # fall back to the clock instead of a blank panel.
         daemon = self.make_daemon()
         self.assertIsNone(daemon.policy.base)
-        result = daemon.reload(DEPLOYED_SHA, duration=60)
+        result = daemon.reload(DEPLOYED_SHA)
         self.assertEqual(daemon.current, "reload")
         self.assertEqual(result["view"], "reload")
-        token = daemon.policy.active["token"]
-        daemon._transient_expired("reload", token)
+        out = daemon.dismiss_reload()
+        self.assertTrue(out["dismissed"])
         self.assertEqual(daemon.current, "clock")
 
-    def test_reload_without_base_view_returns_automatically(self):
-        daemon = self.make_daemon(clock=None)  # real clock: timers fire
-        daemon.reload(DEPLOYED_SHA, duration=1)
+    def test_tap_dismiss_non_reload_is_noop(self):
+        daemon = self.make_daemon()
+        daemon.show("solid", {"color": "blue"})
+        out = daemon.dismiss_reload()
+        self.assertFalse(out["dismissed"])
+        self.assertEqual(daemon.current, "solid")
+        # A notice is not a reload: the tap must leave it alone.
+        daemon.notify("operator note", duration=60)
+        self.assertEqual(daemon.current, "notice")
+        out = daemon.dismiss_reload()
+        self.assertFalse(out["dismissed"])
+        self.assertEqual(daemon.current, "notice")
+        self.assertEqual(daemon.policy.transient_status()["active"], "notice")
+
+    def test_repeated_taps_are_safe(self):
+        daemon = self.make_daemon()
+        daemon.show("solid", {"color": "blue"})
+        daemon.reload(DEPLOYED_SHA)
+        first = daemon.dismiss_reload()
+        self.assertTrue(first["dismissed"])
+        for _ in range(3):
+            out = daemon.dismiss_reload()
+            self.assertFalse(out["dismissed"])
+            self.assertEqual(daemon.current, "solid")
+        # Tapping with nothing showing at all is equally harmless.
+        daemon.clear()
+        out = daemon.dismiss_reload()
+        self.assertFalse(out["dismissed"])
+
+    def test_stale_timer_and_token_cannot_clobber(self):
+        daemon = self.make_daemon()
+        daemon.show("solid", {"color": "blue"})
+        daemon.reload(DEPLOYED_SHA)
+        token = daemon.policy.active["token"]
+        daemon.dismiss_reload()
+        self.assertEqual(daemon.current, "solid")
+        # A legacy return timer firing late with the old token: no-op.
+        daemon._transient_expired("reload", token)
+        self.assertEqual(daemon.current, "solid")
+        # A forged token for the same kind: no-op as well.
+        daemon.reload(OTHER_SHA)
+        daemon._transient_expired("reload", token)  # previous generation
         self.assertEqual(daemon.current, "reload")
-        time.sleep(1.6)  # duration elapses: automatic return to clock
-        self.assertEqual(daemon.current, "clock")
+        self.assertEqual(daemon.policy.transient_status()["active"], "reload")
 
     def test_manual_show_during_no_base_reload_wins(self):
         daemon = self.make_daemon()
-        daemon.reload(DEPLOYED_SHA, duration=60)
+        daemon.reload(DEPLOYED_SHA)
         token = daemon.policy.active["token"]
         daemon.show("text", {"text": "captain takes over"})
         self.assertEqual(daemon.current, "text")
@@ -320,18 +379,22 @@ class TestReloadTransient(ReloadDaemonTestCase):
         # manual choice with the clock fallback.
         daemon._transient_expired("reload", token)
         self.assertEqual(daemon.current, "text")
+        # Nor may a tap resurrect the cancelled reload.
+        out = daemon.dismiss_reload()
+        self.assertFalse(out["dismissed"])
+        self.assertEqual(daemon.current, "text")
 
-    def test_default_duration_is_short(self):
+    def test_default_is_indefinite(self):
         daemon = self.make_daemon()
         daemon.show("solid", {"color": "blue"})
         result = daemon.reload(DEPLOYED_SHA)
-        self.assertEqual(result["return_in"], displayd.RELOAD_DEFAULT_DURATION)
-        self.assertLessEqual(displayd.RELOAD_DEFAULT_DURATION, 30)
+        self.assertIsNone(result["return_in"])
+        self.assertIsNone(displayd.RELOAD_DEFAULT_DURATION)
 
     def test_manual_change_during_reload_wins(self):
         daemon = self.make_daemon()
         daemon.show("solid", {"color": "blue"})
-        daemon.reload(DEPLOYED_SHA, duration=60)
+        daemon.reload(DEPLOYED_SHA)
         token = daemon.policy.active["token"]
         daemon.show("text", {"text": "captain takes over"})
         self.assertEqual(daemon.current, "text")
@@ -342,9 +405,9 @@ class TestReloadTransient(ReloadDaemonTestCase):
     def test_second_reload_replaces_first(self):
         daemon = self.make_daemon()
         daemon.show("solid", {"color": "blue"})
-        daemon.reload(DEPLOYED_SHA, duration=60)
+        daemon.reload(DEPLOYED_SHA)
         first_token = daemon.policy.active["token"]
-        daemon.reload(OTHER_SHA, duration=60)
+        daemon.reload(OTHER_SHA)
         self.assertEqual(daemon.current, "reload")
         self.assertNotEqual(daemon.policy.active["token"], first_token)
         daemon._transient_expired("reload", first_token)  # stale: no-op
@@ -497,6 +560,7 @@ class HttpReloadTestCase(unittest.TestCase):
         self.assertEqual(result["view"], "reload")
         self.assertEqual(result["params"], {"sha": DEPLOYED_SHA})
         self.assertEqual(result["commit_url"], COMMIT_URL)
+        self.assertIsNone(result["return_in"])  # indefinite: no auto-return
         code, state = self.call("GET", "/state")
         self.assertEqual(code, 200)
         self.assertEqual(state["renderer"], "reload")
@@ -505,6 +569,61 @@ class HttpReloadTestCase(unittest.TestCase):
         self.assertEqual(code, 200)
         if decoder_available():
             self.assertEqual(decode_png(snap), COMMIT_URL)
+
+    def test_reload_endpoint_stays_without_expiry(self):
+        code, _ = self.call("POST", "/show",
+                            {"renderer": "clock", "params": {}})
+        self.assertEqual(code, 200)
+        code, _ = self.call("POST", "/reload", {"sha": DEPLOYED_SHA})
+        self.assertEqual(code, 200)
+        time.sleep(1.6)  # past every historical default: still showing
+        code, state = self.call("GET", "/state")
+        self.assertEqual(code, 200)
+        self.assertEqual(state["renderer"], "reload")
+
+    def test_touch_tap_dismisses_reload_to_base(self):
+        code, _ = self.call("POST", "/show",
+                            {"renderer": "clock", "params": {}})
+        self.assertEqual(code, 200)
+        code, _ = self.call("POST", "/reload", {"sha": DEPLOYED_SHA})
+        self.assertEqual(code, 200)
+        code, out = self.call("POST", "/touch/tap", {})
+        self.assertEqual(code, 200)
+        self.assertTrue(out["dismissed"])
+        code, state = self.call("GET", "/state")
+        self.assertEqual(code, 200)
+        self.assertEqual(state["renderer"], "clock")
+
+    def test_touch_tap_without_base_returns_to_clock(self):
+        # Fresh boot: no explicit base view. A tap still lands on clock.
+        code, _ = self.call("POST", "/reload", {"sha": DEPLOYED_SHA})
+        self.assertEqual(code, 200)
+        code, out = self.call("POST", "/touch/tap", {})
+        self.assertEqual(code, 200)
+        self.assertTrue(out["dismissed"])
+        code, state = self.call("GET", "/state")
+        self.assertEqual(code, 200)
+        self.assertEqual(state["renderer"], "clock")
+
+    def test_touch_tap_non_reload_is_noop_and_repeatable(self):
+        code, _ = self.call("POST", "/show",
+                            {"renderer": "clock", "params": {}})
+        self.assertEqual(code, 200)
+        for _ in range(2):
+            code, out = self.call("POST", "/touch/tap", {})
+            self.assertEqual(code, 200)
+            self.assertFalse(out["dismissed"])
+        code, state = self.call("GET", "/state")
+        self.assertEqual(code, 200)
+        self.assertEqual(state["renderer"], "clock")
+        # Dismiss twice after one reload: first returns, second no-ops.
+        code, _ = self.call("POST", "/reload", {"sha": DEPLOYED_SHA})
+        self.assertEqual(code, 200)
+        code, out = self.call("POST", "/touch/tap", {})
+        self.assertTrue(out["dismissed"])
+        code, out = self.call("POST", "/touch/tap", {})
+        self.assertEqual(code, 200)
+        self.assertFalse(out["dismissed"])
 
     def test_reload_endpoint_rejects_bad_input(self):
         for body in (None, {},
