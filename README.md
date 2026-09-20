@@ -288,6 +288,18 @@ the socket needs none. It runs as its own unit:
 
     sudo systemctl enable --now firebot-chat-bridge
 
+## Touch input (`touch.py`)
+
+The daemon stays output-only; taps are a separate stdlib-only companion in
+the same bridge spirit. `touch.py` reads a Linux touchscreen (`/dev/input`),
+decodes evdev multitouch/pointer events into display pixels, and invokes
+existing safe displayd HTTP actions (playlist-next, screen-on, ...) when a
+tap lands in a configured hit region. Closed action allowlist, loopback or
+explicitly configured endpoint, foreground `--dry-run` smoke mode. Full
+operator notes (discovery, permissions, calibration, supervision, rollback)
+in `TOUCH.md`; example config in `touch.json.example`; tests in
+`tests/test_touch.py` (synthetic events, no hardware needed).
+
 ## Screen power
 
 Screen on/off is core state rather than a renderer, so it stays orthogonal to

@@ -1,0 +1,24 @@
+[Unit]
+Description=displayd touch input (evdev touchscreen -> displayd HTTP actions)
+After=network.target displayd.service
+Wants=displayd.service
+
+[Service]
+# REVIEW BEFORE INSTALLING: adjust User/WorkingDirectory/ExecStart paths for
+# the host checkout (deployed copy lives at ~/displayd on lnx-server).
+# Runs nobody:input so it can read /dev/input/event* without root; add the
+# user to the `input` group (see TOUCH.md) or adjust SupplementaryGroups.
+Type=simple
+User=nobody
+Group=input
+WorkingDirectory=/home/trillium/displayd
+ExecStart=/usr/bin/python3 /home/trillium/displayd/touch.py --config /home/trillium/displayd/touch.json
+Restart=on-failure
+RestartSec=5
+# Missing device / permission errors exit 2: do not spin on a config problem.
+SuccessExitStatus=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

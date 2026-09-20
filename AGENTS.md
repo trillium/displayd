@@ -114,3 +114,17 @@ When updating this file, preserve this bar for all agents and keep entries conci
   `enabled: true` resumes after restart.
 - Cache discipline: the frame cache (`Screen.on_present` hook) stores
   pre-overlay frames only, so a cached re-entry never serves a stale bar.
+
+## Touch input (tap-to-action bridge)
+
+- Companion `touch.py` (stdlib only) decodes evdev MT/single-touch from
+  `/dev/input/event*` and POSTs existing safe displayd actions on taps in
+  configured hit regions; daemon stays output-only, framebuffer path
+  untouched. Operator doc is `TOUCH.md`, example `touch.json.example`,
+  unit template `touch-input.service` (review paths/user before installing).
+- `/dev/input/event8` is only the lnx-server local default (`G2Touch
+  Multi-Touch`); always confirm with `touch.py --list-devices` + evtest,
+  and set real `width`/`height` + raw `x_max`/`y_max` per panel.
+- evdev `value` is signed (`<llHHi`); packing it unsigned breaks
+  `ABS_MT_TRACKING_ID -1` (lift). Synthetic-stream tests live in
+  `tests/test_touch.py`; smoke live with `--dry-run` before enabling.

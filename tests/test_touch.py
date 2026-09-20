@@ -1,0 +1,355 @@
+"""Touch-input tests: parser, normalization, lifecycle, hit test, dispatch.
+
+Deterministic: synthetic evdev records via touch.pack_event, no hardware.
+
+Run from the repo root:  python3 -m unittest tests.test_touch -v
+"""
+
+import io
+import json
+import os
+import struct
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
+
+import touch
+from touch import (
+    ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_SLOT, ABS_MT_TRACKING_ID,
+    ABS_X, ABS_Y, BTN_TOUCH, EV_ABS, EV_KEY, EV_SYN, SYN_REPORT,
+    DisplaydClient, EvdevParser, TapDetector, TouchEvent, TouchService,
+    action_request, default_config, hit_test, load_config, normalize,
+    pack_event, parse_event,
+)
+
+
+def mt_down(slot, tid, x, y):
+    return [(EV_ABS, ABS_MT_SLOT, slot),
+            (EV_ABS, ABS_MT_TRACKING_ID, tid),
+            (EV_ABS, ABS_MT_POSITION_X, x),
+            (EV_ABS, ABS_MT_POSITION_Y, y)]
+
+
+def mt_up(slot):
+    return [(EV_ABS, ABS_MT_SLOT, slot),
+            (EV_ABS, ABS_MT_TRACKING_ID, -1)]
+
+
+def st_down(x, y):
+    return [(EV_ABS, ABS_X, x), (EV_ABS, ABS_Y, y),
+            (EV_KEY, BTN_TOUCH, 1)]
+
+
+def st_up():
+    return [(EV_KEY, BTN_TOUCH, 0)]
+
+
+CAL = {"x_min": 0, "x_max": 4095, "y_min": 0, "y_max": 4095}
+
+
+class ParseTest(unittest.TestCase):
+    def test_pack_parse_roundtrip(self):
+        rec = pack_event(EV_ABS, ABS_X, 1234)
+        self.assertEqual(len(rec), touch.EVENT_SIZE)
+        self.assertEqual(parse_event(rec), (EV_ABS, ABS_X, 1234))
+
+    def test_short_record_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_event(b"\x00" * 7)
+
+    def test_signed_value_roundtrip(self):
+        # ABS_MT_TRACKING_ID -1 (contact lifted) must survive packing:
+        # the evdev value field is __s32, not unsigned.
+        rec = pack_event(EV_ABS, ABS_MT_TRACKING_ID, -1)
+        self.assertEqual(parse_event(rec),
+                         (EV_ABS, ABS_MT_TRACKING_ID, -1))
+
+
+class SingleTouchTest(unittest.TestCase):
+    def test_down_move_up(self):
+        p = EvdevParser()
+        events = p.feed_frame(st_down(1000, 2000))
+        self.assertEqual([(e.kind, e.x, e.y) for e in events],
+                         [("down", 1000, 2000)])
+        events = p.feed_frame([(EV_ABS, ABS_X, 1100),
+                               (EV_ABS, ABS_Y, 2100)])
+        self.assertEqual([(e.kind, e.x, e.y) for e in events],
+                         [("move", 1100, 2100)])
+        events = p.feed_frame(st_up())
+        self.assertEqual([e.kind for e in events], ["up"])
+
+    def test_move_without_touch_is_silent(self):
+        p = EvdevParser()
+        self.assertEqual(p.feed_frame([(EV_ABS, ABS_X, 5)]), [])
+
+
+class MultiTouchTest(unittest.TestCase):
+    def test_two_slot_lifecycle(self):
+        p = EvdevParser()
+        events = p.feed_frame(mt_down(0, 10, 100, 200))
+        self.assertEqual([(e.kind, e.slot) for e in events],
+                         [("down", 0)])
+        events = p.feed_frame(mt_down(1, 11, 300, 400))
+        self.assertEqual([(e.kind, e.slot) for e in events],
+                         [("down", 1)])
+        events = p.feed_frame([(EV_ABS, ABS_MT_SLOT, 0),
+                               (EV_ABS, ABS_MT_POSITION_X, 150)])
+        self.assertEqual([(e.kind, e.slot, e.x) for e in events],
+                         [("move", 0, 150)])
+        # Slot 1 untouched by slot-0 move: no cross-talk.
+        events = p.feed_frame(mt_up(0))
+        self.assertEqual([(e.kind, e.slot) for e in events], [("up", 0)])
+        events = p.feed_frame(mt_up(1))
+        self.assertEqual([(e.kind, e.slot) for e in events], [("up", 1)])
+
+    def test_mt_preferred_over_single_touch_echo(self):
+        # Hybrid panels report both; one frame must not double-report.
+        p = EvdevParser()
+        events = p.feed_frame(mt_down(0, 7, 500, 600)
+                              + [(EV_ABS, ABS_X, 500),
+                                 (EV_ABS, ABS_Y, 600),
+                                 (EV_KEY, BTN_TOUCH, 1)])
+        downs = [e for e in events if e.kind == "down"]
+        self.assertEqual(len(downs), 1)
+
+
+class NormalizeTest(unittest.TestCase):
+    def test_corners_and_center(self):
+        self.assertEqual(normalize(0, 0, 1920, 1080, CAL), (0, 0))
+        self.assertEqual(normalize(4095, 4095, 1920, 1080, CAL),
+                         (1919, 1079))
+        x, y = normalize(2047, 2047, 1920, 1080, CAL)
+        self.assertTrue(900 <= x <= 1010 and 500 <= y <= 580)
+
+    def test_clamps_out_of_range(self):
+        self.assertEqual(normalize(-50, 99999, 1920, 1080, CAL),
+                         (0, 1079))
+
+    def test_invert_and_swap(self):
+        cal = dict(CAL, invert_x=True)
+        x_plain, _ = normalize(0, 0, 1920, 1080, CAL)
+        x_inv, _ = normalize(0, 0, 1920, 1080, cal)
+        self.assertEqual((x_plain, x_inv), (0, 1919))
+        cal = dict(CAL, swap_xy=True)
+        # A square display keeps numbers comparable after swap.
+        self.assertEqual(normalize(4095, 0, 500, 500, cal), (0, 499))
+
+    def test_rotation_90_cw(self):
+        cal = dict(CAL, rotation=90)
+        # Raw top-left maps to display top-right under 90cw.
+        self.assertEqual(normalize(0, 0, 1920, 1080, cal), (1919, 0))
+
+    def test_rotation_180(self):
+        cal = dict(CAL, rotation=180)
+        self.assertEqual(normalize(0, 0, 1920, 1080, cal), (1919, 1079))
+
+    def test_bad_rotation_rejected(self):
+        with self.assertRaises(ValueError):
+            normalize(1, 1, 8, 8, dict(CAL, rotation=45))
+
+    def test_missing_range_rejected(self):
+        with self.assertRaises(ValueError):
+            normalize(1, 1, 8, 8, {})
+
+    def test_none_position_passthrough(self):
+        self.assertEqual(normalize(None, 100, 1920, 1080, CAL),
+                         (None, 26))
+
+
+class HitTestTest(unittest.TestCase):
+    REGIONS = [
+        {"id": "next", "rect": [1280, 0, 640, 1080]},
+        {"id": "wake", "rect": [0, 0, 640, 1080]},
+    ]
+
+    def test_hit_and_miss(self):
+        self.assertEqual(hit_test(1500, 500, self.REGIONS), "next")
+        self.assertEqual(hit_test(100, 500, self.REGIONS), "wake")
+        self.assertIsNone(hit_test(800, 500, self.REGIONS))  # dead middle
+
+    def test_first_region_wins_overlap(self):
+        regions = [{"id": "a", "rect": [0, 0, 100, 100]},
+                   {"id": "b", "rect": [0, 0, 100, 100]}]
+        self.assertEqual(hit_test(10, 10, regions), "a")
+
+    def test_none_position_misses(self):
+        self.assertIsNone(hit_test(None, 5, self.REGIONS))
+
+
+class ActionTest(unittest.TestCase):
+    def test_allowlisted_actions(self):
+        self.assertEqual(action_request({"name": "playlist_next"}),
+                         ("POST", "/playlist/next", {}))
+        self.assertEqual(action_request({"name": "screen_on"}),
+                         ("POST", "/screen/on", {}))
+        method, path, body = action_request(
+            {"name": "show", "renderer": "clock", "params": {"lines": 3}})
+        self.assertEqual((method, path), ("POST", "/show"))
+        self.assertEqual(body["renderer"], "clock")
+
+    def test_unknown_action_refused(self):
+        with self.assertRaises(ValueError):
+            action_request({"name": "exec"})
+        with self.assertRaises(ValueError):
+            action_request({"name": "POST /screen/off"})
+        with self.assertRaises(ValueError):
+            action_request({})
+
+    def test_show_needs_renderer(self):
+        with self.assertRaises(ValueError):
+            action_request({"name": "show"})
+
+    def test_dispatch_posts(self):
+        calls = []
+
+        class FakeHTTP:
+            def post(self, path, body):
+                calls.append((path, body))
+                return 200, {"ok": True}
+
+        client = DisplaydClient("http://127.0.0.1:9")
+        client.post = FakeHTTP().post
+        summary = client.dispatch({"name": "playlist_next"})
+        self.assertEqual(calls, [("/playlist/next", {})])
+        self.assertEqual(summary["status"], 200)
+
+    def test_dispatch_dry_run_sends_nothing(self):
+        client = DisplaydClient("http://127.0.0.1:9")
+        client.post = lambda *a: (_ for _ in ()).throw(
+            AssertionError("must not POST in dry-run"))
+        summary = client.dispatch({"name": "screen_on"}, dry_run=True)
+        self.assertTrue(summary["dry_run"])
+        self.assertEqual(summary["path"], "/screen/on")
+
+
+class TapDetectorTest(unittest.TestCase):
+    def test_tap_emits_on_up(self):
+        det = TapDetector()
+        self.assertIsNone(det.feed(TouchEvent("down", 0, 100, 100), 0.0))
+        tap = det.feed(TouchEvent("up", 0, 102, 101), 0.2)
+        self.assertEqual(tap, (100, 100))
+
+    def test_swipe_cancelled(self):
+        det = TapDetector(tap_max_pixels=40)
+        det.feed(TouchEvent("down", 0, 100, 100), 0.0)
+        det.feed(TouchEvent("move", 0, 300, 100), 0.1)
+        self.assertIsNone(det.feed(TouchEvent("up", 0, 300, 100), 0.2))
+
+    def test_long_press_ignored(self):
+        det = TapDetector(tap_max_seconds=0.5)
+        det.feed(TouchEvent("down", 0, 100, 100), 0.0)
+        self.assertIsNone(det.feed(TouchEvent("up", 0, 100, 100), 5.0))
+
+    def test_debounce_second_finger(self):
+        det = TapDetector(debounce_seconds=0.3)
+        det.feed(TouchEvent("down", 0, 100, 100), 0.0)
+        det.feed(TouchEvent("up", 0, 100, 100), 0.1)
+        det.feed(TouchEvent("down", 1, 200, 200), 0.15)
+        self.assertIsNone(det.feed(TouchEvent("up", 1, 200, 200), 0.2))
+
+
+class ServiceHandleFrameTest(unittest.TestCase):
+    def _service(self, **overrides):
+        cfg = default_config()
+        cfg.update({"width": 1920, "height": 1080,
+                    "calibration": dict(CAL),
+                    "tap_max_seconds": 60,
+                    "debounce_seconds": 0})
+        cfg.update(overrides)
+        dispatched = []
+
+        class FakeClient:
+            def dispatch(self, action, dry_run=False):
+                dispatched.append((action, dry_run))
+                return {"action": action["name"], "dry_run": dry_run}
+
+        svc = TouchService(cfg, client=FakeClient())
+        return svc, dispatched
+
+    def test_tap_in_region_dispatches(self):
+        svc, dispatched = self._service()
+        # Raw (4095, 2047) -> display right edge -> playlist-next region.
+        svc.handle_frame([TouchEvent("down", 0, 4095, 2047)], dry_run=True)
+        svc.handle_frame([TouchEvent("up", 0, 4095, 2047)], dry_run=True)
+        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(dispatched[0][0]["name"], "playlist_next")
+
+    def test_tap_in_dead_zone_dispatches_nothing(self):
+        svc, dispatched = self._service()
+        svc.handle_frame([TouchEvent("down", 0, 2047, 2047)], dry_run=True)
+        svc.handle_frame([TouchEvent("up", 0, 2047, 2047)], dry_run=True)
+        self.assertEqual(dispatched, [])
+
+    def test_http_failure_does_not_raise(self):
+        cfg = default_config()
+        cfg.update({"width": 1920, "height": 1080,
+                    "calibration": dict(CAL), "tap_max_seconds": 60,
+                    "debounce_seconds": 0})
+
+        class Boom:
+            def dispatch(self, action, dry_run=False):
+                raise RuntimeError("connection refused")
+
+        svc = TouchService(cfg, client=Boom())
+        svc.handle_frame([TouchEvent("down", 0, 4095, 2047)], dry_run=False)
+        result = svc.handle_frame([TouchEvent("up", 0, 4095, 2047)],
+                                  dry_run=False)
+        self.assertIn("error", result)
+
+    def test_device_stream_parses_records(self):
+        svc, _ = self._service()
+        blob = (pack_event(EV_ABS, ABS_X, 1000)
+                + pack_event(EV_KEY, BTN_TOUCH, 1)
+                + pack_event(EV_SYN, SYN_REPORT, 0))
+        triples = list(svc.iter_device_events(io.BytesIO(blob)))
+        self.assertEqual(triples, [(EV_ABS, ABS_X, 1000),
+                                   (EV_KEY, BTN_TOUCH, 1),
+                                   (EV_SYN, SYN_REPORT, 0)])
+
+
+class ConfigTest(unittest.TestCase):
+    def test_defaults_validate(self):
+        cfg = load_config(None)
+        self.assertEqual(cfg["device"], "/dev/input/event8")
+        self.assertTrue(len(cfg["regions"]) >= 1)
+
+    def test_file_overlay_and_bad_action_rejected(self):
+        good = {"device": "/dev/input/event3", "width": 800, "height": 480,
+                "calibration": {"x_max": 1023, "y_max": 1023},
+                "regions": [{"id": "n", "rect": [0, 0, 800, 480],
+                             "action": {"name": "playlist_next"}}]}
+        with tempfile.NamedTemporaryFile("w", suffix=".json",
+                                         delete=False) as fh:
+            json.dump(good, fh)
+            path = fh.name
+        try:
+            cfg = load_config(path)
+            self.assertEqual((cfg["device"], cfg["width"]), (
+                "/dev/input/event3", 800))
+        finally:
+            os.unlink(path)
+        bad = dict(good, regions=[{"id": "x", "rect": [0, 0, 1, 1],
+                                         "action": {"name": "reboot"}}])
+        with tempfile.NamedTemporaryFile("w", suffix=".json",
+                                         delete=False) as fh:
+            json.dump(bad, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                load_config(path)
+        finally:
+            os.unlink(path)
+
+    def test_env_override(self):
+        os.environ["DISPLAYD_TOUCH_DEVICE"] = "/dev/input/event9"
+        try:
+            self.assertEqual(load_config(None)["device"],
+                             "/dev/input/event9")
+        finally:
+            del os.environ["DISPLAYD_TOUCH_DEVICE"]
+
+
+if __name__ == "__main__":
+    unittest.main()
