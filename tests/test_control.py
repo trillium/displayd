@@ -13,7 +13,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 
 import displayd
 
-KNOWN_TYPES = {"string", "integer", "number", "boolean"}
+# Selection params go through displayd.validate_params/validate_value, so the
+# advertised PARAMS types are exactly the types the daemon validates
+# (touch_confidence.regions is an array).
+KNOWN_TYPES = set(displayd.INPUT_TYPES)
 
 
 class TestRenderers(unittest.TestCase):

@@ -446,6 +446,14 @@ def default_config():
         "tap_max_seconds": 0.5,
         "tap_max_pixels": 40,
         "debounce_seconds": 0.3,
+        # Confidence-mode tap feedback: off by default. When enabled, every
+        # resolved tap (region hit AND dead-zone miss) is POSTed best-effort
+        # to displayd's feed API for the touch_confidence renderer, AFTER
+        # the configured action is dispatched. Feedback failures never
+        # affect action dispatch. See TOUCH.md "Touchscreen confidence mode".
+        "confidence_feedback": {"enabled": False,
+                                  "renderer": "touch_confidence",
+                                  "input": "tap"},
         "regions": [
             {"id": "playlist-next",
              "rect": [1280, 0, 640, 1080],
@@ -484,6 +492,12 @@ def load_config(path=None):
                      ("height", "DISPLAYD_TOUCH_HEIGHT")):
         if env.get(var):
             cfg[key] = int(env[var])
+    if env.get("DISPLAYD_TOUCH_CONFIDENCE"):
+        base = cfg.get("confidence_feedback")
+        cfg["confidence_feedback"] = (
+            dict(base) if isinstance(base, dict) else {})
+        cfg["confidence_feedback"].update(
+            confidence_env_override(env["DISPLAYD_TOUCH_CONFIDENCE"]))
     if cfg["width"] <= 0 or cfg["height"] <= 0:
         raise ValueError("width/height must be positive")
     regions = cfg.get("regions") or []
@@ -498,7 +512,54 @@ def load_config(path=None):
                 or any(not isinstance(v, (int, float)) for v in rect)):
             raise ValueError("region %r needs rect [x, y, w, h]" % (rid,))
         action_request(region.get("action") or {})  # fail fast on bad actions
+    cfg["confidence_feedback"] = normalize_confidence_feedback(
+        cfg.get("confidence_feedback"))
     return cfg
+
+
+CONFIDENCE_DEFAULTS = {"enabled": False,
+                         "renderer": "touch_confidence",
+                         "input": "tap"}
+
+
+def normalize_confidence_feedback(value):
+    """Normalize the confidence_feedback switch to a validated dict.
+
+    Accepts a bool (shorthand for {"enabled": bool}) or a dict; anything
+    else is a config error. Missing keys fall back to CONFIDENCE_DEFAULTS.
+    Off by default: absent/false means taps dispatch actions with no feed
+    traffic, exactly like before confidence mode existed."""
+    if value is None:
+        value = {}
+    if isinstance(value, bool):
+        value = {"enabled": value}
+    if not isinstance(value, dict):
+        raise ValueError("confidence_feedback must be a bool or an object")
+    merged = dict(CONFIDENCE_DEFAULTS)
+    merged.update(value)
+    if not isinstance(merged["enabled"], bool):
+        raise ValueError("confidence_feedback.enabled must be a bool")
+    for key in ("renderer", "input"):
+        if (not isinstance(merged[key], str) or not merged[key].strip()
+                or "/" in merged[key]):
+            raise ValueError("confidence_feedback.%s must be a plain "
+                             "feed name" % key)
+        merged[key] = merged[key].strip()
+    return merged
+
+
+def confidence_env_override(text):
+    """Parse DISPLAYD_TOUCH_CONFIDENCE into a confidence_feedback overlay.
+
+    Truthy (1/true/yes/on) enables, falsy (0/false/no/off) disables;
+    anything else is a config error rather than a silent default."""
+    norm = str(text).strip().lower()
+    if norm in ("1", "true", "yes", "on"):
+        return {"enabled": True}
+    if norm in ("0", "false", "no", "off"):
+        return {"enabled": False}
+    raise ValueError("DISPLAYD_TOUCH_CONFIDENCE must be a bool "
+                     "(1/true/yes/on or 0/false/no/off), got %r" % (text,))
 
 
 def list_input_devices():
@@ -581,6 +642,8 @@ class TouchService:
     def __init__(self, config, client=None, clock=None):
         self.config = config
         self.client = client or DisplaydClient(config["endpoint"])
+        self.confidence = normalize_confidence_feedback(
+            config.get("confidence_feedback"))
         self.parser = EvdevParser()
         self.taps = TapDetector(
             tap_max_seconds=config.get("tap_max_seconds", 0.5),
@@ -593,9 +656,61 @@ class TouchService:
         LOG.info("touch service stopping")
         self._stop = True
 
+    def confidence_payload(self, tap, region_id, action_name,
+                             result=None, error=None):
+        """Build the touch_confidence tap feed payload for a resolved tap.
+
+        tap is an (x, y) display-pixel pair; x_norm/y_norm are the same
+        point as 0..1 fractions so the confidence view (or any consumer)
+        can place it without knowing the panel size. Pure: no I/O."""
+        x, y = tap
+        width, height = self.config["width"], self.config["height"]
+        payload = {
+            "x": int(x),
+            "y": int(y),
+            "x_norm": round(x / float(width - 1), 4) if width > 1 else 0.0,
+            "y_norm": round(y / float(height - 1), 4) if height > 1 else 0.0,
+            "hit": region_id is not None,
+            "ts": time.time(),
+        }
+        if region_id is not None:
+            payload["region"] = region_id
+        if action_name is not None:
+            payload["action"] = action_name
+        if result is not None:
+            payload["result"] = str(result)
+        if error is not None:
+            payload["error"] = str(error)
+        return payload
+
+    def send_confidence(self, payload, dry_run=False):
+        """POST one tap payload to the confidence feed. Best-effort: any
+        failure (or a disabled switch, or dry-run) is logged and swallowed
+        -- feedback must never suppress or alter action dispatch."""
+        if not (self.confidence or {}).get("enabled"):
+            return None
+        if dry_run:
+            LOG.info("confidence feedback (dry-run, not sent): %r", payload)
+            return None
+        path = "/feed/%s/%s" % (self.confidence["renderer"],
+                                   self.confidence["input"])
+        try:
+            return self.client.post(path, payload)
+        except Exception as exc:  # keep serving touches on HTTP failure
+            LOG.warning("confidence feedback to %s failed "
+                        "(best-effort, action already dispatched): %s",
+                        path, exc)
+            return None
+
     def handle_frame(self, touch_events, dry_run=False):
         """Process one SYN_REPORT frame's TouchEvents. Returns the dispatch
-        summary for a tap that hit a region, else None."""
+        summary for a tap that hit a region, else None.
+
+        When confidence_feedback is enabled, every *resolved* tap -- region
+        hit and dead-zone miss alike -- is reported to the confidence feed
+        after tap resolution (and after the configured action, when there
+        is one). Invalid gestures (swipes, long presses, incomplete events)
+        and debounce-suppressed taps resolve to no tap and emit nothing."""
         now = time.monotonic()
         for event in touch_events:
             event.x, event.y = normalize(
@@ -608,6 +723,12 @@ class TouchService:
                                  self.config.get("regions") or [])
             if region_id is None:
                 LOG.info("tap at %d,%d hit no region", tap[0], tap[1])
+                # Dead-zone tap: no ordinary action, but the confidence
+                # display still learns about it.
+                self.send_confidence(
+                    self.confidence_payload(tap, None, None,
+                                            result="dead-zone"),
+                    dry_run=dry_run)
                 continue
             region = next(r for r in self.config["regions"]
                           if r["id"] == region_id)
@@ -615,13 +736,30 @@ class TouchService:
                      tap[0], tap[1], region_id,
                      region["action"].get("name"))
             try:
-                return self.client.dispatch(region["action"],
-                                            dry_run=dry_run)
+                summary = self.client.dispatch(region["action"],
+                                               dry_run=dry_run)
+                # Action first, feedback second: a feedback failure below
+                # can never suppress or alter what was just dispatched.
+                err = (summary.get("error")
+                       if isinstance(summary, dict) else None)
+                self.send_confidence(
+                    self.confidence_payload(
+                        tap, region_id, region["action"].get("name"),
+                        result="dispatch-error" if err else "dispatched",
+                        error=err),
+                    dry_run=dry_run)
+                return summary
             except Exception as exc:  # keep serving touches on HTTP failure
                 LOG.warning("action %r failed: %s",
                             region["action"].get("name"), exc)
-                return {"action": region["action"].get("name"),
-                        "error": str(exc)}
+                summary = {"action": region["action"].get("name"),
+                           "error": str(exc)}
+                self.send_confidence(
+                    self.confidence_payload(
+                        tap, region_id, region["action"].get("name"),
+                        result="dispatch-error", error=str(exc)),
+                    dry_run=dry_run)
+                return summary
         return None
 
     def iter_device_events(self, stream):
@@ -687,6 +825,9 @@ def build_arg_parser():
     parser.add_argument("--height", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true",
                         help="decode + hit-test, log actions, send no HTTP")
+    parser.add_argument("--confidence-feedback", action="store_true",
+                        help="publish resolved taps to the touch_confidence "
+                             "feed (same as DISPLAYD_TOUCH_CONFIDENCE=1)")
     parser.add_argument("--list-devices", action="store_true",
                         help="list /dev/input/event* with names and exit")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -710,6 +851,9 @@ def main(argv=None):
         cfg["width"] = args.width
     if args.height:
         cfg["height"] = args.height
+    if args.confidence_feedback:
+        cfg["confidence_feedback"] = normalize_confidence_feedback(
+            dict(cfg.get("confidence_feedback") or {}, enabled=True))
     service = TouchService(cfg)
     signal.signal(signal.SIGINT,
                   lambda *_a: service.request_stop())

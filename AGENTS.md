@@ -135,3 +135,9 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - evdev `value` is signed (`<qqHHi`, 24-byte 64-bit records); packing it unsigned breaks
   `ABS_MT_TRACKING_ID -1` (lift). Synthetic-stream tests live in
   `tests/test_touch.py`; smoke live with `--dry-run` before enabling.
+- Touchscreen confidence mode (opt-in tap test): `renderers/touch_confidence.py`
+  draws the configured regions + live tap diagnostics; `touch.py`
+  `confidence_feedback` switch (off by default, `DISPLAYD_TOUCH_CONFIDENCE=1`
+  override) POSTs resolved taps best-effort to its feed after action
+  dispatch. Reversible procedure + lnx-server calls in TOUCH.md;
+  tests in `tests/test_touch_confidence.py`.

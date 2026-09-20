@@ -1,5 +1,5 @@
 {
-  "_comment": "Example touch.py config for lnx-server. Copy to touch.json on the host and edit: confirm device with `python3 touch.py --list-devices`, raw range with evtest, and width/height with fbset. Env overrides: DISPLAYD_TOUCH_DEVICE, DISPLAYD_URL, DISPLAYD_TOUCH_WIDTH/HEIGHT.",
+  "_comment": "Example touch.py config for lnx-server. Copy to touch.json on the host and edit: confirm device with `python3 touch.py --list-devices`, raw range with evtest, and width/height with fbset. Env overrides: DISPLAYD_TOUCH_DEVICE, DISPLAYD_URL, DISPLAYD_TOUCH_WIDTH/HEIGHT, DISPLAYD_TOUCH_CONFIDENCE (1 to enable confidence-mode tap feedback). Keep confidence_feedback disabled except during tap tests; see TOUCH.md.",
   "device": "/dev/input/event8",
   "endpoint": "http://127.0.0.1:8980",
   "width": 1920,
@@ -17,6 +17,11 @@
   "tap_max_seconds": 0.5,
   "tap_max_pixels": 40,
   "debounce_seconds": 0.3,
+  "confidence_feedback": {
+    "enabled": false,
+    "renderer": "touch_confidence",
+    "input": "tap"
+  },
   "regions": [
     {
       "id": "playlist-next",

@@ -91,6 +91,63 @@ playlist-next, left third = screen-on, middle = dead).
 Expected log lines: `touch service starting`, `tap at X,Y -> region '...'`,
 `tap at X,Y hit no region`. Ctrl-C stops cleanly (SIGTERM too).
 
+## Touchscreen confidence mode (opt-in tap test)
+
+A visible tap-test view for proving the panel mapping without guessing.
+`renderers/touch_confidence.py` draws every configured touch region as a
+labelled box (`id → action`) under a prominent title, plus live
+diagnostics: last tap coordinates, matched region/action or dead-zone
+result, total/hit/miss counters, and the action result/error. Every
+resolved tap repaints the frame.
+
+It is off by default and fully additive: with the switch absent or false,
+touch actions and clock/playlist behaviour are byte-for-byte what they were
+before confidence mode existed.
+
+Enable (reversible, on lnx-server):
+
+1. Show the view, passing the touch.json regions so the boxes match the
+   live hit-test (rects are display pixels; `width`/`height` declare their
+   coordinate space when it differs from the screen):
+
+       curl -X POST http://100.81.88.113:8980/show \
+         -d '{"renderer": "touch_confidence", "params": {
+               "width": 1920, "height": 1080, "regions": [
+                 {"id": "screen-on", "rect": [0, 0, 640, 1080],
+                  "action": {"name": "screen_on"}},
+                 {"id": "playlist-next", "rect": [1280, 0, 640, 1080],
+                  "action": {"name": "playlist_next"}}]}}'
+
+2. Turn on tap feedback in the touch service config (`touch.json`):
+
+       "confidence_feedback": {"enabled": true}
+
+   or without editing the file: `DISPLAYD_TOUCH_CONFIDENCE=1` in the
+environment, or `python3 touch.py --confidence-feedback`. Then restart
+   the touch service only (`sudo systemctl restart displayd-touch` --
+   displayd itself is untouched). Every resolved tap -- region hit AND
+   dead-zone miss -- is POSTed best-effort to
+   `/feed/touch_confidence/tap` *after* the configured action dispatches,
+   so feedback can never suppress or alter taps. Feedback failures are
+   logged and swallowed. Swipes, long presses, incomplete events, and
+   debounce-suppressed taps emit nothing.
+
+3. Tap the panel: boxes, counters, and the last-tap line update live.
+   The middle dead zone reports `DEAD ZONE — no action` and dispatches
+   nothing.
+
+Disable (back to normal):
+
+    curl -X POST http://100.81.88.113:8980/show \
+      -d '{"renderer": "clock", "params": {}}'   # panel back to clock
+    # then in touch.json: "confidence_feedback": {"enabled": false}
+    # (or unset DISPLAYD_TOUCH_CONFIDENCE), restart displayd-touch.
+
+Feeding the confidence view never pulls the screen: it is an ordinary feed
+buffer, not a chat-attention event, so taps cannot interrupt the clock,
+playlist rotation, or a layout -- they only repaint the confidence view
+while it is shown.
+
 ## Service supervision (lnx-server)
 
 Template unit: `touch-input.service` (review before installing -- the worker
