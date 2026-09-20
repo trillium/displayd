@@ -125,6 +125,6 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - `/dev/input/event8` is only the lnx-server local default (`G2Touch
   Multi-Touch`); always confirm with `touch.py --list-devices` + evtest,
   and set real `width`/`height` + raw `x_max`/`y_max` per panel.
-- evdev `value` is signed (`<llHHi`); packing it unsigned breaks
+- evdev `value` is signed (`<qqHHi`, 24-byte 64-bit records); packing it unsigned breaks
   `ABS_MT_TRACKING_ID -1` (lift). Synthetic-stream tests live in
   `tests/test_touch.py`; smoke live with `--dry-run` before enabling.

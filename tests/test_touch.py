@@ -67,7 +67,90 @@ class ParseTest(unittest.TestCase):
                          (EV_ABS, ABS_MT_TRACKING_ID, -1))
 
 
-class SingleTouchTest(unittest.TestCase):
+class EventRecordSizeTest(unittest.TestCase):
+    """Regression: 64-bit Linux struct input_event is 24 bytes.
+
+    The reader once used "<llHHi" (16 bytes); on the 64-bit host the
+    kernel emits 24-byte records (timeval with 8-byte longs) and
+    rejects a 16-byte read() with EINVAL. These tests pin the 24-byte
+    layout, the full-record read size, fragmented-read parsing, and
+    signed values at the new size."""
+
+    def test_supported_event_size_is_24_bytes(self):
+        self.assertEqual(touch.EVENT_FORMAT, "<qqHHi")
+        self.assertEqual(touch.EVENT_SIZE, 24)
+        self.assertEqual(struct.calcsize(touch.EVENT_FORMAT), 24)
+
+    def test_legacy_16_byte_record_rejected(self):
+        # A 32-bit/old-format 16-byte record must fail loudly, never
+        # misparse as a 64-bit event.
+        legacy = struct.pack("<llHHi", 0, 0, EV_ABS, ABS_X, 1)
+        self.assertEqual(len(legacy), 16)
+        with self.assertRaises(ValueError):
+            parse_event(legacy)
+
+    def test_reads_request_full_record_size(self):
+        # The kernel checks read() counts against its native 24-byte
+        # record: every request must be exactly the remainder of one
+        # full record, starting with a full EVENT_SIZE read.
+        requested = []
+
+        class RecordingStream(io.BytesIO):
+            def read(self, n):
+                requested.append(n)
+                return super().read(n)
+
+        cfg = default_config()
+        svc = TouchService(cfg)
+        blob = (pack_event(EV_ABS, ABS_X, 1000)
+                + pack_event(EV_SYN, SYN_REPORT, 0))
+        triples = list(svc.iter_device_events(RecordingStream(blob)))
+        self.assertEqual(triples, [(EV_ABS, ABS_X, 1000),
+                                   (EV_SYN, SYN_REPORT, 0)])
+        self.assertTrue(requested)
+        self.assertEqual(requested[0], 24)
+        for size in requested:
+            self.assertGreaterEqual(size, 1)
+            self.assertLessEqual(size, 24)
+
+    def test_fragmented_reads_still_parse(self):
+        # byte-at-a-time (and other short) device reads must reassemble
+        # into the same triples as a whole-record read.
+        expected = [(EV_ABS, ABS_MT_TRACKING_ID, -1),
+                    (EV_ABS, ABS_MT_POSITION_X, 1500),
+                    (EV_SYN, SYN_REPORT, 0)]
+        blob = b"".join(pack_event(*t) for t in expected)
+        for chunk_size in (1, 7, 23):
+            stream = _ChunkedStream(blob, chunk_size)
+            svc = TouchService(default_config())
+            self.assertEqual(list(svc.iter_device_events(stream)),
+                             expected,
+                             "chunk_size=%d" % chunk_size)
+
+    def test_signed_tracking_id_at_24_bytes(self):
+        # ABS_MT_TRACKING_ID -1 (contact lifted) stays signed in the
+        # 24-byte layout; the value field is __s32, not unsigned.
+        rec = pack_event(EV_ABS, ABS_MT_TRACKING_ID, -1)
+        self.assertEqual(len(rec), 24)
+        self.assertEqual(parse_event(rec),
+                         (EV_ABS, ABS_MT_TRACKING_ID, -1))
+
+
+class _ChunkedStream(io.RawIOBase):
+    """Binary stream yielding at most chunk_size bytes per read()."""
+
+    def __init__(self, blob, chunk_size):
+        self._buf = io.BytesIO(blob)
+        self._chunk = chunk_size
+
+    def readable(self):
+        return True
+
+    def read(self, n=-1):
+        size = self._chunk if n < 0 else min(n, self._chunk)
+        return self._buf.read(size)
+
+
     def test_down_move_up(self):
         p = EvdevParser()
         events = p.feed_frame(st_down(1000, 2000))

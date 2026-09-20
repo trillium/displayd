@@ -41,6 +41,18 @@ Pick the `eventN` whose name matches the touchscreen. If the number moves
 across reboots, write a udev rule pinning a symlink (e.g.
 `/dev/input/touchscreen`) and put that symlink in `device`.
 
+## Event record size (64-bit Linux only)
+
+`touch.py` reads `struct input_event` as 24-byte records (`EVENT_FORMAT
+= "<qqHHi"`: two 8-byte `timeval` longs + type + code + signed value).
+The kernel validates `read()` counts against its native record size, so a
+shorter read fails with `EINVAL` instead of returning data.
+
+32-bit kernels emit 16-byte records (4-byte `timeval` longs) and are NOT
+supported by this build -- there is deliberately no runtime format
+guessing, which would silently misframe the stream. If 32-bit support is
+ever needed, it must be an explicit, tested target.
+
 ## Permissions
 
 The input device is usually `root:input` `660`. Options (pick one):

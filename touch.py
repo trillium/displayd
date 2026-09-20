@@ -57,12 +57,26 @@ ABS_MT_POSITION_X = 0x35    # 53
 ABS_MT_POSITION_Y = 0x36    # 54
 ABS_MT_TRACKING_ID = 0x39   # 57
 
-# struct input_event on 64-bit Linux: timeval (2x long) + __u16 x2 + __s32.
-# value is SIGNED (e.g. ABS_MT_TRACKING_ID -1 means "contact lifted").
-# The touchscreen host (lnx-server) is 64-bit; 32-bit kernels use 16-byte
-# records and are rejected with a clear error at read time.
-EVENT_FORMAT = "<llHHi"
+# struct input_event on the supported target, 64-bit Linux (x86_64):
+# timeval (2x 8-byte long: tv_sec, tv_usec) + __u16 type + __u16 code +
+# __s32 value = 24 bytes total. value is SIGNED (e.g. ABS_MT_TRACKING_ID
+# -1 means "contact lifted").
+#
+# Explicitly little-endian ("<qqHHi") rather than native ("@llHHi") so
+# the size is pinned at 24 bytes wherever this code runs; a native long
+# would silently shrink to 4 bytes on a 32-bit build and reintroduce the
+# EINVAL below.
+#
+# 32-bit kernels emit 16-byte records (timeval with 4-byte longs,
+# format "<llHHi"). That layout is NOT supported by this build: the
+# reader requests full 24-byte records and the kernel rejects a 16-byte
+# read() on a 64-bit device with EINVAL, and vice versa a 24-byte read
+# on a 16-byte-record device would misframe. Do not "guess" between
+# the two at runtime -- if 32-bit support is ever needed, it must be an
+# explicit, tested target, not a silent fallback.
+EVENT_FORMAT = "<qqHHi"
 EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
+assert EVENT_SIZE == 24, "64-bit input_event must be 24 bytes"
 
 # Documented local-machine default: on lnx-server the attached panel was
 # previously identified as `G2Touch Multi-Touch`. This is NOT universal --
@@ -612,7 +626,13 @@ class TouchService:
 
     def iter_device_events(self, stream):
         """Yield (type, code, value) triples from a raw device stream,
-        tolerating short reads at EOF."""
+        tolerating short reads at EOF.
+
+        Each read() requests exactly the remainder of one 24-byte
+        input_event record. The kernel validates the count against its
+        native record size, so requesting anything other than a full
+        record (e.g. the old 16-byte size) fails with EINVAL -- hence
+        the pinned EVENT_SIZE above."""
         buf = b""
         while not self._stop:
             chunk = stream.read(EVENT_SIZE - len(buf))
