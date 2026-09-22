@@ -196,6 +196,7 @@ evidence for later human-guided work, not a control loop.
 | `notice` | yes | `title` (required), `body`, `severity` (`info`/`warn`/`critical`), `color`, `background` |
 | `reload` | yes | `sha` (required, full 40-char deployed commit SHA; QR encodes its commit page) |
 | `chat` | no | `title`, `lines` (default 7), `background` — inputs: `message`, `delete` |
+| `stream` | no | `url` (snapshot JPEG to poll), `fps` (0.5–5, default 2), `fit` (cover/contain/stretch), `background`, `label` — inputs: `frame` (`{data}` base64 or `{url}`) |
 
 Static renderers draw one frame and return; that frame stays on screen.
 Animated renderers loop until the daemon stops them.

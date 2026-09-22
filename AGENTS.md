@@ -146,3 +146,17 @@ When updating this file, preserve this bar for all agents and keep entries conci
   override) POSTs resolved taps best-effort to its feed after action
   dispatch. Reversible procedure + lnx-server calls in TOUCH.md;
   tests in `tests/test_touch_confidence.py`.
+
+## Stream monitor (jumbotron live frames)
+
+- `renderers/stream.py` (`STATIC = False`): fullscreen latest-frame view at a
+  capped fps (`fps` param, 0.5-5, default 2). Push wins over poll: feed
+  `POST /feed/stream/frame` (`{data}` base64 or `{url}`, `buffer: 1` so a
+  slow panel drops stale frames) beats the `url` snapshot-poll fallback.
+- Headless ceiling measured in `tests/test_stream.py` (~4.9fps at the 5fps
+  cap, 1920x1080, ~25ms/present): full-rate video is out of scope for the
+  tile path by design, hence the cap. Frame source (Mac-side OBS snapshot
+  server) is obs-agent territory; contract lives in the renderer docstring.
+- Start/stop is one action: `POST /show {renderer: stream, params: ...}` /
+  bare `/show` or `/clear`. No auth/header params exist on purpose: serve
+  snapshots tailnet-bound, unauthenticated, with no keys in files or logs.
