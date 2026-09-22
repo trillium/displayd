@@ -198,6 +198,7 @@ evidence for later human-guided work, not a control loop.
 | `reload` | yes | `sha` (required, full 40-char deployed commit SHA; QR encodes its commit page) |
 | `chat` | no | `title`, `lines` (default 7), `background` — inputs: `message`, `delete` |
 | `stream` | no | `url` (snapshot JPEG to poll), `fps` (0.5–5, default 2), `fit` (cover/contain/stretch), `background`, `label` — inputs: `frame` (`{data}` base64 or `{url}`) |
+| `retro_grid` | no | `boxes` (per-cell `label`/`text` or `image` file-or-URL + `color`/`text_color`/`text_size`), `columns`/`rows` (default 4/3), `gutter`, `border`, `background`, `flash_seconds` — input: `tap` (`{cell,label,id,region,x,y}`); tap wiring in `touch-retro-grid.json.example`, see TOUCH.md "Retro grid wiring" |
 
 Static renderers draw one frame and return; that frame stays on screen.
 Animated renderers loop until the daemon stops them.

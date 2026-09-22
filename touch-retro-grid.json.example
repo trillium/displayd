@@ -1,0 +1,207 @@
+{
+  "_comment": "Retro-grid taps for lnx-server (1920x1080). Copy to touch.json on the host and edit: confirm device with `python3 touch.py --list-devices`, raw range with evtest. Rects are the default 4x3 retro_grid layout; recompute for another W/H with: python3 renderers/retro_grid.py --width <W> --height <H> (paste the output under \"regions\"). Each cell fires the existing allowlisted notify action (transient CELL notice, auto-return); in-grid flash comes from confidence_feedback pointed at renderer retro_grid / input tap -- touch.py POSTs every resolved tap there best-effort AFTER the cell action dispatches. No new generic action; see TOUCH.md (Retro grid wiring).",
+  "device": "/dev/input/event8",
+  "endpoint": "http://127.0.0.1:8980",
+  "width": 1920,
+  "height": 1080,
+  "calibration": {
+    "x_min": 0,
+    "x_max": 4095,
+    "y_min": 0,
+    "y_max": 4095,
+    "swap_xy": false,
+    "invert_x": false,
+    "invert_y": false,
+    "rotation": 0
+  },
+  "tap_max_seconds": 0.5,
+  "tap_max_pixels": 40,
+  "debounce_seconds": 0.3,
+  "confidence_feedback": {
+    "enabled": true,
+    "renderer": "retro_grid",
+    "input": "tap"
+  },
+  "regions": [
+    {
+      "id": "retro-cell-1",
+      "rect": [
+        24,
+        24,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 1",
+        "body": "retro grid cell 1 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-2",
+      "rect": [
+        498,
+        24,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 2",
+        "body": "retro grid cell 2 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-3",
+      "rect": [
+        972,
+        24,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 3",
+        "body": "retro grid cell 3 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-4",
+      "rect": [
+        1446,
+        24,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 4",
+        "body": "retro grid cell 4 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-5",
+      "rect": [
+        24,
+        376,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 5",
+        "body": "retro grid cell 5 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-6",
+      "rect": [
+        498,
+        376,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 6",
+        "body": "retro grid cell 6 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-7",
+      "rect": [
+        972,
+        376,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 7",
+        "body": "retro grid cell 7 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-8",
+      "rect": [
+        1446,
+        376,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 8",
+        "body": "retro grid cell 8 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-9",
+      "rect": [
+        24,
+        728,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 9",
+        "body": "retro grid cell 9 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-10",
+      "rect": [
+        498,
+        728,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 10",
+        "body": "retro grid cell 10 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-11",
+      "rect": [
+        972,
+        728,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 11",
+        "body": "retro grid cell 11 tapped",
+        "severity": "info"
+      }
+    },
+    {
+      "id": "retro-cell-12",
+      "rect": [
+        1446,
+        728,
+        450,
+        328
+      ],
+      "action": {
+        "name": "notify",
+        "title": "CELL 12",
+        "body": "retro grid cell 12 tapped",
+        "severity": "info"
+      }
+    }
+  ]
+}
