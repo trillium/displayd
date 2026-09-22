@@ -61,6 +61,36 @@ POLICY_FILE = os.environ.get(
     "DISPLAYD_POLICY",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "policy.json"),
 )
+# Delivery stamp (written by deploy.sh, read by GET /deploy and the
+# control page): JSON {"date": <UTC ISO-8601>, "sha": <40-char commit>,
+# "deployer": <user>}. Host-side only -- never committed to the repo --
+# so a missing or unreadable file simply means "never recorded".
+DEPLOY_STAMP_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "DEPLOYED")
+
+
+def deploy_stamp_path():
+    return os.environ.get("DISPLAYD_DEPLOY_STAMP", DEPLOY_STAMP_FILE)
+
+
+def read_deploy_stamp(path=None):
+    """Last delivery stamp as a JSON-safe dict.
+
+    Returns {"deployed": True, "date": ..., "sha": ..., "deployer": ...}
+    when the stamp file holds JSON with a sha, else {"deployed": False}.
+    Read-only and total: a missing or corrupt file is "never recorded",
+    never an error."""
+    try:
+        with open(path or deploy_stamp_path()) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {"deployed": False}
+    if not isinstance(data, dict) or not data.get("sha"):
+        return {"deployed": False}
+    return {"deployed": True,
+            "date": data.get("date"),
+            "sha": data.get("sha"),
+            "deployer": data.get("deployer")}
 # Reload confirmation (POST /reload): the QR payload is always the commit
 # page for the posted SHA -- never the repository homepage, never a
 # caller-supplied URL. Mirrors renderers/reload.py COMMIT_URL_PREFIX and
@@ -1537,6 +1567,13 @@ class DisplayDaemon:
             out["superseded"] = superseded
         return out
 
+    # ---- delivery stamp ----------------------------------------------------
+
+    def deploy_info(self):
+        """Last delivery stamp (see read_deploy_stamp). Read-only: the
+        file is written host-side by deploy.sh, never through the API."""
+        return read_deploy_stamp()
+
     # ---- policy configuration surface ------------------------------------
 
     def get_policy(self):
@@ -1638,6 +1675,9 @@ class DisplayDaemon:
             # mode, otherwise per-region binding + health. renderer stays
             # None while a layout owns the panel.
             "layout": self.layout_state(),
+            # Delivery stamp (deploy.sh host file): date + SHA of the
+            # running build, or {"deployed": False} when never recorded.
+            "deploy": self.deploy_info(),
         }
 
     def renderer_list(self):
@@ -1726,6 +1766,11 @@ CONTROL_PAGE = """<!DOCTYPE html>
   <div class="card">
     <img id="preview" alt="live preview of the panel">
   </div>
+</div>
+<div class="card" style="margin-top:12px">
+  <div>Last deploy: <span id="dep-when">&ndash;</span></div>
+  <div>SHA: <code id="dep-sha">&ndash;</code></div>
+  <div>By: <span id="dep-who">&ndash;</span></div>
 </div>
 
 <h2>Show something</h2>
@@ -1842,6 +1887,13 @@ async function refreshState() {
     const e = document.getElementById("cur-err");
     e.textContent = s.last_error || "none";
     e.style.color = s.last_error ? "#f88" : "";
+    const d = s.deploy || {};
+    document.getElementById("dep-when").textContent =
+      d.deployed ? (d.date || "unknown date") : "never recorded";
+    document.getElementById("dep-sha").textContent =
+      d.deployed ? (d.sha || "?") : "\u2013";
+    document.getElementById("dep-who").textContent =
+      d.deployed ? (d.deployer || "?") : "\u2013";
   } catch (err) {
     document.getElementById("health").className = "dot bad";
     document.getElementById("healthtext").textContent = "unreachable: " + err.message;
@@ -2122,6 +2174,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, png, "image/png")
         if path == "/policy":
             return self._send(200, DAEMON.get_policy())
+        if path == "/deploy":
+            return self._send(200, DAEMON.deploy_info())
         if path == "/playlist":
             return self._send(200, DAEMON.playlist.status())
         if path == "/layout":

@@ -13,6 +13,11 @@ When updating this file, preserve this bar for all agents and keep entries conci
 
 ## Deploying to lnx-server
 
+- Deliver with `./deploy.sh` (rsync + restart + re-show + `/reload` proof +
+  `~/displayd/DEPLOYED` stamp + verify; panel-visible via `GET /deploy`,
+  `GET /state`'s `"deploy"` key, and the control page). No `--delete`:
+  host-local files (`touch.json`, `state/`, `backups/`, `policy.json`,
+  feedback log) must survive redeploys.
 - Live host is `lnx-server` (tailnet `100.81.88.113`); ssh as `trillium@lnx-server`.
 - Deployed copy lives at `~/displayd` (NOT `/opt/displayd`); `install.sh` was
   run with that prefix, so the unit file is the repo's `displayd.service` with
@@ -101,9 +106,8 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - IMPORTANT: the installed plist points at the displayd checkout that holds
   the script. Repoint `ProgramArguments` to the merged main checkout path
   whenever the code moves worktrees, then `launchctl kickstart`.
-- Deploy is `rsync` of the repo to `~/displayd` (no git there), then
-  `sudo systemctl restart displayd`. Chat is quiet late at night: an empty
-  panel with "waiting for chat" is the healthy idle state, not a bug.
+- Deploy with `./deploy.sh` (no git on the host). Chat is quiet late at night:
+  an empty panel with "waiting for chat" is the healthy idle state, not a bug.
 
 ## Playlist mode (rotation + progress bar)
 

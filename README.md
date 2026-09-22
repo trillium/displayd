@@ -119,6 +119,7 @@ publishes an unauthenticated control surface to everything that can route to it.
 | GET | `/feedback/summary` | – | per-view counts, mean rating, category histograms |
 | GET | `/feedback/<id>` | – | one feedback entry |
 | GET | `/feedback/<id>/frame` | – | the PNG frame the note judged |
+| GET | `/deploy` | – | last delivery stamp (UTC date + commit SHA + deployer), or `{"deployed":false}` |
 
 Example — put a message on the screen:
 
@@ -369,6 +370,26 @@ Example -- confirming the currently deployed lnx-server commit:
 
     curl -s -X POST 100.81.88.113:8980/reload -H 'Content-Type: application/json' \
       -d '{"sha":"25e0e740074740b6b98896a6076bf2763fe598f1"}'
+
+## Deploying to lnx-server
+
+Run `./deploy.sh` from the repo root. It rsyncs the repo to `~/displayd`
+on lnx-server (tailnet `100.81.88.113`, ssh as `trillium@lnx-server`),
+restarts the daemon, re-shows the prior view (restart blanks the screen),
+proves the build on the panel itself via `POST /reload` with the deployed
+SHA, writes a delivery stamp (UTC date + commit SHA + deployer) to the
+host file `~/displayd/DEPLOYED`, and verifies the panel is healthy with
+content on screen. There is deliberately no `--delete` pass: the host
+holds host-local files the repo must never wipe (`touch.json`, `state/`,
+`backups/`, `policy.json`, the feedback log); `DEPLOYED`, `policy.json`,
+and feedback logs are excluded from the sync either way.
+
+The stamp is host-side only -- never committed, so the repo stays clean --
+and panel-visible: `GET /deploy` serves it as JSON, `GET /state` carries it
+under `"deploy"`, and the control page (`GET /`) renders last-deploy date
++ SHA + deployer. A missing stamp reads as `{"deployed": false}
+("never recorded"), never an error. `DISPLAYD_DEPLOY_STAMP` overrides the
+stamp path (tests use this).
 
 ## Playlist mode (automatic rotation)
 
