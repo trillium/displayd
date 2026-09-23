@@ -54,6 +54,19 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Policy config persists in `policy.json` next to the daemon
   (`DISPLAYD_POLICY` overrides); feed buffers do not persist.
 
+## Control page (phone-first, GET /)
+
+- One template owns it: `CONTROL_PAGE` in `displayd.py` (presentation
+  only -- every control drives an existing API endpoint, no page-specific
+  routes). Sections top-to-bottom: Views (one-tap grid, big four pinned:
+  clock/chat/row/stream, current view highlighted) / Playback / Proof
+  (reload + deploy stamp, also pinned in the sticky top bar) / Feedback
+  (rate + summary) / Now showing / Notify / Policy / Tap actions.
+- Guardrails in `tests/test_control.py` (`TestPhoneFirstRebuild`): no
+  hardcoded renderer names, tap-action list matches `touch.ACTION_TABLE`,
+  every fetched path has a daemon route. Verify against a live headless
+  daemon (`DISPLAYD_FAKE_FB=1`) by curling each button's endpoint.
+
 ## MCP + display feedback
 
 - Agent entry point is `mcp_server.py` (stdlib-only MCP over stdio,

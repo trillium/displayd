@@ -95,6 +95,103 @@ class TestControlPage(unittest.TestCase):
         self.assertIn("text/html", src)
 
 
+class TestPhoneFirstRebuild(unittest.TestCase):
+    """The v1 phone-first rebuild: one-tap views, playback, proof,
+    feedback, deploy stamp without scrolling, tap-action list.
+
+    Run from the repo root:  python3 -m unittest tests.test_control -v
+    """
+
+    def test_one_tap_view_grid(self):
+        page = displayd.CONTROL_PAGE
+        self.assertIn('id="viewgrid"', page)
+        # Buttons are built from the live /renderers list, never hardcoded.
+        self.assertIn('createElement("button")', page)
+        self.assertIn("oneTapShow", page)
+        for name in ("life", "clock", "text", "image", "solid"):
+            self.assertNotIn('value="%s"' % name, page)
+            self.assertNotIn('>%s<' % name, page)
+
+    def test_big_four_pinned_top(self):
+        import re
+        m = re.search(r"PINNED\s*=\s*\[(.*?)\]", displayd.CONTROL_PAGE)
+        self.assertIsNotNone(m, "page has no PINNED order list")
+        pinned = re.findall(r'"([^"]+)"', m.group(1))
+        self.assertEqual(pinned, ["clock", "chat", "row", "stream"])
+
+    def test_current_view_highlighted(self):
+        page = displayd.CONTROL_PAGE
+        self.assertIn("markCurrent", page)
+        self.assertIn('"active"', page)
+        # The sticky top bar names the current view on every load.
+        self.assertIn('id="tb-view"', page)
+
+    def test_playback_controls(self):
+        page = displayd.CONTROL_PAGE
+        for token in ('id="plpause"', 'id="plresume"', 'id="plnext"',
+                      'id="pl-status"',
+                      '"/playlist/pause"', '"/playlist/resume"',
+                      '"/playlist/next"', '"/playlist"'):
+            self.assertIn(token, page, "playback missing %r" % token)
+
+    def test_proof_controls(self):
+        page = displayd.CONTROL_PAGE
+        for token in ('id="rl-sha"', 'id="reload"', 'id="reload-result"',
+                      '"/reload"', 'commit_url',
+                      'id="dep-when"', 'id="dep-sha"', 'id="dep-who"'):
+            self.assertIn(token, page, "proof section missing %r" % token)
+
+    def test_deploy_stamp_visible_without_scrolling(self):
+        page = displayd.CONTROL_PAGE
+        self.assertIn('id="topbar"', page)
+        self.assertIn('id="tb-dep"', page)
+        self.assertIn("sticky", page)
+        # The top bar (with the deploy stamp) precedes all sections.
+        self.assertLess(page.index('id="topbar"'), page.index("<h2>"))
+        self.assertLess(page.index('id="tb-dep"'), page.index("<h2>"))
+
+    def test_feedback_rate_and_summary(self):
+        page = displayd.CONTROL_PAGE
+        for token in ('id="fb-view"', 'id="ratebtns"', 'id="fbsend"',
+                      'id="fb-notes"', 'id="fb-summary"',
+                      'data-rating', '"/feedback"', '"/feedback/summary"'):
+            self.assertIn(token, page, "feedback section missing %r" % token)
+
+    def test_tap_action_list_matches_touch_allowlist(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                        os.pardir))
+        import touch
+        page = displayd.CONTROL_PAGE
+        for action in touch.ALLOWED_ACTIONS:
+            self.assertIn(action, page,
+                          "tap-action list omits %r" % action)
+
+    def test_thumb_targets_single_column(self):
+        page = displayd.CONTROL_PAGE
+        self.assertIn("max-width: 520px", page)
+        self.assertTrue("min-height: 48px" in page
+                        or "min-height: 52px" in page,
+                        "no thumb-sized button targets")
+        self.assertIn("min-height: 56px", page)
+
+    def test_page_uses_only_existing_endpoints(self):
+        """Every path the page fetches must already exist on the daemon:
+        presentation-only means no new endpoints."""
+        import inspect
+        import re
+        page = displayd.CONTROL_PAGE
+        paths = set(re.findall(r'"(/(?:health|state|renderers|snapshot|show|'
+                               r'clear|screen/[a-z]+|policy|playlist(?:/[a-z]+)?|'
+                               r'notify|reload|feedback(?:/[a-z]+)?))"', page))
+        self.assertTrue(paths, "no API paths found in page")
+        routes = (inspect.getsource(displayd.Handler.do_GET)
+                  + inspect.getsource(displayd.Handler.do_POST))
+        for path in sorted(paths):
+            base = path.split("?")[0]
+            self.assertIn('"%s"' % base, routes,
+                          "page calls %r which has no daemon route" % base)
+
+
 class TestExposureDefaults(unittest.TestCase):
     def test_default_bind_is_loopback(self):
         self.assertEqual(displayd.BIND, "127.0.0.1",

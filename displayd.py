@@ -1718,81 +1718,202 @@ CONTROL_PAGE = """<!DOCTYPE html>
 <title>displayd control</title>
 <style>
   :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
   body { background: #111; color: #eee; font-family: system-ui, sans-serif;
-         max-width: 860px; margin: 0 auto; padding: 16px; }
-  h1 { font-size: 1.4em; margin: 0 0 4px; }
-  h2 { font-size: 1.1em; margin-top: 24px; border-bottom: 1px solid #333;
+         max-width: 520px; margin: 0 auto; padding: 0 12px 32px; }
+  h1 { font-size: 1.2em; margin: 12px 0 4px; }
+  h2 { font-size: 1.05em; margin: 20px 0 8px; border-bottom: 1px solid #333;
        padding-bottom: 4px; }
-  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  #topbar { position: sticky; top: 0; z-index: 10; background: #161616;
+            border-bottom: 1px solid #333; margin: 0 -12px; padding: 8px 12px;
+            font-size: 0.85em; display: flex; gap: 10px; align-items: center;
+            flex-wrap: wrap; }
+  #topbar .now { font-weight: bold; }
+  #topbar .dep { color: #aaa; }
   .card { background: #1c1c1c; border: 1px solid #333; border-radius: 8px;
-          padding: 12px; flex: 1 1 240px; }
+          padding: 12px; margin-bottom: 12px; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
          background: #666; margin-right: 6px; vertical-align: baseline; }
   .dot.ok { background: #3d3; } .dot.bad { background: #f44; }
   #preview { width: 100%; aspect-ratio: 16/9; background: #000; object-fit: contain;
              border: 1px solid #333; border-radius: 8px; }
-  label { display: block; margin: 8px 0 2px; font-size: 0.9em; }
-  label .req { color: #f88; }
-  label .help { color: #999; font-size: 0.85em; display: block; }
-  input[type=text], input[type=number], select {
-    width: 100%; box-sizing: border-box; padding: 6px;
-    background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; }
-  button { padding: 8px 14px; margin: 8px 8px 0 0; cursor: pointer;
-           background: #2a5; color: #061; border: 0; border-radius: 4px;
-           font-weight: bold; }
+  /* one-tap view grid: two fat thumb columns */
+  #viewgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  #viewgrid button { min-height: 56px; font-size: 1rem; margin: 0;
+                     background: #2b2b2b; color: #eee; border: 2px solid #444;
+                     border-radius: 10px; font-weight: bold; cursor: pointer;
+                     overflow: hidden; text-overflow: ellipsis; }
+  #viewgrid button:active { background: #3a3a3a; }
+  #viewgrid button.active { border-color: #2a5; background: #17351f;
+                            box-shadow: 0 0 0 1px #2a5; }
+  #viewgrid button:disabled { opacity: 0.45; }
+  .btnrow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
+            margin-top: 10px; }
+  .btnrow.two { grid-template-columns: 1fr 1fr; }
+  .btnrow.one { grid-template-columns: 1fr; }
+  button.big { min-height: 52px; font-size: 1rem; margin: 0; cursor: pointer;
+               background: #2a5; color: #061; border: 0; border-radius: 10px;
+               font-weight: bold; }
+  button.big.ghost { background: #333; color: #eee; }
+  button.big.warn { background: #a53; color: #fff; }
+  button.big:active { filter: brightness(1.2); }
+  button { min-height: 48px; padding: 8px 14px; margin: 8px 8px 0 0;
+           cursor: pointer; background: #2a5; color: #061; border: 0;
+           border-radius: 8px; font-weight: bold; font-size: 0.95rem; }
   button.warn { background: #a53; color: #fff; }
   button.ghost { background: #333; color: #eee; }
   #result { margin-top: 12px; min-height: 1.4em; font-size: 0.9em; color: #9cf; }
   .meta { color: #aaa; font-size: 0.9em; }
-  code { background: #222; padding: 1px 5px; border-radius: 3px; }
+  .kv { display: flex; justify-content: space-between; gap: 8px;
+        padding: 2px 0; font-size: 0.92em; }
+  .kv > span:first-child { color: #aaa; }
+  code { background: #222; padding: 1px 5px; border-radius: 3px;
+         word-break: break-all; }
+  label { display: block; margin: 8px 0 2px; font-size: 0.9em; }
+  label .req { color: #f88; }
+  label .help { color: #999; font-size: 0.85em; display: block; }
+  input[type=text], input[type=number], select {
+    width: 100%; box-sizing: border-box; padding: 10px 8px; font-size: 1rem;
+    background: #222; color: #eee; border: 1px solid #444; border-radius: 8px; }
+  details { margin-top: 10px; }
+  details > summary { min-height: 48px; display: flex; align-items: center;
+                      cursor: pointer; color: #9cf; font-size: 0.95em; }
+  /* tap-to-rate stars */
+  #ratebtns { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;
+              margin-top: 8px; }
+  #ratebtns button { min-height: 56px; font-size: 1.3rem; margin: 0;
+                     background: #2b2b2b; color: #eee; border: 2px solid #444;
+                     border-radius: 10px; cursor: pointer; }
+  #ratebtns button.picked { border-color: #fc3; background: #3a2f10; }
+  .taplist { list-style: none; margin: 0; padding: 0; font-size: 0.9em; }
+  .taplist li { padding: 6px 0; border-bottom: 1px solid #2a2a2a; }
+  .taplist li:last-child { border-bottom: 0; }
+  .taplist .eff { color: #aaa; }
+  #fb-summary .fbline { display: flex; justify-content: space-between;
+                        padding: 3px 0; font-size: 0.92em; }
+  #reload-result a { color: #9cf; word-break: break-all; }
 </style>
 </head>
 <body>
+<header id="topbar">
+  <span><span id="health" class="dot"></span><span id="healthtext">connecting&hellip;</span></span>
+  <span class="now">Now: <span id="tb-view">&ndash;</span></span>
+  <span class="dep">Deploy: <span id="tb-dep">&ndash;</span></span>
+</header>
 <h1>displayd control</h1>
-<div class="meta"><span id="health" class="dot"></span><span id="healthtext">connecting&hellip;</span></div>
+
+<h2>Views &mdash; one tap to show</h2>
+<div class="card">
+  <div id="viewgrid" aria-label="all views, one tap each"></div>
+  <div class="btnrow one">
+    <button id="clear" class="big ghost">Blank screen</button>
+  </div>
+  <details>
+    <summary>Show with parameters (for views that need options)</summary>
+    <label for="renderer">Renderer</label>
+    <select id="renderer"></select>
+    <div id="rdesc" class="meta"></div>
+    <div id="params"></div>
+    <button id="show">Show with options</button>
+  </details>
+</div>
+
+<h2>Playback &mdash; playlist rotation</h2>
+<div class="card">
+  <div class="meta" id="pl-status">playlist: loading&hellip;</div>
+  <div class="btnrow">
+    <button id="plpause" class="big ghost">Pause</button>
+    <button id="plresume" class="big">Resume</button>
+    <button id="plnext" class="big ghost">Next view</button>
+  </div>
+  <details>
+    <summary>Playlist setup (views, bar, timing)</summary>
+    <label><input type="checkbox" id="pl-en" style="width:auto"> Playlist enabled (rotates through the views below)</label>
+    <label for="pl-place">Bar placement<span class="help">which edge the progress bar sits on (string: top/left/bottom/right)</span></label>
+    <select id="pl-place"><option>top</option><option>left</option><option>bottom</option><option>right</option></select>
+    <label for="pl-thick">Bar thickness (px)<span class="help">readable at distance without stealing content (number, 2-64)</span></label>
+    <input type="number" id="pl-thick" min="2" max="64">
+    <label for="pl-dir">Bar direction<span class="help">fill grows empty-to-full, drain shrinks full-to-empty (string)</span></label>
+    <select id="pl-dir"><option>fill</option><option>drain</option></select>
+    <label for="pl-color">Default bar colour<span class="help">a per-view color or a renderer accent wins over this (string, #rrggbb)</span></label>
+    <input type="text" id="pl-color">
+    <label for="pl-views">Views (JSON list)<span class="help">each {"renderer": name, "params"?: {}, "dwell"?: seconds 3-3600, "color"?: override}; a manual Show pauses rotation until resumed</span></label>
+    <input type="text" id="pl-views">
+    <button id="plsave">Save playlist</button>
+  </details>
+</div>
+
+<h2>Proof &mdash; reload &amp; deploy stamp</h2>
+<div class="card">
+  <div class="kv"><span>Last deploy</span><span id="dep-when">&ndash;</span></div>
+  <div class="kv"><span>SHA</span><code id="dep-sha">&ndash;</code></div>
+  <div class="kv"><span>By</span><span id="dep-who">&ndash;</span></div>
+  <label for="rl-sha">Reload SHA (full 40-char commit)<span class="help">shows a RELOADED screen with the SHA plus a QR code to the commit page, then returns</span></label>
+  <input type="text" id="rl-sha" placeholder="40 hex characters" autocapitalize="off" spellcheck="false">
+  <div class="btnrow one">
+    <button id="reload" class="big">Reload with proof</button>
+  </div>
+  <div class="meta" id="reload-result"></div>
+</div>
+
+<h2>Feedback &mdash; rate this view</h2>
+<div class="card">
+  <label for="fb-view">View</label>
+  <select id="fb-view"></select>
+  <div id="ratebtns" aria-label="rating 1 to 5">
+    <button data-rating="1">1</button>
+    <button data-rating="2">2</button>
+    <button data-rating="3">3</button>
+    <button data-rating="4">4</button>
+    <button data-rating="5">5</button>
+  </div>
+  <label for="fb-notes">Notes (optional)</label>
+  <input type="text" id="fb-notes" placeholder="readable at distance? colours? layout?">
+  <div class="btnrow one">
+    <button id="fbsend" class="big">Send rating</button>
+  </div>
+  <div id="fb-summary" style="margin-top:10px"></div>
+</div>
 
 <h2>Now showing</h2>
-<div class="row">
-  <div class="card">
-    <div>Renderer: <code id="cur-renderer">&ndash;</code></div>
-    <div>On screen for: <span id="cur-age">&ndash;</span></div>
-    <div>Power: <code id="cur-power">&ndash;</code></div>
-    <div>Backlight: <span id="cur-bl">&ndash;</span></div>
-    <div>Framebuffer blank: <code id="cur-blank">&ndash;</code></div>
-    <div>Feeds: <span id="cur-feeds">&ndash;</span></div>
-    <div>Last switch: <span id="cur-switch">&ndash;</span></div>
-    <div>Last error: <span id="cur-err">none</span></div>
-  </div>
-  <div class="card">
-    <img id="preview" alt="live preview of the panel">
-  </div>
-</div>
-<div class="card" style="margin-top:12px">
-  <div>Last deploy: <span id="dep-when">&ndash;</span></div>
-  <div>SHA: <code id="dep-sha">&ndash;</code></div>
-  <div>By: <span id="dep-who">&ndash;</span></div>
-</div>
-
-<h2>Show something</h2>
 <div class="card">
-  <label for="renderer">Renderer</label>
-  <select id="renderer"></select>
-  <div id="rdesc" class="meta"></div>
-  <div id="params"></div>
-  <button id="show">Show</button>
-  <button id="clear" class="ghost">Blank screen</button>
-</div>
-
-<h2>Screen power</h2>
-<div class="card">
-  <button id="pon">Turn on</button>
-  <button id="poff" class="warn">Turn off</button>
+  <div class="kv"><span>Renderer</span><code id="cur-renderer">&ndash;</code></div>
+  <div class="kv"><span>On screen for</span><span id="cur-age">&ndash;</span></div>
+  <div class="kv"><span>Power</span><code id="cur-power">&ndash;</code></div>
+  <div class="kv"><span>Backlight</span><span id="cur-bl">&ndash;</span></div>
+  <div class="kv"><span>Framebuffer blank</span><code id="cur-blank">&ndash;</code></div>
+  <div class="kv"><span>Feeds</span><span id="cur-feeds">&ndash;</span></div>
+  <div class="kv"><span>Last switch</span><span id="cur-switch">&ndash;</span></div>
+  <div class="kv"><span>Last error</span><span id="cur-err">none</span></div>
+  <div class="btnrow two">
+    <button id="pon" class="big">Turn on</button>
+    <button id="poff" class="big warn">Turn off</button>
+  </div>
   <span class="meta">Off darkens the backlight and blanks the framebuffer;
-  on restores both and repaints the last frame.</span>
+  on restores both and repaints the last frame. Screen power controls.</span>
 </div>
 
-<h2>Policy: what the screen does on its own</h2>
 <div class="card">
+  <div class="meta">Live preview of the panel</div>
+  <img id="preview" alt="live preview of the panel">
+</div>
+
+<details class="card">
+  <summary>Notify (interrupt with a notice)</summary>
+  <label for="nt-title">Title<span class="req"> *</span></label>
+  <input type="text" id="nt-title">
+  <label for="nt-body">Body</label>
+  <input type="text" id="nt-body">
+  <label for="nt-sev">Severity</label>
+  <select id="nt-sev"><option>info</option><option>warn</option><option>critical</option></select>
+  <label for="nt-dur">Duration (seconds, blank for policy default)</label>
+  <input type="number" id="nt-dur" min="1" max="300">
+  <button id="notify">Show notice</button>
+  <span class="meta">Interrupts what is showing, then returns.</span>
+</details>
+
+<details class="card">
+  <summary>Policy (what the screen does on its own)</summary>
   <label><input type="checkbox" id="pol-idle-en" style="width:auto"> Screen off after inactivity</label>
   <label for="pol-idle-after">Idle window (seconds)<span class="help">no mutating API or feed activity for this long blanks the panel; any activity wakes it (number, 5-86400)</span></label>
   <input type="number" id="pol-idle-after" min="5" max="86400">
@@ -1805,40 +1926,22 @@ CONTROL_PAGE = """<!DOCTYPE html>
   <input type="number" id="pol-notify-dur" min="1" max="300">
   <div class="meta" id="pol-status">policy: loading&hellip;</div>
   <button id="polsave">Save policy</button>
-</div>
+</details>
 
-<h2>Playlist: rotate views on their own</h2>
+<h2>Tap actions</h2>
 <div class="card">
-  <label><input type="checkbox" id="pl-en" style="width:auto"> Playlist enabled (rotates through the views below)</label>
-  <label for="pl-place">Bar placement<span class="help">which edge the progress bar sits on (string: top/left/bottom/right)</span></label>
-  <select id="pl-place"><option>top</option><option>left</option><option>bottom</option><option>right</option></select>
-  <label for="pl-thick">Bar thickness (px)<span class="help">readable at distance without stealing content (number, 2-64)</span></label>
-  <input type="number" id="pl-thick" min="2" max="64">
-  <label for="pl-dir">Bar direction<span class="help">fill grows empty-to-full, drain shrinks full-to-empty (string)</span></label>
-  <select id="pl-dir"><option>fill</option><option>drain</option></select>
-  <label for="pl-color">Default bar colour<span class="help">a per-view color or a renderer's ACCENT wins over this (string, #rrggbb)</span></label>
-  <input type="text" id="pl-color">
-  <label for="pl-views">Views (JSON list)<span class="help">each {"renderer": name, "params"?: {}, "dwell"?: seconds 3-3600, "color"?: override}; a manual Show pauses rotation until resumed</span></label>
-  <input type="text" id="pl-views">
-  <div class="meta" id="pl-status">playlist: loading&hellip;</div>
-  <button id="plsave">Save playlist</button>
-  <button id="plpause" class="ghost">Pause</button>
-  <button id="plresume" class="ghost">Resume</button>
-  <button id="plnext" class="ghost">Next view</button>
-</div>
-
-<h2>Notify</h2>
-<div class="card">
-  <label for="nt-title">Title<span class="req"> *</span></label>
-  <input type="text" id="nt-title">
-  <label for="nt-body">Body</label>
-  <input type="text" id="nt-body">
-  <label for="nt-sev">Severity</label>
-  <select id="nt-sev"><option>info</option><option>warn</option><option>critical</option></select>
-  <label for="nt-dur">Duration (seconds, blank for policy default)</label>
-  <input type="number" id="nt-dur" min="1" max="300">
-  <button id="notify">Show notice</button>
-  <span class="meta">Interrupts what is showing, then returns. Cheap switch-then-return, not composition (ISA D6).</span>
+  <ul class="taplist">
+    <li><code>playlist_next</code> <span class="eff">&mdash; advance playlist rotation (POST /playlist/next)</span></li>
+    <li><code>playlist_pause</code> <span class="eff">&mdash; hold playlist rotation (POST /playlist/pause)</span></li>
+    <li><code>playlist_resume</code> <span class="eff">&mdash; resume playlist rotation (POST /playlist/resume)</span></li>
+    <li><code>screen_on</code> <span class="eff">&mdash; drive panel backlight on (POST /screen/on)</span></li>
+    <li><code>screen_off</code> <span class="eff">&mdash; drive panel backlight off (POST /screen/off)</span></li>
+    <li><code>clear</code> <span class="eff">&mdash; blank the panel (POST /clear)</span></li>
+    <li><code>show</code> <span class="eff">&mdash; replace the shown view, renderer named in config (POST /show)</span></li>
+    <li><code>notify</code> <span class="eff">&mdash; interrupt the panel with a transient notice (POST /notify)</span></li>
+    <li><code>feedback</code> <span class="eff">&mdash; record a fixed-shape tap-to-rate feedback rating (POST /feedback)</span></li>
+  </ul>
+  <div class="meta">What a tap on the panel can do (touch bridge allowlist).</div>
 </div>
 
 <div id="result"></div>
@@ -1856,6 +1959,53 @@ function say(msg, isErr) {
   el.textContent = msg; el.style.color = isErr ? "#f88" : "#9cf";
 }
 let SCHEMAS = {};
+let CURRENT = null;
+// The big four stay pinned at the top of the one-tap grid so they need
+// no hunt; every other renderer follows alphabetically. Broken entries
+// sink to the end, disabled.
+const PINNED = ["clock", "chat", "row", "stream"];
+function orderedNames() {
+  const names = Object.keys(SCHEMAS);
+  const ok = names.filter((n) => !(SCHEMAS[n] && SCHEMAS[n].broken));
+  const broken = names.filter((n) => SCHEMAS[n] && SCHEMAS[n].broken);
+  const pinned = PINNED.filter((n) => ok.includes(n));
+  const rest = ok.filter((n) => !PINNED.includes(n)).sort();
+  return pinned.concat(rest, broken.sort());
+}
+function buildViewGrid() {
+  const grid = document.getElementById("viewgrid");
+  grid.innerHTML = "";
+  for (const name of orderedNames()) {
+    const r = SCHEMAS[name];
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = name;
+    b.dataset.renderer = name;
+    if (r && r.broken) {
+      b.disabled = true;
+      b.title = "broken: " + r.broken;
+    } else {
+      b.onclick = () => oneTapShow(name);
+    }
+    if (name === CURRENT) b.classList.add("active");
+    grid.appendChild(b);
+  }
+}
+function markCurrent() {
+  for (const b of document.getElementById("viewgrid").children) {
+    b.classList.toggle("active", b.dataset.renderer === CURRENT);
+  }
+  document.getElementById("tb-view").textContent = CURRENT || "(blank)";
+}
+async function oneTapShow(name) {
+  try {
+    await api("/show", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ renderer: name, params: {} }) });
+    say("showing " + name);
+    refreshState(); refreshPreview();
+  } catch (err) { say("show failed: " + err.message, true); }
+}
 async function refreshState() {
   try {
     await api("/health");
@@ -1864,6 +2014,8 @@ async function refreshState() {
     document.getElementById("healthtext").textContent =
       "healthy \u00b7 " + s.display.width + "x" + s.display.height +
       " \u00b7 " + Object.keys(SCHEMAS).length + " renderers";
+    CURRENT = s.renderer || null;
+    markCurrent();
     document.getElementById("cur-renderer").textContent = s.renderer || "(blank)";
     document.getElementById("cur-age").textContent =
       s.age_seconds == null ? "\u2013" : Math.round(s.age_seconds) + "s";
@@ -1888,12 +2040,14 @@ async function refreshState() {
     e.textContent = s.last_error || "none";
     e.style.color = s.last_error ? "#f88" : "";
     const d = s.deploy || {};
-    document.getElementById("dep-when").textContent =
-      d.deployed ? (d.date || "unknown date") : "never recorded";
+    const when = d.deployed ? (d.date || "unknown date") : "never recorded";
+    document.getElementById("dep-when").textContent = when;
     document.getElementById("dep-sha").textContent =
       d.deployed ? (d.sha || "?") : "\u2013";
     document.getElementById("dep-who").textContent =
       d.deployed ? (d.deployer || "?") : "\u2013";
+    document.getElementById("tb-dep").textContent =
+      d.deployed ? ((d.sha || "?").slice(0, 7) + " \u00b7 " + when) : "never recorded";
   } catch (err) {
     document.getElementById("health").className = "dot bad";
     document.getElementById("healthtext").textContent = "unreachable: " + err.message;
@@ -1961,6 +2115,8 @@ async function refreshRenderers(keep) {
   };
   sel.onchange = showDesc;
   showDesc();
+  buildViewGrid();
+  refreshFeedbackViews(keep);
 }
 function collectParams(name) {
   const schema = (SCHEMAS[name] && SCHEMAS[name].params) || {};
@@ -2109,6 +2265,93 @@ document.getElementById("notify").onclick = async () => {
     say("notice showing"); refreshState(); refreshPreview(); }
   catch (err) { say("notify failed: " + err.message, true); }
 };
+document.getElementById("reload").onclick = async () => {
+  const sha = document.getElementById("rl-sha").value.trim().toLowerCase();
+  const box = document.getElementById("reload-result");
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    say("reload needs the full 40-character commit SHA", true);
+    return;
+  }
+  try {
+    const out = await api("/reload", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sha: sha }) });
+    box.innerHTML = "";
+    box.appendChild(document.createTextNode(
+      "reloaded \u00b7 returns in " + out.return_in + "s \u00b7 proof: "));
+    const a = document.createElement("a");
+    a.href = out.commit_url;
+    a.textContent = out.commit_url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    box.appendChild(a);
+    say("reload proof showing");
+    refreshState(); refreshPreview();
+  } catch (err) { say("reload failed: " + err.message, true); }
+};
+let PICKED_RATING = 0;
+for (const b of document.querySelectorAll("#ratebtns button")) {
+  b.onclick = () => {
+    PICKED_RATING = Number(b.dataset.rating);
+    for (const x of document.querySelectorAll("#ratebtns button")) {
+      x.classList.toggle("picked", x === b);
+    }
+  };
+}
+function refreshFeedbackViews(keep) {
+  const sel = document.getElementById("fb-view");
+  const prev = keep ? sel.value : null;
+  sel.innerHTML = "";
+  for (const name of Object.keys(SCHEMAS).sort()) {
+    const o = document.createElement("option");
+    o.value = name;
+    o.textContent = name;
+    sel.appendChild(o);
+  }
+  if (prev && SCHEMAS[prev]) sel.value = prev;
+  else if (CURRENT && SCHEMAS[CURRENT]) sel.value = CURRENT;
+}
+async function refreshFeedbackSummary() {
+  const box = document.getElementById("fb-summary");
+  try {
+    const s = await api("/feedback/summary");
+    box.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "meta";
+    head.textContent = s.total === 0 ? "no ratings yet"
+      : (s.total + " rating" + (s.total === 1 ? "" : "s"));
+    box.appendChild(head);
+    for (const [view, agg] of Object.entries(s.views || {})) {
+      const line = document.createElement("div");
+      line.className = "fbline";
+      const left = document.createElement("span");
+      left.textContent = view + " ×" + agg.count;
+      const right = document.createElement("span");
+      right.textContent = agg.avg_rating == null ? "–" : ("avg " + agg.avg_rating);
+      line.appendChild(left);
+      line.appendChild(right);
+      box.appendChild(line);
+    }
+  } catch (err) { say("feedback summary failed: " + err.message, true); }
+}
+document.getElementById("fbsend").onclick = async () => {
+  if (!PICKED_RATING) { say("pick a rating 1-5 first", true); return; }
+  const body = { view: document.getElementById("fb-view").value,
+    rating: PICKED_RATING,
+    notes: document.getElementById("fb-notes").value,
+    agent: "control-page" };
+  try { await api("/feedback", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) });
+    say("rating recorded");
+    PICKED_RATING = 0;
+    for (const x of document.querySelectorAll("#ratebtns button")) {
+      x.classList.remove("picked");
+    }
+    document.getElementById("fb-notes").value = "";
+    refreshFeedbackSummary(); }
+  catch (err) { say("rating failed: " + err.message, true); }
+};
 (async function init() {
   try { await refreshRenderers(false); }
   catch (err) { say("could not load renderers: " + err.message, true); }
@@ -2116,10 +2359,14 @@ document.getElementById("notify").onclick = async () => {
   refreshPreview();
   refreshPolicy();
   refreshPlaylist();
+  refreshFeedbackSummary();
   setInterval(refreshState, 2000);
   setInterval(refreshPreview, 2000);
   setInterval(refreshPlaylist, 2000);
-  setInterval(() => refreshRenderers(true), 15000);
+  setInterval(async () => {
+    try { await refreshRenderers(true); } catch (e) { /* next tick */ }
+    refreshFeedbackSummary();
+  }, 15000);
 })();
 </script>
 </body>
