@@ -2323,6 +2323,7 @@ CONTROL_PAGE = """<!DOCTYPE html>
     <li><code>show</code> <span class="eff">&mdash; replace the shown view, renderer named in config (POST /show)</span></li>
     <li><code>notify</code> <span class="eff">&mdash; interrupt the panel with a transient notice (POST /notify)</span></li>
     <li><code>feedback</code> <span class="eff">&mdash; record a fixed-shape tap-to-rate feedback rating (POST /feedback)</span></li>
+    <li><code>reload_confirm</code> <span class="eff">&mdash; confirm the showing reload view via tap (POST /reload/confirm)</span></li>
   </ul>
   <div class="meta">What a tap on the panel can do (touch bridge allowlist).</div>
 </div>
