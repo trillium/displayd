@@ -179,6 +179,24 @@ When updating this file, preserve this bar for all agents and keep entries conci
   page and dismisses the view like a tap. Single-scan, dies with the
   view; no tracking beyond the confirm.
 
+## Row view remote source (mini1 PM5 feed)
+
+- `renderers/row.py` sources the streak live from mini1's PM5 bridge WebSocket
+  (`ws://mini1:8765/obs/ws`, the same socket OBS uses -- never a second
+  serving path), via a stdlib-only WS client (`fetch_ws_stats`). Reachable
+  from lnx-server over the tailnet; `source` param also takes an http(s)
+  rows.txt URL or a file path, `path` stays the local rows.txt fallback.
+- Remote sightings journal one ISO day each to a local JSON journal
+  (`journal` param / `$DISPLAYD_ROW_JOURNAL` / next to the local log); streak
+  math runs over union(local log, journal) with one row per journal day so
+  the bank never inflates. Frozen-feed repeats are ignored via the persisted
+  last sample. Unreachable remote keeps the last-known streak with a STALE
+  marker (amber dot + footer tag), never blank.
+- Tests: `tests/test_row.py` (`TestSourceParams`, `TestSighting`,
+  `TestJournal`, `TestFetchers` with a fake WS server, `TestPollFallback`,
+  `TestStaleRender`); existing `run()` tests pin explicit
+  `source`+`journal` so the suite stays hermetic (no tailnet dependency).
+
 ## Stream monitor (jumbotron live frames)
 
 - `renderers/stream.py` (`STATIC = False`): fullscreen latest-frame view at a
