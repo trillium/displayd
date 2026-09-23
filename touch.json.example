@@ -37,6 +37,12 @@
       "id": "tap-to-rate",
       "rect": [640, 840, 640, 240],
       "action": {"name": "feedback", "view": "clock", "rating": 5}
+    },
+    {
+      "id": "reload-confirm",
+      "_comment": "tap anywhere while the RELOADED view shows to confirm it (view-gated: no-op otherwise); last so narrower regions win their own taps first (hit_test takes the first match)",
+      "rect": [0, 0, 1920, 1080],
+      "action": {"name": "reload_confirm"}
     }
   ]
 }

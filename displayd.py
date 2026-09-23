@@ -19,7 +19,11 @@ API
   POST /feed/<renderer>/<input>  push a validated payload into a view
   POST /notify  {"title":...,"body"?,"severity"?,"duration"?} transient notice
   POST /reload  {"sha":...} reload confirmation (RELOADED + SHA + QR),
-               stays until a tap dismisses it (POST /touch/tap)
+               stays until confirmed: a scan of the relay QR or a tap
+               returns early (POST /reload/confirm, POST /touch/tap)
+  GET  /r/<token>  one-time scan relay: 302 to the commit page + confirm
+  POST /reload/confirm  {"via"?} tap/scan confirm path for the reload
+               view only (409 when none showing)
   POST /touch/tap  dismiss an active reload transient (tap-to-return),
                no-op for anything else
   GET  /policy  autonomous-behaviour config + activity clock
@@ -33,11 +37,14 @@ wider only deliberately -- see --bind / --port (or DISPLAYD_BIND / DISPLAYD_PORT
 
 import argparse
 import collections
+import copy
 import importlib.util
 import io
+import ipaddress
 import json
 import os
 import re
+import secrets
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -93,11 +100,15 @@ def read_deploy_stamp(path=None):
             "date": data.get("date"),
             "sha": data.get("sha"),
             "deployer": data.get("deployer")}
-# Reload confirmation (POST /reload): the QR payload is always the commit
-# page for the posted SHA -- never the repository homepage, never a
-# caller-supplied URL. Mirrors renderers/reload.py COMMIT_URL_PREFIX and
-# SHA_RE; tests/test_reload.py asserts the two agree so the rule cannot
-# drift between validation and rendering.
+# Reload confirmation (POST /reload): the QR payload is a panel-served
+# one-time relay URL (GET /r/<token>) -- never the commit page directly,
+# never the repository homepage, never a caller-supplied URL. Scanning the
+# relay 302-redirects the scanner to the commit page AND confirms the view
+# (the panel returns to whatever was showing). A screen tap while the
+# reload view is showing confirms the same way (POST /reload/confirm).
+# Mirrors renderers/reload.py COMMIT_URL_PREFIX and SHA_RE;
+# tests/test_reload.py asserts the two agree so the rule cannot drift
+# between validation and rendering.
 RELOAD_COMMIT_URL_PREFIX = "https://github.com/trillium/displayd/commit/"
 RELOAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 # Reload confirmation (POST /reload) stays up indefinitely until dismissed
@@ -107,6 +118,69 @@ RELOAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 # one (accepted, ignored for expiry); new clients should omit it.
 RELOAD_DEFAULT_DURATION = None  # indefinite: no automatic return
 RELOAD_DURATION_MIN, RELOAD_DURATION_MAX = 1, 300
+# One-time relay tokens: url-safe, single-scan, valid only while the
+# confirmation window is open (expiry == the reload duration). The token
+# shape below is also the renderer's relay-URL acceptance rule, so the
+# renderer can never be talked into encoding an arbitrary caller URL.
+RELOAD_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+RELOAD_RELAY_PATH = "/r/"
+# Tailnet carrier-grade NAT range: the captain's phone and the panel meet
+# here. The relay QR is only useful when the panel binds inside it.
+TAILNET_CGNAT = "100.64.0.0/10"
+
+
+def _relay_bind_host():
+    """Address the panel binds (read live so tests can override the env)."""
+    return (os.environ.get("DISPLAYD_BIND") or BIND or "127.0.0.1").strip()
+
+
+def _relay_port():
+    try:
+        return int(os.environ.get("DISPLAYD_PORT") or PORT)
+    except (TypeError, ValueError):
+        return PORT
+
+
+def relay_base_url():
+    """(base, reachable, reason) for the panel-served relay URL.
+
+    Reachability reasoning (explicit, per the task constraint): the
+    captain scans with his phone on the tailnet (Tailscale), so the relay
+    is reachable only when the panel itself binds a tailnet address
+    (100.64.0.0/10 -- the address the panel already binds on lnx-server
+    via DISPLAYD_BIND). A loopback bind (127.0.0.0/8, ::1, localhost),
+    a wildcard bind (0.0.0.0 -- never used here: the API has no auth),
+    a LAN literal, a public IP, or a hostname is NOT reachable from the
+    phone, so the caller must fall back to tap-only and say so plainly --
+    never serve a dead QR silently.
+    """
+    host = _relay_bind_host()
+    port = _relay_port()
+    bare = host.strip().strip("[]")
+    try:
+        addr = ipaddress.ip_address(bare.lower() if bare else "")
+    except ValueError:
+        if bare.lower() in ("localhost",) or bare.lower().endswith(".localhost"):
+            return None, False, ("loopback bind %r: the phone on the tailnet "
+                                 "cannot reach it; tap-only" % host)
+        return None, False, ("non-IP bind %r: not a tailnet literal the phone "
+                             "can reach; tap-only" % host)
+    if addr.is_loopback:
+        return None, False, ("loopback bind %r: the phone on the tailnet "
+                             "cannot reach it; tap-only" % host)
+    try:
+        tailnet = ipaddress.ip_network(TAILNET_CGNAT)
+    except ValueError:  # pragma: no cover - constant is fixed
+        return None, False, "tailnet range misconfigured; tap-only"
+    if addr in tailnet:
+        return ("http://%s:%d" % (bare, port), True,
+                "tailnet bind %s: reachable from the phone on the tailnet"
+                % bare)
+    if bare == "0.0.0.0":
+        return None, False, ("wildcard bind: no single address the phone can "
+                             "use; tap-only (and never bind 0.0.0.0: no auth)")
+    return None, False, ("bind %r is outside %s: the phone on the tailnet "
+                         "cannot reach it; tap-only" % (host, TAILNET_CGNAT))
 
 KDSETMODE = 0x4B3A
 KD_TEXT = 0x00
@@ -1001,6 +1075,13 @@ class DisplayDaemon:
         # default next to the daemon, mirroring POLICY_FILE.
         self.feedback = feedback_module.FeedbackStore(path=feedback_path)
         self.transient_timer = None
+        # Reload scan-relay: one-time tokens -> {sha, commit_url,
+        # expires_at}. Guarded by self.lock; pruned on every issue/scan.
+        # No tracking beyond the confirm event itself: entries hold only
+        # what the redirect needs, and single-scan consumption deletes
+        # them outright.
+        self.reload_tokens = {}
+        self.reload_token = None  # token of the currently showing reload
         # Playlist rotation: scheduler on top of _start_view, overlay hook
         # for the progress bar. Starts enabled only from persisted config.
         self.playlist = playlist_module.Playlist(self)
@@ -1127,6 +1208,13 @@ class DisplayDaemon:
         base, ok = self.policy.end_transient(kind, token)
         if not ok:
             return
+        if kind == "reload":
+            # The confirmation window is over: the one-time token dies
+            # with the view (late scans get 410, never a stale confirm).
+            with self.lock:
+                if self.reload_token is not None:
+                    self.reload_tokens.pop(self.reload_token, None)
+                    self.reload_token = None
         try:
             if base is None:
                 if kind == "reload":
@@ -1161,6 +1249,10 @@ class DisplayDaemon:
         with self.lock:
             self._cancel_transient_timer()
             self._wake_if_idle()
+            if self.reload_token is not None:
+                # Manual navigation cancels the confirmation window.
+                self.reload_tokens.pop(self.reload_token, None)
+                self.reload_token = None
         return self._start_view(name, params)
 
     def clear(self):
@@ -1169,6 +1261,9 @@ class DisplayDaemon:
         with self.lock:
             self._cancel_transient_timer()
             self._wake_if_idle()
+            if self.reload_token is not None:
+                self.reload_tokens.pop(self.reload_token, None)
+                self.reload_token = None
         return self._clear_internal()
 
     def _stop_locked(self):
@@ -1551,6 +1646,11 @@ class DisplayDaemon:
         with self.lock:
             self._arm_transient("notice", token, duration)
             self._wake_if_idle()
+            if superseded == "reload" and self.reload_token is not None:
+                # The notice took the panel: the reload confirmation
+                # window (and its one-time token) dies with the view.
+                self.reload_tokens.pop(self.reload_token, None)
+                self.reload_token = None
         self._start_view("notice", params)
         out = {"view": "notice", "params": params, "return_in": duration}
         if superseded:
@@ -1562,10 +1662,18 @@ class DisplayDaemon:
 
         `sha` must be the full 40-character hexadecimal deployed commit
         SHA; the screen shows RELOADED, the SHA, and a QR code whose payload
-        is exactly the commit page (RELOAD_COMMIT_URL_PREFIX + sha). The URL
-        is derived here -- the request supplies no URL, so an arbitrary QR
-        payload cannot be smuggled in. Raises ValueError on bad input (HTTP
-        400) or KeyError when the reload renderer is not installed (404).
+        is a panel-served one-time relay URL (relay_base_url() + /r/<token>)
+        when the panel binds a tailnet address the captain's phone can
+        reach -- otherwise the QR falls back to the commit page and the
+        response says tap-only plainly. Scanning the relay 302-redirects
+        the scanner to the commit page AND confirms the view (early return
+        to whatever was showing); a tap while the reload view shows
+        confirms the same way via confirm_reload()/POST /reload/confirm.
+        Tokens are single-scan with no time expiry: each dies with its
+        view (scan/tap confirm, tap-dismiss, manual navigation, a
+        superseding notice, or a newer reload all invalidate it). Raises ValueError
+        on bad input (HTTP 400) or KeyError when the reload renderer is not
+        installed (404).
 
         Unlike notify(), there is no return timer: the screen stays on the
         reload view indefinitely. A touchscreen tap (POST /touch/tap via
@@ -1600,9 +1708,39 @@ class DisplayDaemon:
                 raise ValueError("duration must be within [%d, %d]"
                                  % (RELOAD_DURATION_MIN, RELOAD_DURATION_MAX))
         params = {"sha": sha}
+        commit_url = RELOAD_COMMIT_URL_PREFIX + sha
         entry = self.renderers.get("reload")
         if not entry or "module" not in entry:
             raise KeyError("reload renderer is not installed")
+        now = time.time()
+        with self.lock:
+            self._prune_reload_tokens_locked(now)
+            scan_token = secrets.token_urlsafe(16)
+            while scan_token in self.reload_tokens:
+                scan_token = secrets.token_urlsafe(16)
+            self.reload_tokens[scan_token] = {
+                "sha": sha, "commit_url": commit_url,
+                # No time expiry: the view stays indefinitely, so the
+                # token dies with the view (confirm, tap-dismiss, manual
+                # nav, superseding notice, or a newer reload invalidate
+                # it) rather than with a duration.
+                "expires_at": None,
+            }
+        base, reachable, reason = relay_base_url()
+        if reachable:
+            relay_url = base + RELOAD_RELAY_PATH + scan_token
+            params = {"sha": sha, "relay_url": relay_url}
+        else:
+            # Tap-only fallback: loopback (or otherwise unreachable) bind
+            # means the phone could never fetch a relay URL, so never put
+            # one in the QR. The renderer draws the commit QR plus an
+            # explicit tap-to-confirm note; the response says why.
+            # Invalidate the token at once so no dead /r/ URL exists.
+            with self.lock:
+                self.reload_tokens.pop(scan_token, None)
+            scan_token = None
+            relay_url = None
+            params = {"sha": sha}
         validate_params(params, entry.get("params") or {})
         self.policy.note_api()
         token, superseded = self.policy.begin_transient("reload", None)
@@ -1612,13 +1750,169 @@ class DisplayDaemon:
             # end_transient's token check rejects it.
             self._cancel_transient_timer()
             self._wake_if_idle()
+            if self.reload_token is not None and self.reload_token != scan_token:
+                # A replaced window's token dies with it: one live token
+                # per showing view, so a stale QR never redirects to an
+                # older commit after a newer reload took the panel.
+                self.reload_tokens.pop(self.reload_token, None)
+            self.reload_token = scan_token
         self._start_view("reload", params)
         out = {"view": "reload", "params": params,
-               "commit_url": RELOAD_COMMIT_URL_PREFIX + sha,
+               "commit_url": commit_url,
+               "relay_url": relay_url,
+               "relay_reachable": reachable,
                "return_in": None}
+        if not reachable:
+            out["relay_note"] = reason
         if superseded:
             out["superseded"] = superseded
         return out
+
+    def _prune_reload_tokens_locked(self, now=None):
+        """Drop expired reload tokens. Callers hold self.lock.
+
+        Tokens with expires_at None never expire by time -- they die
+        with the view -- so pruning only touches time-bounded ones."""
+        now = time.time() if now is None else now
+        dead = [tok for tok, rec in self.reload_tokens.items()
+                if rec.get("expires_at") is not None
+                and rec.get("expires_at", 0) <= now]
+        for tok in dead:
+            self.reload_tokens.pop(tok, None)
+
+    def _return_from_base(self, base):
+        """Restore the base view after a confirm (no lock held).
+
+        Mirrors _transient_expired's reload branch: with no explicit base
+        view the clock resumes instead of a blank panel. Runs outside
+        self.lock because _start_view locks internally (it must -- like
+        _transient_expired, callers never hold the daemon lock here)."""
+        if base is None:
+            try:
+                return self._start_view("clock", {})
+            except (KeyError, ValueError):
+                return self._clear_internal()
+        try:
+            return self._start_view(base["renderer"], base["params"])
+        except (KeyError, ValueError):
+            pass
+
+    def confirm_reload(self, source="tap", token=None):
+        """Confirm the showing reload view: return to the base view early.
+
+        `source` is "tap" (POST /reload/confirm, touch.py reload_confirm)
+        or "scan" (GET /r/<token>). Scan confirms only with the live
+        one-time token; tap confirms whatever reload is showing. Both are
+        view-gated: with no active reload transient the call is a 409-style
+        miss ({confirmed: False}), never a view change. Idempotent: the
+        second confirm of the same window misses the same way. Returns a
+        JSON-safe dict; raises nothing."""
+        source = str(source or "tap").lower()
+        if source not in ("tap", "scan"):
+            return {"confirmed": False, "reason": "unknown source %r"
+                    % (source,)}
+        with self.lock:
+            active = self.policy.active
+            if (active is None or active.get("kind") != "reload"):
+                return {"confirmed": False,
+                        "reason": "no-reload-active"}
+            if source == "scan":
+                if not token or not isinstance(token, str):
+                    return {"confirmed": False,
+                            "reason": "token-required"}
+                self._prune_reload_tokens_locked()
+                rec = self.reload_tokens.get(token)
+                if rec is None:
+                    return {"confirmed": False,
+                            "reason": "unknown-or-expired-token"}
+                if token != self.reload_token:
+                    return {"confirmed": False,
+                            "reason": "stale-token"}
+                # Single-scan: consume first, then return the panel.
+                self.reload_tokens.pop(token, None)
+                self.reload_token = None
+            else:
+                if self.reload_token is not None:
+                    self.reload_tokens.pop(self.reload_token, None)
+                    self.reload_token = None
+            ok = self.policy.end_transient(
+                "reload", active.get("token"))
+            if not ok[1]:
+                return {"confirmed": False,
+                        "reason": "already-confirmed"}
+            self._cancel_transient_timer()
+            self.policy.note_api()
+            base = copy.deepcopy(self.policy.base)
+        # Outside self.lock: _start_view locks internally (same shape as
+        # _transient_expired -- holding both would deadlock).
+        self._return_from_base(base)
+        return {"confirmed": True, "via": source}
+
+    def handle_relay_scan(self, token):
+        """One scan of GET /r/<token>: consume + redirect + confirm.
+
+        Returns (status, payload): (302, commit_url) on the single valid
+        scan -- the handler 302-redirects there and the panel has been
+        returned early when it was still showing; (410, {...}) when the
+        token was already consumed or expired; (404, {...}) when unknown
+        or malformed. The token dies with the view (timeout, manual
+        navigation, superseding notice, or a newer reload all invalidate
+        it), so a scan after the return gets 410 and confirms nothing."""
+        if not token or not isinstance(token, str) \
+                or not RELOAD_TOKEN_RE.match(token):
+            return 404, {"error": "unknown confirm token"}
+        with self.lock:
+            self._prune_reload_tokens_locked()
+            rec = self.reload_tokens.get(token)
+            if rec is None:
+                return 410, {"error": "token expired or already scanned: "
+                                        "single-scan, valid only while the "
+                                        "reload view shows"}
+            commit_url = rec["commit_url"]
+            live = (self.policy.active is not None
+                    and self.policy.active.get("kind") == "reload"
+                    and token == self.reload_token)
+            # Single-scan: consume before confirming so a double-fetch
+            # cannot confirm twice.
+            self.reload_tokens.pop(token, None)
+            base = None
+            confirmed = False
+            if live:
+                active_token = self.policy.active.get("token")
+                self.reload_token = None
+                ok = self.policy.end_transient("reload", active_token)
+                if ok[1]:
+                    self._cancel_transient_timer()
+                    self.policy.note_api()
+                    base = copy.deepcopy(self.policy.base)
+                    confirmed = True
+        # Outside self.lock: _start_view locks internally (same shape as
+        # _transient_expired -- holding both would deadlock).
+        if confirmed:
+            self._return_from_base(base)
+        return 302, {"commit_url": commit_url,
+                     "confirmed": confirmed}
+
+    def reload_confirm_state(self):
+        """Pending-confirmation fragment for /state (None when idle)."""
+        with self.lock:
+            active = self.policy.active
+            if active is None or active.get("kind") != "reload":
+                return None
+            token = self.reload_token
+            rec = self.reload_tokens.get(token) if token else None
+            now = time.time()
+            out = {"pending": True, "via": ["scan", "tap"]}
+            if rec is not None and rec.get("expires_at") is not None:
+                out["expires_in"] = round(
+                    max(0.0, rec["expires_at"] - now), 1)
+            else:
+                # Indefinite window (or tap-only fallback with no token):
+                # no countdown, the view waits for a scan or a tap.
+                out["expires_in"] = None
+                if rec is None:
+                    out["tap_only"] = True
+            return out
 
     # ---- delivery stamp ----------------------------------------------------
 
@@ -1643,6 +1937,11 @@ class DisplayDaemon:
         with self.lock:
             self._cancel_transient_timer()
             self._wake_if_idle()
+            if self.reload_token is not None:
+                # The window is over: its one-time token dies with the
+                # view (late scans get 410, never a stale confirm).
+                self.reload_tokens.pop(self.reload_token, None)
+                self.reload_token = None
         try:
             if base is None:
                 try:
@@ -1759,6 +2058,9 @@ class DisplayDaemon:
             # Delivery stamp (deploy.sh host file): date + SHA of the
             # running build, or {"deployed": False} when never recorded.
             "deploy": self.deploy_info(),
+            # Reload scan-confirm: pending window + expiry while the
+            # reload view shows, else None. No history is kept.
+            "reload_confirm": self.reload_confirm_state(),
         }
 
     def renderer_list(self):
@@ -2504,6 +2806,25 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, DAEMON.get_policy())
         if path == "/deploy":
             return self._send(200, DAEMON.deploy_info())
+        if path.startswith("/r/"):
+            # One-time scan relay: consume the token, 302 the scanner to
+            # the commit page, and confirm the reload view when it still
+            # shows. Observation like any GET: never touches the idle
+            # clock. Only the exact /r/<token> shape routes here.
+            token = path[len("/r/"):]
+            if "/" in token or not token:
+                return self._send(404, {"error": "not found"})
+            status, payload = DAEMON.handle_relay_scan(token)
+            if status == 302:
+                body = json.dumps(payload).encode()
+                self.send_response(302)
+                self.send_header("Location", payload["commit_url"])
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            return self._send(status, payload)
         if path == "/playlist":
             return self._send(200, DAEMON.playlist.status())
         if path == "/layout":
@@ -2592,6 +2913,15 @@ class Handler(BaseHTTPRequestHandler):
             # Always 200 -- dismissing anything else is a harmless no-op.
             self._body()  # drained for keep-alive; no fields read
             return self._send(200, DAEMON.dismiss_reload())
+        if path == "/reload/confirm":
+            # Tap/scan confirm path for the reload view only: with no
+            # reload showing this is a 409 miss, never a view change.
+            body = self._body()
+            result = DAEMON.confirm_reload(body.get("via", "tap"),
+                                           body.get("token"))
+            if result.get("confirmed"):
+                return self._send(200, result)
+            return self._send(409, result)
         if path == "/policy":
             try:
                 return self._send(200, DAEMON.set_policy(self._body()))

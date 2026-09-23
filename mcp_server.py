@@ -188,13 +188,20 @@ def static_tools():
                               "color": {"type": "string"}},
                           "required": ["title"]}},
         {"name": "reload",
-         "description": "Transient reload confirmation (RELOADED + commit QR), then auto-return.",
+         "description": ("Transient reload confirmation (RELOADED + SHA + "
+                           "scan-confirm QR), then auto-return. Answers "
+                           "relay_url when the scanning phone can reach it."),
          "inputSchema": {"type": "object",
                           "properties": {
                               "sha": {"type": "string",
                                         "description": "full 40-character deployed commit SHA"},
                               "duration": {"type": "number"}},
                           "required": ["sha"]}},
+        {"name": "reload_confirm",
+         "description": ("Confirm the showing reload view early (tap "
+                           "path): the panel returns at once. Misses with "
+                           "an error when no reload is showing."),
+         "inputSchema": {"type": "object", "properties": {}}},
         {"name": "policy_get", "description": "Policy config + activity clock.",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "policy_set",
@@ -376,6 +383,8 @@ def call_tool(name, args):
             if args.get("duration") is not None:
                 body["duration"] = args["duration"]
             return ok_text(api_post("/reload", body))
+        if name == "reload_confirm":
+            return ok_text(api_post("/reload/confirm", {"via": "tap"}))
         if name == "policy_get":
             return ok_text(api_get("/policy"))
         if name == "policy_set":

@@ -93,7 +93,8 @@ class McpTestCase(unittest.TestCase):
             {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         names = {t["name"] for t in resp["result"]["tools"]}
         for expected in ("show", "notify", "feed", "state", "snapshot",
-                         "renderers", "policy_get", "feedback_record",
+                         "renderers", "policy_get", "reload",
+                         "reload_confirm", "feedback_record",
                          "feedback_list", "feedback_summary"):
             self.assertIn(expected, names)
 
@@ -197,6 +198,18 @@ class McpTestCase(unittest.TestCase):
         self.assertEqual(seen["get"], "/feedback?view=text&limit=10")
         mcp_server.call_tool("feedback_summary", {})
         self.assertEqual(seen["get"], "/feedback/summary")
+
+    def test_reload_confirm_tool_dispatch(self):
+        seen = {}
+
+        def post(path, body):
+            seen["post"] = (path, body)
+            return {"confirmed": True, "via": "tap"}
+        self.stub(post=post)
+        result = mcp_server.call_tool("reload_confirm", {})
+        self.assertNotIn("isError", result)
+        self.assertEqual(seen["post"],
+                         ("/reload/confirm", {"via": "tap"}))
 
     def test_unknown_tool(self):
         self.stub()

@@ -105,7 +105,10 @@ publishes an unauthenticated control surface to everything that can route to it.
 | POST | `/show` | `{"renderer":"text","params":{...}}` | switch content |
 | POST | `/feed/<renderer>/<input>` | any JSON payload | push validated data into a view |
 | POST | `/notify` | `{"title":...}`, `body`?, `severity`? (`info`/`warn`/`critical`), `duration`? | transient notice, then automatic return |
-| POST | `/reload` | `{"sha":...}` | reload confirmation (RELOADED + full SHA + commit QR), stays until a tap dismisses it |
+| POST | `/reload` | `{"sha":...}` | reload confirmation (RELOADED + full SHA + scan-confirm QR), stays until a scan or tap confirms it; answers `relay_url` when the phone can reach it |
+| GET | `/r/<token>` | – | one-time scan relay: 302 to the commit page + panel confirm |
+| POST | `/reload/confirm` | `{"via":"tap"}` | tap/scan confirm path for the reload view only (409 when none showing) |
+| POST | `/touch/tap` | – | touchscreen tap dismissal for the reload view (no-op otherwise) |
 | GET | `/policy` | – | autonomous-behaviour config + activity clock |
 | POST | `/policy` | `{"idle":{...},"chat_attention":{...},"notifications":{...},"playlist":{...}}` | update policy (persisted) |
 | GET | `/playlist` | – | rotation status: view, index, progress, hold reason |
@@ -351,19 +354,31 @@ overrides the path), so they survive a restart.
 ## Reload confirmation
 
 After deploying a new build, `POST /reload` puts a confirmation
-on the panel: the word RELOADED, the full deployed commit SHA, and a QR
-code. The QR payload is always exactly
+on the panel: the word RELOADED, the full deployed commit SHA, a QR
+code, and a short hint naming how the view clears. The QR encodes a
+panel-served one-time relay URL (`GET /r/<token>`), not the commit page:
+scanning it 302-redirects the scanner to the commit page
+`https://github.com/trillium/displayd/commit/<full-sha>` AND records the
+scan as confirmation -- the panel returns to whatever was showing at
+once. A screen tap while the reload view shows confirms the same way
+(`POST /reload/confirm`, wired in `touch.py` as the `reload_confirm`
+action and sent automatically as `POST /touch/tap` on every valid tap;
+view-gated, so taps elsewhere change nothing).
 
     https://github.com/trillium/displayd/commit/<full-sha>
 
 the commit page -- never the repository homepage, and never a
 caller-supplied URL. The request carries only the SHA; the daemon derives
-the URL itself, so an arbitrary QR payload cannot be smuggled in. Unlike
+every URL itself, so an arbitrary QR payload cannot be smuggled in -- the
+renderer encodes only relay-shaped URLs (`/r/<token>`), and everything
+else falls back to the commit page. Tokens are single-scan with no time
+expiry, and each dies with its view (scan/tap confirm, tap-dismiss,
+manual navigation, a superseding notice, or a newer reload all invalidate
+it). Nothing is tracked beyond the confirm event itself. Unlike
 a notice, the screen stays on the reload view indefinitely -- it never
 expires by duration (a legacy `duration` field is still validated when
 supplied but ignored, and the response reports `"return_in": null`). A
-touchscreen tap (`POST /touch/tap`, sent automatically by `touch.py` on
-every valid tap) returns to whatever was showing -- with no
+touchscreen tap returns to whatever was showing -- with no
 explicit base view (a fresh restart) it returns to the clock instead of a
 blank panel -- and a manual `/show` or `/clear` cancels it outright.
 Dismissing anything but an active reload is a harmless no-op, so repeated
@@ -372,10 +387,26 @@ Anything but a full 40-character
 hexadecimal commit SHA -- missing, short, non-hex, or over-long -- is a
 clear HTTP 400.
 
+Reachability is explicit, not assumed: the relay QR is only issued when
+the panel binds a tailnet address (the `100.64.0.0/10` range the panel
+already binds on lnx-server via `DISPLAYD_BIND`), which the captain's
+phone -- itself on the tailnet -- can fetch. Otherwise `POST /reload`
+answers `relay_reachable: false` with a plain `relay_note`, the QR falls
+back to the commit page, the hint says tap-only, and no dead `/r/` URL
+exists. No auth changes, no wider binds: reachability comes from the bind
+the deployment already has.
+
 Example -- confirming the currently deployed lnx-server commit:
 
     curl -s -X POST 100.81.88.113:8980/reload -H 'Content-Type: application/json' \
       -d '{"sha":"25e0e740074740b6b98896a6076bf2763fe598f1"}'
+    # -> {"view":"reload", "commit_url": "https://github.com/...", \
+    #     "relay_url": "http://100.81.88.113:8980/r/<token>", ...}
+
+    curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
+      http://100.81.88.113:8980/r/<token>   # -> 302 .../commit/<full-sha>
+    curl -s -X POST 100.81.88.113:8980/reload/confirm \
+      -H 'Content-Type: application/json' -d '{"via":"tap"}'
 
 ## Deploying to lnx-server
 

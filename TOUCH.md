@@ -31,7 +31,7 @@ Quick start (foreground smoke test)::
   MagicDNS -- use the tailnet IP literal), and non-http(s) schemes all
   fail closed. See "Named-action allowlist + caller rule" below.
 - The action model is a closed allowlist (today: `playlist_next/pause/resume`,
-  `screen_on/off`, `clear`, `show`, `notify`, `feedback`). There is no generic
+  `screen_on/off`, `clear`, `show`, `notify`, `feedback`, `reload_confirm`). There is no generic
   "POST any path" or shell action, so a bad config cannot become command
   execution. No credentials live in source control; there are none to
   configure.
@@ -91,6 +91,16 @@ fixed-shape panel rating -- `{"name": "feedback", "view": "clock",
 optional `categories` list) to `POST /feedback`. The `agent` field is pinned
 to `"touch"` so a tap cannot spoof authorship, and free-text notes/params
 stay out per the residue rule above.
+
+The second is `reload_confirm`: a tap confirms the showing reload view --
+`{"name": "reload_confirm"}` posts the pinned body `{"via": "tap"}`
+to `POST /reload/confirm`, with no parameters to smuggle. The daemon gates
+on the view (no reload showing -> 409 miss, never a view change), so bind
+it to a generous region -- e.g. the full screen in `touch.json.example` --
+and taps elsewhere keep their normal actions. It is the tap half of the
+scan-confirmed reload relay (see README "Reload confirmation"): scanning
+the QR confirms via `GET /r/<token>`, tapping confirms via this action,
+and the view still auto-returns on timeout either way.
 
 ## Device discovery
 

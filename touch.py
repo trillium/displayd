@@ -183,6 +183,11 @@ ACTION_TABLE = {
         "method": "POST", "path": "/feedback",
         "params": ("view", "rating", "categories"),
     },
+    "reload_confirm": {
+        "effect": "confirm the showing reload view via tap (view-gated: "
+                    "no-op unless the reload QR view is showing)",
+        "method": "POST", "path": "/reload/confirm",
+    },
 }
 
 # Backwards-compatible name list (was the whole allowlist before the
@@ -483,7 +488,12 @@ def _resolve(action):
     if spec is None:
         return None, "refusing unknown action: %r" % (name,)
     if name in ("playlist_next", "playlist_pause", "playlist_resume",
-                "screen_on", "screen_off", "clear"):
+                "screen_on", "screen_off", "clear", "reload_confirm"):
+        if name == "reload_confirm":
+            # Fixed-shape tap confirm for the reload view only: the daemon
+            # gates on the view (no reload showing -> 409 miss), so the tap
+            # region needs no parameters and smuggles nothing.
+            return ("POST", "/reload/confirm", {"via": "tap"}), None
         return (spec["method"], spec["path"], {}), None
     if name == "show":
         renderer = action.get("renderer")

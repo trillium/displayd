@@ -902,7 +902,7 @@ class GuardShapeTest(unittest.TestCase):
         self.assertEqual(set(ACTION_TABLE), {
             "playlist_next", "playlist_pause", "playlist_resume",
             "screen_on", "screen_off", "clear", "show", "notify",
-            "feedback",
+            "feedback", "reload_confirm",
         })
         # Every entry classifies by handler effect: a daemon endpoint the
         # tap drives, never just a name.
@@ -944,6 +944,31 @@ class GuardShapeTest(unittest.TestCase):
         self.assertIn("error", summary)
         self.assertEqual(summary["action"], "exec")
         self.assertEqual(posted, [])  # not a byte on the wire
+
+    def test_reload_confirm_is_fixed_shape(self):
+        # No params to smuggle: extras are ignored, the body is pinned.
+        for action in ({"name": "reload_confirm"},
+                       {"name": "reload_confirm", "renderer": "evil",
+                        "url": "https://evil.example/x"}):
+            self.assertEqual(
+                action_request(action),
+                ("POST", "/reload/confirm", {"via": "tap"}))
+            self.assertEqual(
+                resolve_action(action),
+                ("POST", "/reload/confirm", {"via": "tap"}))
+
+    def test_reload_confirm_dispatch_posts_nothing_else(self):
+        posted = []
+
+        class RecordingClient(DisplaydClient):
+            def post(self, path, body):
+                posted.append((path, body))
+                return 200, {"confirmed": True}
+
+        client = RecordingClient("http://127.0.0.1:9")
+        summary = client.dispatch({"name": "reload_confirm"})
+        self.assertEqual(summary["path"], "/reload/confirm")
+        self.assertEqual(posted, [("/reload/confirm", {"via": "tap"})])
 
 
 class CallerRuleTest(unittest.TestCase):
