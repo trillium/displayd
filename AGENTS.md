@@ -173,6 +173,11 @@ When updating this file, preserve this bar for all agents and keep entries conci
   server-side no-op otherwise, so center/dead-zone taps still clear reload
   while region actions are unchanged. A failed dismissal never blocks the
   region action that follows.
+- Reload QR is a scan relay, not the commit page: `POST /reload` answers
+  a one-time `relay_url` (`GET /r/<token>`, tailnet bind only, else an
+  explicit tap-only fallback) whose scan 302-redirects to the commit
+  page and dismisses the view like a tap. Single-scan, dies with the
+  view; no tracking beyond the confirm.
 
 ## Stream monitor (jumbotron live frames)
 

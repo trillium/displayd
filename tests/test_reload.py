@@ -851,6 +851,16 @@ class TestRelayScanConfirm(ReloadDaemonTestCase):
         self.assertFalse(result["confirmed"])
         self.assertEqual(daemon.current, "text")
 
+    def test_notice_supersede_kills_the_token(self):
+        daemon = self.make_daemon()
+        token = self._tailnet_reload(daemon)
+        out = daemon.notify("operator note", duration=60)
+        self.assertEqual(out["superseded"], "reload")
+        self.assertEqual(daemon.current, "notice")
+        status, payload = daemon.handle_relay_scan(token)
+        self.assertEqual(status, 410)
+        self.assertNotIn("commit_url", payload)
+
 
 class TestTapConfirm(ReloadDaemonTestCase):
     def test_tap_returns_panel_and_kills_token(self):
