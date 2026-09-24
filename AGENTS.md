@@ -187,3 +187,18 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Start/stop is one action: `POST /show {renderer: stream, params: ...}` /
   bare `/show` or `/clear`. No auth/header params exist on purpose: serve
   snapshots tailnet-bound, unauthenticated, with no keys in files or logs.
+
+## Webhook self-deploy (push-to-main redeploys the panel)
+
+- Chain: GitHub push → funnel `https://vps01.hippo-tilapia.ts.net/hooks/displayd`
+  → vps01 forwarder `127.0.0.1:8090` → lnx receiver `100.81.88.113:9898`
+  → local deploy (fetch + reset `~/displayd-upstream`, rsync live tree,
+  restart daemon, re-show, `/reload` proof, stamp, verify).
+- Code home is `hooks/` (receiver, forwarder, both systemd units,
+  `RUNBOOK.md`); deploy.sh rsync ships it to `~/displayd` automatically.
+  vps01's copy at `/root/displayd-funnel/` is hand-copied (no checkout there).
+  Retired proof logger kept at `/root/funnel-proof/hook.py` for restore.
+- Receiver is a separate unit (`displayd-webhook.service`, root, secret in
+  `/root/displayd-webhook-secret`), not a daemon route, so the mid-deploy
+  restart can't kill it. Only main-branch pushes deploy; ping/other refs
+  ack without action. Install/rotate/restore: `hooks/RUNBOOK.md`.

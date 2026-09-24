@@ -1,0 +1,25 @@
+[Unit]
+Description=displayd GitHub webhook receiver (push-to-main redeploy)
+Documentation=file:/home/trillium/displayd/hooks/RUNBOOK.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=WEBHOOK_BIND=100.81.88.113
+Environment=WEBHOOK_PORT=9898
+Environment=WEBHOOK_SECRET_FILE=/root/displayd-webhook-secret
+Environment=UPSTREAM_DIR=/home/trillium/displayd-upstream
+Environment=REMOTE_DIR=/home/trillium/displayd
+Environment=PANEL=100.81.88.113:8980
+Environment=DEPLOY_USER=trillium
+Environment=DEPLOY_LOG=/var/log/displayd-webhook.log
+ExecStart=/usr/bin/python3 /home/trillium/displayd/hooks/webhook_receiver.py
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

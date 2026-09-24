@@ -1,0 +1,20 @@
+[Unit]
+Description=displayd funnel forwarder (funnel :8090 -> lnx receiver)
+Documentation=file:/root/displayd-funnel/RUNBOOK.md
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=FUNNEL_LISTEN=127.0.0.1
+Environment=FUNNEL_PORT=8090
+Environment=TARGET=http://100.81.88.113:9898
+ExecStart=/usr/bin/python3 /root/displayd-funnel/funnel_forwarder.py
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
