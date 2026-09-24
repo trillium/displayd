@@ -734,7 +734,8 @@ class TestReloadRelayIssue(ReloadDaemonTestCase):
         state = daemon.state()
         self.assertEqual(state["renderer"], "reload")
         self.assertTrue(state["reload_confirm"]["pending"])
-        self.assertGreater(state["reload_confirm"]["expires_in"], 50)
+        # Indefinite window: no countdown, the view waits for scan/tap.
+        self.assertIsNone(state["reload_confirm"]["expires_in"])
 
     def test_tap_only_fallback_on_loopback_bind(self):
         daemon = self.make_daemon()
@@ -902,17 +903,42 @@ class TestTapConfirm(ReloadDaemonTestCase):
         self.assertEqual(daemon.current, "clock")
 
 
-class TestReloadTimeoutWithoutConfirm(ReloadDaemonTestCase):
-    def test_view_returns_and_token_dies(self):
-        daemon = self.make_daemon(clock=None)  # real clock: timers fire
+class TestReloadStaysUntilConfirm(ReloadDaemonTestCase):
+    def test_view_waits_past_legacy_duration_then_scan_confirms(self):
+        daemon = self.make_daemon()
         daemon.show("solid", {"color": "blue"})
         with bind_env(TAILNET_HOST):
             token = daemon.reload(DEPLOYED_SHA,
                                   duration=1)["relay_url"].rsplit("/r/", 1)[1]
         self.assertEqual(daemon.current, "reload")
-        time.sleep(1.6)  # duration elapses with no scan and no tap
+        time.sleep(1.6)  # past the legacy duration: no return on its own
+        self.assertEqual(daemon.current, "reload")
+        self.assertTrue(daemon.state()["reload_confirm"]["pending"])
+        # The token is still live: a scan now confirms and redirects.
+        status, payload = daemon.handle_relay_scan(token)
+        self.assertEqual(status, 302)
+        self.assertEqual(payload["commit_url"], COMMIT_URL)
         self.assertEqual(daemon.current, "solid")
         self.assertIsNone(daemon.state()["reload_confirm"])
+        # Consumed: a second scan gets 410 and a tap is a miss.
+        status, payload = daemon.handle_relay_scan(token)
+        self.assertEqual(status, 410)
+        self.assertNotIn("commit_url", payload)
+        result = daemon.confirm_reload("tap")
+        self.assertFalse(result["confirmed"])
+        self.assertEqual(daemon.current, "solid")
+
+    def test_tap_dismiss_kills_token(self):
+        daemon = self.make_daemon()
+        daemon.show("solid", {"color": "blue"})
+        with bind_env(TAILNET_HOST):
+            token = daemon.reload(DEPLOYED_SHA)["relay_url"].rsplit(
+                "/r/", 1)[1]
+        result = daemon.dismiss_reload()
+        self.assertTrue(result["dismissed"])
+        self.assertEqual(daemon.current, "solid")
+        self.assertIsNone(daemon.state()["reload_confirm"])
+        # The window is over: the token died with the view.
         status, payload = daemon.handle_relay_scan(token)
         self.assertEqual(status, 410)
         self.assertNotIn("commit_url", payload)
