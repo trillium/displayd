@@ -149,6 +149,13 @@ Then set in `touch.json`:
 
 - `width`/`height`: real panel pixels (framebuffer size, e.g. from `fbset`).
 - `calibration.x_max`/`y_max` (and `x_min`/`y_min` if nonzero).
+  The lnx-server G2Touch panel reports native display pixels (`ABS_X`
+  0-1920, `ABS_Y` 0-1080 -- read them with `EVIOCGABS`, not the hex bitmap),
+  so its calibration equals the panel size. A wrong range (e.g. a 4095 gyro
+  default) silently compresses every tap toward the origin -- all taps land
+  in the top-left cells and the right/bottom of the screen is unreachable.
+  Symptom check: mapped tap coordinates never exceed
+  `device_max / x_max * (width - 1)`.
 - Orientation: `swap_xy`, `invert_x`, `invert_y`, `rotation` (0/90/180/270).
 - Verify with `--dry-run`: taps log `tap at X,Y -> region ...` without HTTP.
   Corners should report near `(0,0)` / `(width-1,height-1)`.
