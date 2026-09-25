@@ -207,6 +207,10 @@ When updating this file, preserve this bar for all agents and keep entries conci
   cap, 1920x1080, ~25ms/present): full-rate video is out of scope for the
   tile path by design, hence the cap. Frame source (Mac-side OBS snapshot
   server) is obs-agent territory; contract lives in the renderer docstring.
+- Screenshot poller: `bridges/obs_poll.py` (stdlib only) grabs
+  `GetSourceScreenshot` over obs-websocket v5 on a 0.5..5 fps cadence and
+  POSTs `{data}` to `/feed/stream/frame`; password via `OBS_PASSWORD` env
+  only. Tests in `tests/test_obs_poll.py`; live checklist in its docstring.
 - Start/stop is one action: `POST /show {renderer: stream, params: ...}` /
   bare `/show` or `/clear`. No auth/header params exist on purpose: serve
   snapshots tailnet-bound, unauthenticated, with no keys in files or logs.
