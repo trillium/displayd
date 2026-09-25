@@ -46,6 +46,7 @@ import os
 import re
 import secrets
 import threading
+import hmac
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -64,6 +65,14 @@ BACKLIGHT_GLOB = "/sys/class/backlight"
 # paired with a host firewall or a private network such as a VPN or tailnet.
 PORT = int(os.environ.get("DISPLAYD_PORT", "8980"))
 BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
+# Optional shared secret for the HTTP API. When set, every request (except
+# the unauthenticated health probes below) must carry
+#   Authorization: Bearer <token>
+# Unset means the API stays open -- the historical default -- and the
+# loopback binding remains the only protection. Setting this on a box that
+# binds wider than 127.0.0.1 is how one deliberately exposes the API
+# off-host with a shared secret in front of it.
+API_TOKEN = os.environ.get("DISPLAYD_API_TOKEN", "").encode()
 RENDERER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "renderers")
 VT = os.environ.get("DISPLAYD_VT", "/dev/tty1")
 POLICY_FILE = os.environ.get(
@@ -2767,6 +2776,22 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def _check_token(self):
+        """Return None when the request is authorized, else an error body.
+
+        With no API_TOKEN configured the API stays open (historical
+        behavior). When it is configured, the bearer token must match in
+        constant time, and the compare runs even when the header is absent
+        so a missing header does not return measurably faster than a wrong
+        one."""
+        if not API_TOKEN:
+            return None
+        header = self.headers.get("Authorization", "")
+        provided = header[7:] if header.startswith("Bearer ") else ""
+        if hmac.compare_digest(provided.encode(), API_TOKEN):
+            return None
+        return {"error": "unauthorized"}
+
     def _send(self, code, payload, ctype="application/json"):
         body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         self.send_response(code)
@@ -2794,6 +2819,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, CONTROL_PAGE.encode("utf-8"), "text/html; charset=utf-8")
         if path in ("/health", "/healthz"):
             return self._send(200, {"ok": True})
+        auth_error = self._check_token()
+        if auth_error is not None:
+            return self._send(401, auth_error)
         if path == "/state":
             return self._send(200, DAEMON.state())
         if path == "/renderers":
@@ -2869,6 +2897,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
+        auth_error = self._check_token()
+        if auth_error is not None:
+            return self._send(401, auth_error)
         if path.startswith("/feed/"):
             parts = path.split("/")
             if len(parts) != 4 or not parts[2] or not parts[3]:
@@ -2985,6 +3016,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path = self.path.split("?")[0]
+        auth_error = self._check_token()
+        if auth_error is not None:
+            return self._send(401, auth_error)
         if path == "/layout":
             return self._send(200, DAEMON.clear_layout())
         return self._send(404, {"error": "not found"})
