@@ -2435,8 +2435,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, CONTROL_PAGE.encode("utf-8"), "text/html; charset=utf-8")
         if path in ("/health", "/healthz"):
             return self._send(200, {"ok": True})
-        if self._check_token() is not None:
-            return self._send(401, self._check_token())
+        auth_error = self._check_token()
+        if auth_error is not None:
+            return self._send(401, auth_error)
         if path == "/state":
             return self._send(200, DAEMON.state())
         if path == "/renderers":
@@ -2493,8 +2494,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
-        if self._check_token() is not None:
-            return self._send(401, self._check_token())
+        auth_error = self._check_token()
+        if auth_error is not None:
+            return self._send(401, auth_error)
         if path.startswith("/feed/"):
             parts = path.split("/")
             if len(parts) != 4 or not parts[2] or not parts[3]:
@@ -2596,8 +2598,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path = self.path.split("?")[0]
-        if self._check_token() is not None:
-            return self._send(401, self._check_token())
+        auth_error = self._check_token()
+        if auth_error is not None:
+            return self._send(401, auth_error)
         if path == "/layout":
             return self._send(200, DAEMON.clear_layout())
         return self._send(404, {"error": "not found"})
