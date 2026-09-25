@@ -23,7 +23,8 @@ from touch import (
     EV_KEY, EV_SYN, SYN_REPORT, DisplaydClient, EvdevParser, TapDetector,
     TouchEvent, TouchService, action_request, confidence_env_override,
     default_config, endpoint_allowed, hit_test, load_config, normalize,
-    normalize_confidence_feedback, pack_event, parse_event, resolve_action,
+    normalize_confidence_feedback, normalize_tap_options, pack_event,
+    parse_event, resolve_action,
 )
 
 
@@ -361,11 +362,57 @@ class ServiceHandleFrameTest(unittest.TestCase):
         self.assertEqual(len(dispatched), 1)
         self.assertEqual(dispatched[0][0]["name"], "playlist_next")
 
-    def test_tap_in_dead_zone_dispatches_nothing(self):
+    def test_tap_in_dead_zone_routes_to_options(self):
+        # Tap-anywhere fallback (on by default): an unconsumed tap lands
+        # the view-selection screen from any view -- the routing is
+        # view-agnostic, so one case covers every built-in view.
         svc, dispatched = self._service()
         svc.handle_frame([TouchEvent("down", 0, 2047, 2047)], dry_run=True)
-        svc.handle_frame([TouchEvent("up", 0, 2047, 2047)], dry_run=True)
+        summary = svc.handle_frame([TouchEvent("up", 0, 2047, 2047)],
+                                   dry_run=True)
+        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(dispatched[0][0]["name"], "options")
+        self.assertTrue(summary["dry_run"])
+
+    def test_tap_in_dead_zone_dispatches_nothing_when_disabled(self):
+        svc, dispatched = self._service(tap_options={"enabled": False})
+        svc.handle_frame([TouchEvent("down", 0, 2047, 2047)], dry_run=True)
+        self.assertIsNone(
+            svc.handle_frame([TouchEvent("up", 0, 2047, 2047)],
+                             dry_run=True))
         self.assertEqual(dispatched, [])
+
+    def test_region_hit_beats_options_fallback(self):
+        # Conflict case: a tap inside a configured region dispatches the
+        # region action (tap-to-rate here), never the options fallback.
+        cfg_regions = [
+            {"id": "rate-it", "rect": [640, 840, 640, 240],
+             "action": {"name": "feedback", "view": "clock",
+                         "rating": 5}},
+        ]
+        svc, dispatched = self._service(regions=cfg_regions)
+        # Raw (2047, 3900) -> display ~(959, 1029): inside the rate strip.
+        svc.handle_frame([TouchEvent("down", 0, 2047, 3900)], dry_run=True)
+        svc.handle_frame([TouchEvent("up", 0, 2047, 3900)], dry_run=True)
+        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(dispatched[0][0]["name"], "feedback")
+
+    def test_options_fallback_failure_keeps_serving(self):
+        cfg = default_config()
+        cfg.update({"width": 1920, "height": 1080,
+                    "calibration": dict(CAL), "tap_max_seconds": 60,
+                    "debounce_seconds": 0})
+
+        class Boom:
+            def dispatch(self, action, dry_run=False):
+                raise RuntimeError("connection refused")
+
+        svc = TouchService(cfg, client=Boom())
+        svc.handle_frame([TouchEvent("down", 0, 2047, 2047)], dry_run=False)
+        result = svc.handle_frame([TouchEvent("up", 0, 2047, 2047)],
+                                  dry_run=False)
+        self.assertEqual(result["action"], "options")
+        self.assertIn("error", result)
 
     def test_http_failure_does_not_raise(self):
         cfg = default_config()
@@ -446,13 +493,44 @@ class TapDismissServiceTest(unittest.TestCase):
                                  ("dispatch", "playlist_next", True)])
         self.assertEqual(result["action"], "playlist_next")
 
-    def test_unmatched_center_tap_dismisses_without_dispatch(self):
+    def test_unmatched_center_tap_dismisses_then_routes_to_options(self):
         svc, calls, _ = self._service()
         # Raw (2047, 2047) -> display middle: the dead zone by design --
-        # no region action, but the reload dismissal still goes out.
+        # no region action, but the reload dismissal still goes out first
+        # and the unconsumed tap falls through to the options view.
+        result = self._tap(svc, 2047, 2047)
+        self.assertEqual(calls, [("dismiss", True),
+                                 ("dispatch", "options", True)])
+        self.assertEqual(result["action"], "options")
+
+    def test_reload_dismiss_consumes_tap_no_options_fallback(self):
+        # Conflict case (task-260ef): when the dismissal actually clears
+        # a reload transient, the tap was consumed by that gesture -- the
+        # panel is on its normal return path, so no options navigation.
+        svc, calls, _ = self._service()
+        svc.client.tap_dismiss = lambda dry_run=False: (
+            calls.append(("dismiss", dry_run)) or
+            {"action": "tap_dismiss", "dry_run": dry_run,
+             "status": 200,
+             "response": {"dismissed": True, "view": "clock"}})
         result = self._tap(svc, 2047, 2047)
         self.assertEqual(calls, [("dismiss", True)])
-        self.assertIsNone(result)
+        self.assertEqual(result["response"], {"dismissed": True,
+                                                 "view": "clock"})
+
+    def test_region_hit_dispatches_after_consuming_dismissal(self):
+        # Region gestures keep working: a dismissal that consumed the tap
+        # gates only the new options navigation, never a region action.
+        svc, calls, _ = self._service()
+        svc.client.tap_dismiss = lambda dry_run=False: (
+            calls.append(("dismiss", dry_run)) or
+            {"action": "tap_dismiss", "dry_run": dry_run,
+             "status": 200,
+             "response": {"dismissed": True, "view": "clock"}})
+        result = self._tap(svc, 4095, 2047)
+        self.assertEqual(calls, [("dismiss", True),
+                                 ("dispatch", "playlist_next", True)])
+        self.assertEqual(result["action"], "playlist_next")
 
     def test_left_region_tap_preserves_action(self):
         svc, calls, _ = self._service()
@@ -672,7 +750,10 @@ class ConfidenceFeedbackTest(unittest.TestCase):
                     "calibration": dict(CAL),
                     "tap_max_seconds": 60,
                     "debounce_seconds": 0,
-                    "confidence_feedback": {"enabled": enabled}})
+                    "confidence_feedback": {"enabled": enabled},
+                    # Isolate feedback behaviour: the tap-anywhere fallback
+                    # is covered by ServiceHandleFrameTest/TapOptions tests.
+                    "tap_options": {"enabled": False}})
         cfg.update(overrides)
         events = []
 
@@ -780,8 +861,13 @@ class ConfidenceFeedbackTest(unittest.TestCase):
         summary = self._tap(svc, self.RIGHT_RAW)
         self.assertEqual(summary["action"], "playlist_next")
         self.assertEqual(client.dispatched, ["playlist_next"])
-        # Dead-zone tap with a failing feed: still silent, still no raise.
-        self.assertIsNone(self._tap(svc, self.DEAD_RAW))
+        # Dead-zone tap routes to options even while the feed is down:
+        # the fallback dispatch succeeds, the failing feedback is
+        # swallowed, nothing raises.
+        summary = self._tap(svc, self.DEAD_RAW)
+        self.assertEqual(summary["action"], "options")
+        self.assertEqual(client.dispatched,
+                         ["playlist_next", "options"])
 
     def test_dispatch_error_is_reported_not_hidden(self):
         cfg = default_config()
@@ -828,7 +914,8 @@ class ConfidenceFeedbackTest(unittest.TestCase):
         del cfg["confidence_feedback"]
         cfg.update({"width": 1920, "height": 1080,
                     "calibration": dict(CAL), "tap_max_seconds": 60,
-                    "debounce_seconds": 0})
+                    "debounce_seconds": 0,
+                    "tap_options": {"enabled": False}})
         dispatched = []
 
         class NoPostClient:
@@ -842,6 +929,22 @@ class ConfidenceFeedbackTest(unittest.TestCase):
             self._tap(svc, self.RIGHT_RAW)["action"], "playlist_next")
         self.assertIsNone(self._tap(svc, self.DEAD_RAW))
         self.assertEqual(dispatched, ["playlist_next"])
+
+    def test_fallback_dispatch_precedes_feedback(self):
+        # Conflict-adjacent ordering: with both switches on, a dead-zone
+        # tap dispatches the options action FIRST, then reports feedback
+        # (action-first invariant holds for fallback and region hits).
+        svc, events = self._service(
+            enabled=True, tap_options={"enabled": True})
+        summary = self._tap(svc, self.DEAD_RAW)
+        self.assertEqual(summary["action"], "options")
+        self.assertEqual([e[0] for e in events],
+                         ["dismiss", "dispatch", "feedback"])
+        kind, path, payload = events[2]
+        self.assertEqual(path, "/feed/touch_confidence/tap")
+        self.assertFalse(payload["hit"])
+        self.assertEqual(payload["action"], "options")
+        self.assertEqual(payload["result"], "dead-zone")
 
     def test_dry_run_sends_nothing(self):
         svc, events = self._service(enabled=True)
@@ -901,8 +1004,8 @@ class GuardShapeTest(unittest.TestCase):
     def test_table_is_the_closed_set(self):
         self.assertEqual(set(ACTION_TABLE), {
             "playlist_next", "playlist_pause", "playlist_resume",
-            "screen_on", "screen_off", "clear", "show", "notify",
-            "feedback", "reload_confirm",
+            "screen_on", "screen_off", "clear", "show", "options",
+            "notify", "feedback", "reload_confirm",
         })
         # Every entry classifies by handler effect: a daemon endpoint the
         # tap drives, never just a name.
@@ -1122,6 +1225,140 @@ class FeedbackActionTest(unittest.TestCase):
         self.assertEqual(posted, [("/feedback", {"view": "clock",
                                                    "rating": 5,
                                                    "agent": "touch"})])
+
+
+class OptionsActionTest(unittest.TestCase):
+    """The tap-anywhere named action: unconsumed taps -> options view."""
+
+    def test_bare_options_lands_default_view(self):
+        method, path, body = action_request({"name": "options"})
+        self.assertEqual((method, path), ("POST", "/show"))
+        self.assertEqual(body, {"renderer": "options", "params": {}})
+
+    def test_options_renderer_override(self):
+        _, _, body = action_request(
+            {"name": "options", "renderer": "menu",
+             "params": {"title": "Menu"}})
+        self.assertEqual(body, {"renderer": "menu",
+                                "params": {"title": "Menu"}})
+
+    def test_options_validation(self):
+        # Same bar as "show": any non-empty renderer string resolves
+        # (the daemon rejects unknown names); only the shape is checked.
+        # (The tap_options *config* default is stricter and rejects "/",
+        # so a host fallback can never point at a feed path by typo.)
+        for bad in ({"name": "options", "renderer": ""},
+                    {"name": "options", "renderer": 7},
+                    {"name": "options", "params": "clock"},
+                    {"name": "options", "params": ["clock"]}):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                action_request(bad)
+            self.assertIsNone(resolve_action(bad))
+
+    def test_options_dispatches_show(self):
+        calls = []
+
+        class FakeHTTP:
+            def post(self, path, body):
+                calls.append((path, body))
+                return 200, {"ok": True}
+
+        client = DisplaydClient("http://127.0.0.1:9")
+        client.post = FakeHTTP().post
+        summary = client.dispatch({"name": "options"})
+        self.assertEqual(calls, [("/show", {"renderer": "options",
+                                               "params": {}})])
+        self.assertEqual(summary["status"], 200)
+
+    def test_options_in_region_end_to_end(self):
+        # An explicit options region behaves like any other region action.
+        cfg = default_config()
+        cfg.update({
+            "width": 1920, "height": 1080,
+            "calibration": dict(CAL),
+            "tap_max_seconds": 60, "debounce_seconds": 0,
+            "endpoint": "http://127.0.0.1:8980",
+            "regions": [
+                {"id": "menu", "rect": [0, 0, 640, 1080],
+                 "action": {"name": "options"}},
+            ],
+        })
+        posted = []
+
+        class FakeClient:
+            def dispatch(self, action, dry_run=False):
+                method, path, body = action_request(action)
+                posted.append((path, body))
+                return {"action": action["name"], "method": method,
+                        "path": path, "body": body, "status": 200}
+
+        svc = TouchService(cfg, client=FakeClient())
+        svc.handle_frame([TouchEvent("down", 0, 100, 2047)],
+                         dry_run=True)
+        summary = svc.handle_frame([TouchEvent("up", 0, 100, 2047)],
+                                   dry_run=True)
+        self.assertEqual(summary["path"], "/show")
+        self.assertEqual(posted, [("/show", {"renderer": "options",
+                                                "params": {}})])
+
+
+class TapOptionsConfigTest(unittest.TestCase):
+    """tap_options switch: on by default, validated, loadable."""
+
+    def test_enabled_by_default(self):
+        cfg = load_config(None)
+        self.assertEqual(cfg["tap_options"],
+                         {"enabled": True, "renderer": "options",
+                          "params": {}})
+
+    def test_bool_shorthand(self):
+        self.assertFalse(normalize_tap_options(False)["enabled"])
+        self.assertTrue(normalize_tap_options(True)["enabled"])
+        self.assertEqual(normalize_tap_options(None)["renderer"],
+                         "options")
+
+    def test_custom_renderer_and_params(self):
+        norm = normalize_tap_options({"renderer": "menu",
+                                      "params": {"title": "Menu"}})
+        self.assertEqual((norm["renderer"], norm["params"]),
+                         ("menu", {"title": "Menu"}))
+
+    def test_rejects_bad_switch(self):
+        for bad in ("options", 7, {"enabled": "yes"},
+                    {"renderer": ""}, {"renderer": "a/b"},
+                    {"renderer": None}, {"params": "clock"},
+                    {"params": ["clock"]}):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                normalize_tap_options(bad)
+
+    def test_file_overlay_disables_fallback(self):
+        overlay = {"tap_options": {"enabled": False}}
+        with tempfile.NamedTemporaryFile("w", suffix=".json",
+                                         delete=False) as fh:
+            json.dump(overlay, fh)
+            path = fh.name
+        try:
+            self.assertFalse(load_config(path)["tap_options"]["enabled"])
+        finally:
+            os.unlink(path)
+
+    def test_bad_fallback_fails_config_before_device_open(self):
+        overlay = {"tap_options": {"renderer": ""}}
+        with tempfile.NamedTemporaryFile("w", suffix=".json",
+                                         delete=False) as fh:
+            json.dump(overlay, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                load_config(path)
+        finally:
+            os.unlink(path)
+
+    def test_example_config_loads(self):
+        path = os.path.join(os.path.dirname(__file__), os.pardir,
+                            "touch.json.example")
+        cfg = load_config(path)
+        self.assertTrue(cfg["tap_options"]["enabled"])
 
 
 if __name__ == "__main__":

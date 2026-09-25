@@ -214,8 +214,11 @@ environment, or `python3 touch.py --confidence-feedback`. Then restart
    debounce-suppressed taps emit nothing.
 
 3. Tap the panel: boxes, counters, and the last-tap line update live.
-   The middle dead zone reports `DEAD ZONE — no action` and dispatches
-   nothing.
+   The middle dead zone reports `DEAD ZONE` to the confidence feed and
+   then routes to the options view (tap-anywhere fallback) -- that
+   navigation is the way back; re-show the confidence view to resume
+   testing. Set `tap_options.enabled: false` to restore dispatch-nothing
+   dead zones while testing.
 
 Disable (back to normal):
 
@@ -228,6 +231,17 @@ Feeding the confidence view never pulls the screen: it is an ordinary feed
 buffer, not a chat-attention event, so taps cannot interrupt the clock,
 playlist rotation, or a layout -- they only repaint the confidence view
 while it is shown.
+
+## Reload tap-dismissal (every tap returns a reload view)
+
+`POST /reload` stays up indefinitely until a touchscreen tap dismisses it
+(`POST /touch/tap`, sent best-effort by `touch.py` before hit-testing on
+every valid tap) or a manual `/show` cancels it. Dismissing anything but
+an active reload is a server-side no-op (`dismissed: false`), so repeated
+taps are safe; a real dismissal returns through the normal return path
+(saved base view, else clock). The `reload_confirm` named action
+(`POST /reload/confirm`) confirms the showing reload view via tap
+(view-gated: 409 miss when no reload is showing).
 
 ## Retro grid wiring (4x3 arcade buttons)
 
@@ -244,6 +258,57 @@ In-grid flash (tapped cell inverts on the next frame, visible in
 pointed at renderer `retro_grid`, input `tap` -- already set in the
 example. Feed a tap by hand with `curl -X POST
 http://100.81.88.113:8980/feed/retro_grid/tap -d '{"cell": 5}'`.
+
+## Tap anywhere: unconsumed taps route to options
+
+A tap that hits no configured region -- the middle dead zone in the
+shipped default -- is routed to the view-selection screen
+(`renderers/options.py`) via the `options` named action
+(`POST /show {"renderer": "options"}`), so every fullscreen view has a
+tap path to a screen that names the way back. The fallback lives in the
+shared input path (`TouchService.handle_frame`), never in per-renderer
+code: it is view-agnostic, so it covers every built-in view with no
+per-view wiring.
+
+Precedence (highest wins):
+
+1. **Reload dismiss** -- every valid tap `POST /touch/tap` first. When
+   the daemon reports `dismissed: true`, the tap was consumed by that
+   gesture: the panel is on its normal return path and the options
+   fallback stays out. (Region hits still dispatch after a dismissal,
+   exactly as before -- only the new navigation is gated.)
+2. **Configured region hit** -- tap-to-rate `feedback`, `playlist_next`,
+   `screen_on`, `reload_confirm`, and friends dispatch exactly as before.
+   Existing gestures keep working; the fallback never fires for a tap a
+   region consumed.
+3. **Tap-anywhere fallback** -- dead-zone taps `POST /show` to the
+   options view. The resulting manual selection cancels any transient in
+   flight (`notice`, `reload` confirmation): a manual `/show` wins over a
+   transient by daemon design, so a tap during a notice/reload screen
+   lands options instead of being swallowed -- no view traps the user.
+4. **Tap-test view** (`touch_confidence`) -- dead-zone taps feed the
+   confidence diagnostics first (reported as dead zone) and then route to
+   options like anywhere else. That navigation is the escape hatch back;
+   re-`POST /show` the confidence view to resume testing.
+5. **Options view itself** -- a tap while already there re-shows options
+   (harmless no-op), so options never traps either.
+
+Picking a view back happens on the phone-first control page (`GET /`
+one-tap grid) or `POST /show` directly; `POST /playlist/resume` restarts
+rotation. The options screen lists the pinned picks (clock, chat, row,
+stream) plus that return path.
+
+Configure (`touch.json`):
+
+    "tap_options": {"enabled": true, "renderer": "options", "params": {}}
+
+`false` (or `{"enabled": false}`) restores the old dead-zone behaviour
+(log + optional confidence feedback, no navigation). `renderer` must be a
+plain view name and `params` a plain object; the fallback dispatches
+through the closed `options` action, so it inherits the fixed-shape body
+and the loopback/tailnet caller rule -- a bad config fails fast in
+`load_config()` before the device is opened.
+
 
 ## Service supervision (lnx-server)
 

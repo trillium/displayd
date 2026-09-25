@@ -22,6 +22,11 @@
     "renderer": "touch_confidence",
     "input": "tap"
   },
+  "tap_options": {
+    "enabled": true,
+    "renderer": "options",
+    "params": {}
+  },
   "regions": [
     {
       "id": "playlist-next",

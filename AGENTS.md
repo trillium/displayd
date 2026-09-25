@@ -162,6 +162,13 @@ When updating this file, preserve this bar for all agents and keep entries conci
   effect) + `endpoint_allowed()` (loopback/tailnet-CGNAT only) + silent
   denies at dispatch; first table action is tap-to-rate `feedback`.
   Procedure to add actions: TOUCH.md "how to add a named action".
+- Tap anywhere → options: unconsumed (dead-zone) taps `POST /show
+  {"renderer": "options"}` via the `options` table action + `tap_options`
+  config (on by default); `renderers/options.py` is the on-panel selection
+  screen. Precedence: reload-dismiss consumption > region hit > options
+  fallback (a tap that actually dismissed reload never also navigates);
+  manual `/show` cancels notice/reload transients, so no view traps the
+  user. `tap_options.enabled: false` restores dispatch-nothing dead zones.
 - Touchscreen confidence mode (opt-in tap test): `renderers/touch_confidence.py`
   draws the configured regions + live tap diagnostics; `touch.py`
   `confidence_feedback` switch (off by default, `DISPLAYD_TOUCH_CONFIDENCE=1`

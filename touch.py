@@ -172,6 +172,11 @@ ACTION_TABLE = {
         "method": "POST", "path": "/show",
         "params": ("renderer", "params"),
     },
+    "options": {
+        "effect": "route an unconsumed tap to the view-selection screen",
+        "method": "POST", "path": "/show",
+        "params": ("renderer", "params"),
+    },
     "notify": {
         "effect": "interrupt the panel with a transient notice",
         "method": "POST", "path": "/notify",
@@ -504,6 +509,20 @@ def _resolve(action):
             return None, "show params must be an object"
         return ("POST", "/show",
                 {"renderer": renderer, "params": params}), None
+    if name == "options":
+        # Tap-anywhere fallback: same endpoint as "show" but the renderer
+        # defaults to the view-selection screen, so a bare
+        # {"name": "options"} always lands the options view. An explicit
+        # renderer override is allowed (same validation as "show") for
+        # hosts that point the fallback at a branded selection screen.
+        renderer = action.get("renderer", "options")
+        if not renderer or not isinstance(renderer, str):
+            return None, "options action needs a renderer name"
+        params = action.get("params") or {}
+        if not isinstance(params, dict):
+            return None, "options params must be an object"
+        return ("POST", "/show",
+                {"renderer": renderer, "params": params}), None
     if name == "notify":
         title = action.get("title")
         if not title or not isinstance(title, str):
@@ -662,6 +681,13 @@ def default_config():
         "tap_max_seconds": 0.5,
         "tap_max_pixels": 40,
         "debounce_seconds": 0.3,
+        # Tap-anywhere fallback: a tap that hits no configured region
+        # routes to the view-selection screen (renderers/options.py) via
+        # the "options" named action above. Region hits always win, so
+        # existing gestures keep working; see TOUCH.md "Tap anywhere".
+        "tap_options": {"enabled": True,
+                          "renderer": "options",
+                          "params": {}},
         # Confidence-mode tap feedback: off by default. When enabled, every
         # resolved tap (region hit AND dead-zone miss) is POSTed best-effort
         # to displayd's feed API for the touch_confidence renderer, AFTER
@@ -736,12 +762,47 @@ def load_config(path=None):
         action_request(region.get("action") or {})  # fail fast on bad actions
     cfg["confidence_feedback"] = normalize_confidence_feedback(
         cfg.get("confidence_feedback"))
+    cfg["tap_options"] = normalize_tap_options(cfg.get("tap_options"))
     return cfg
 
 
 CONFIDENCE_DEFAULTS = {"enabled": False,
                          "renderer": "touch_confidence",
                          "input": "tap"}
+
+TAP_OPTIONS_DEFAULTS = {"enabled": True,
+                          "renderer": "options",
+                          "params": {}}
+
+
+def normalize_tap_options(value):
+    """Normalize the tap-anywhere fallback to a validated dict.
+
+    Accepts a bool (shorthand for {"enabled": bool}) or a dict; anything
+    else is a config error. The renderer must be a plain view name and
+    params a plain object -- the fallback dispatches through the closed
+    "options" named action, so it inherits the table's fixed-shape body
+    and the loopback/tailnet caller rule. On by default: an unconsumed
+    tap lands the view-selection screen from every view."""
+    if value is None:
+        value = {}
+    if isinstance(value, bool):
+        value = {"enabled": value}
+    if not isinstance(value, dict):
+        raise ValueError("tap_options must be a bool or an object")
+    merged = dict(TAP_OPTIONS_DEFAULTS)
+    merged.update(value)
+    if not isinstance(merged["enabled"], bool):
+        raise ValueError("tap_options.enabled must be a bool")
+    if (not isinstance(merged["renderer"], str)
+            or not merged["renderer"].strip()
+            or "/" in merged["renderer"]):
+        raise ValueError("tap_options.renderer must be a plain view name")
+    merged["renderer"] = merged["renderer"].strip()
+    if not isinstance(merged.get("params"), dict):
+        raise ValueError("tap_options.params must be an object")
+    merged["params"] = dict(merged["params"])
+    return merged
 
 
 def normalize_confidence_feedback(value):
@@ -866,6 +927,8 @@ class TouchService:
         self.client = client or DisplaydClient(config["endpoint"])
         self.confidence = normalize_confidence_feedback(
             config.get("confidence_feedback"))
+        self.tap_options = normalize_tap_options(
+            config.get("tap_options"))
         self.parser = EvdevParser()
         self.taps = TapDetector(
             tap_max_seconds=config.get("tap_max_seconds", 0.5),
@@ -948,16 +1011,34 @@ class TouchService:
                         exc)
             return {"action": "tap_dismiss", "error": str(exc)}
 
+    @staticmethod
+    def _dismissal_consumed(dismiss_summary):
+        """True when the reload dismissal actually dismissed something.
+
+        The daemon reports {"dismissed": True} only when a reload
+        transient was showing; anything else (no-op False, dry-run,
+        transport error, legacy client without the method) leaves the tap
+        unconsumed for the region/fallback path below."""
+        if not isinstance(dismiss_summary, dict):
+            return False
+        response = dismiss_summary.get("response")
+        return (isinstance(response, dict)
+                and response.get("dismissed") is True)
+
     def handle_frame(self, touch_events, dry_run=False):
         """Process one SYN_REPORT frame's TouchEvents. Returns the dispatch
-        summary for a tap that hit a region, else None.
+        summary for a tap that hit a region -- or for a dead-zone tap when
+        the tap-anywhere fallback (tap_options) is enabled -- else None.
 
         Every valid tap dismisses an active reload confirmation first
         (POST /touch/tap, best-effort), then hit-tests the configured
         regions as before -- so center/unmatched taps still dismiss reload
-        while leaving the region actions unchanged. Gestures the tap
-        detector rejects (swipes, long presses, debounced echoes) never
-        dismiss anything.
+        while leaving the region actions unchanged. A dismissal that
+        actually clears a reload transient CONSUMES the tap for the
+        tap-anywhere fallback only: region hits still dispatch after a
+        dismissal, exactly as before, but a dead-zone tap that dismissed
+        reload never also navigates to options. Gestures the tap detector rejects
+        (swipes, long presses, debounced echoes) never dismiss anything.
 
         When confidence_feedback is enabled, every *resolved* tap -- region
         hit and dead-zone miss alike -- is reported to the confidence feed
@@ -972,18 +1053,69 @@ class TouchService:
             tap = self.taps.feed(event, timestamp=now)
             if tap is None:
                 continue
-            self.dismiss_reload(dry_run=dry_run)
+            dismissal = self.dismiss_reload(dry_run=dry_run)
             region_id = hit_test(tap[0], tap[1],
                                  self.config.get("regions") or [])
             if region_id is None:
+                if self._dismissal_consumed(dismissal):
+                    # Reload-dismiss gesture won: the panel is already on
+                    # its normal return path, so the unconsumed-tap
+                    # fallback stays out -- the tap was consumed. (Region
+                    # hits below still dispatch after a dismissal, exactly
+                    # as before: only the new navigation is gated here.)
+                    LOG.info("tap at %d,%d dismissed reload transient",
+                             tap[0], tap[1])
+                    self.send_confidence(
+                        self.confidence_payload(
+                            tap, None, "tap_dismiss",
+                            result="reload-dismissed"),
+                        dry_run=dry_run)
+                    return dismissal
                 LOG.info("tap at %d,%d hit no region", tap[0], tap[1])
-                # Dead-zone tap: no ordinary action, but the confidence
-                # display still learns about it.
-                self.send_confidence(
-                    self.confidence_payload(tap, None, None,
-                                            result="dead-zone"),
-                    dry_run=dry_run)
-                continue
+                # Dead-zone tap: region hits always win (existing
+                # gestures keep working); the unconsumed tap falls
+                # through to the options view -- the tap-anywhere
+                # fallback. Action first, feedback second, exactly like
+                # a region hit: the options dispatch goes out, then the
+                # confidence display learns about it (as a dead-zone tap
+                # routed to the options action). Returns the options
+                # dispatch summary when the fallback fires, else None
+                # (fallback disabled).
+                if not self.tap_options.get("enabled"):
+                    self.send_confidence(
+                        self.confidence_payload(tap, None, None,
+                                                result="dead-zone"),
+                        dry_run=dry_run)
+                    continue
+                action = {"name": "options",
+                          "renderer": self.tap_options["renderer"],
+                          "params": self.tap_options["params"]}
+                LOG.info("tap at %d,%d -> options view %r",
+                         tap[0], tap[1],
+                         self.tap_options["renderer"])
+                try:
+                    summary = self.client.dispatch(
+                        action, dry_run=dry_run)
+                    err = (summary.get("error")
+                           if isinstance(summary, dict) else None)
+                    self.send_confidence(
+                        self.confidence_payload(
+                            tap, None, action.get("name"),
+                            result=("dispatch-error" if err
+                                    else "dead-zone"),
+                            error=err),
+                        dry_run=dry_run)
+                    return summary
+                except Exception as exc:  # keep serving touches
+                    LOG.warning("options fallback failed: %s", exc)
+                    summary = {"action": "options",
+                               "error": str(exc)}
+                    self.send_confidence(
+                        self.confidence_payload(
+                            tap, None, action.get("name"),
+                            result="dispatch-error", error=str(exc)),
+                        dry_run=dry_run)
+                    return summary
             region = next(r for r in self.config["regions"]
                           if r["id"] == region_id)
             LOG.info("tap at %d,%d -> region %r -> action %r",
