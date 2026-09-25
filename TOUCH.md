@@ -258,6 +258,11 @@ In-grid flash (tapped cell inverts on the next frame, visible in
 pointed at renderer `retro_grid`, input `tap` -- already set in the
 example. Feed a tap by hand with `curl -X POST
 http://100.81.88.113:8980/feed/retro_grid/tap -d '{"cell": 5}'`.
+When merging the 12 cells with pre-existing regions (e.g. the playlist-next
+and screen-on thirds), list the retro cells FIRST: `hit_test()` gives
+earlier entries every overlap, and the full-height thirds otherwise shadow
+the grid (they stay reachable in margins/gutters). Validate with
+`touch.load_config()` before restarting the service.
 
 ## Tap anywhere: unconsumed taps route to options
 
