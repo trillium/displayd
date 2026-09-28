@@ -56,6 +56,12 @@
       "action": {"name": "macbook_mouse"}
     },
     {
+      "id": "talon-focus",
+      "_comment": "tap an app row while the talon_apps list view shows to focus it (view-gated: refused otherwise); region covers the list area, the tap point picks the row daemon-side",
+      "rect": [48, 250, 1824, 730],
+      "action": {"name": "talon_focus"}
+    },
+    {
       "id": "reload-confirm",
       "_comment": "tap anywhere while the RELOADED view shows to confirm it (view-gated: no-op otherwise); last so narrower regions win their own taps first (hit_test takes the first match)",
       "rect": [0, 0, 1920, 1080],

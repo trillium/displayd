@@ -32,7 +32,7 @@ Quick start (foreground smoke test)::
   fail closed. See "Named-action allowlist + caller rule" below.
 - The action model is a closed allowlist (today: `playlist_next/pause/resume`,
   `screen_on/off`, `clear`, `show`, `options`, `select_view`, `notify`,
-  `feedback`, `reload_confirm`). There is no generic
+  `feedback`, `reload_confirm`, `talon_focus`). There is no generic
   "POST any path" or shell action, so a bad config cannot become command
   execution. No credentials live in source control; there are none to
   configure.
@@ -92,6 +92,15 @@ fixed-shape panel rating -- `{"name": "feedback", "view": "clock",
 optional `categories` list) to `POST /feedback`. The `agent` field is pinned
 to `"touch"` so a tap cannot spoof authorship, and free-text notes/params
 stay out per the residue rule above.
+
+Tap-positioned actions (`talon_focus`, and the in-flight `macbook_mouse`
+sharing the same plumbing): the region carries no coordinates -- the tap
+point is stamped at dispatch and validated twice (touch refuses
+malformed/off-panel points, never clamping; the daemon re-validates and
+gates on the right view showing plus a fresh feed). `talon_focus` posts
+only the panel pixels to `POST /talon/focus`; the daemon maps the point
+to a feed-listed app name, so a tap can only ever select a listed app
+and the action can never become a generic run-anything path.
 
 The second is `reload_confirm`: a tap confirms the showing reload view --
 `{"name": "reload_confirm"}` posts the pinned body `{"via": "tap"}`

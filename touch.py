@@ -205,7 +205,20 @@ ACTION_TABLE = {
         "method": "POST", "path": "/macbook/mouse",
         "params": ("x", "y"),
     },
+    "talon_focus": {
+        "effect": "focus the tapped app row (view-gated: refused "
+                    "unless the talon_apps list view is showing)",
+        "method": "POST", "path": "/talon/focus",
+        "params": ("x", "y"),
+    },
 }
+
+# Actions positioned by the tap itself: the region names the action, the
+# tap point positions it. Coordinates are stamped at dispatch (never
+# stored in config) and validated twice -- here and daemon-side, where
+# the point maps to a feed-listed app (talon_focus) or a Quartz point
+# (macbook_mouse). Both names share the _resolve branch below.
+COORD_ACTIONS = ("talon_focus", "macbook_mouse")
 
 # Backwards-compatible name list (was the whole allowlist before the
 # guard-shaped table above). New code should read ACTION_TABLE.
@@ -566,38 +579,35 @@ def _resolve(action, panel=None, allow_missing_coords=False):
             if key in action:
                 body[key] = action[key]
         return ("POST", "/notify", body), None
-    if name == "macbook_mouse":
-        # Panel-tap cursor move: {"name": "macbook_mouse"} on a
-        # region posts the TAP's panel pixels to POST /macbook/mouse,
-        # where the daemon maps them through the drawn map geometry
-        # and queues one Quartz point for the Mac-side poller. The
-        # coordinates are injected at dispatch (TouchService.handle_frame
-        # stamps the tap in), never stored in config -- so a config
-        # entry carries no x/y and load_config validates it with
-        # allow_missing_coords, while dispatch always requires them.
+    if name in COORD_ACTIONS:
+        # Tap-positioned action: the region carries no x/y (stamped at
+        # dispatch from the real tap); load_config validates the shape
+        # with allow_missing_coords, dispatch always requires the point.
         # Out-of-range or malformed points are REFUSED, never clamped:
-        # a clamp would silently land the cursor somewhere plausible
-        # but wrong. The daemon re-validates (authoritative) and
-        # additionally gates on the macbook view showing plus a fresh
-        # feed, so a stale tap can never mis-move the cursor.
+        # a clamp would silently focus somewhere plausible but wrong.
+        # The daemon re-validates (authoritative) and additionally
+        # gates on the list view showing plus a fresh feed, so a stale
+        # tap can never mis-focus an app.
+        spec = ACTION_TABLE[name]
         x, y = action.get("x"), action.get("y")
         if x is None or y is None:
             if allow_missing_coords:
-                return ("POST", "/macbook/mouse", {}), None
-            return None, "macbook_mouse action needs tap coordinates"
+                return (spec["method"], spec["path"], {}), None
+            return None, ("%s action needs tap coordinates" % name)
         for value in (x, y):
             if isinstance(value, bool) or not isinstance(value, int):
-                return None, ("macbook_mouse coordinates must be "
-                               "integers, got %r,%r" % (x, y))
+                return None, ("%s coordinates must be integers, "
+                               "got %r,%r" % (name, x, y))
         if panel is not None:
             width, height = panel
             if not (0 <= x < width and 0 <= y < height):
-                return None, ("macbook_mouse coordinates off-panel: "
-                               "%r,%r for %dx%d" % (x, y, width, height))
+                return None, ("%s coordinates off-panel: "
+                               "%r,%r for %dx%d" % (name, x, y,
+                                                     width, height))
         elif x < 0 or y < 0:
-            return None, ("macbook_mouse coordinates must be "
-                           "non-negative, got %r,%r" % (x, y))
-        return ("POST", "/macbook/mouse", {"x": x, "y": y}), None
+            return None, ("%s coordinates must be non-negative, "
+                           "got %r,%r" % (name, x, y))
+        return (spec["method"], spec["path"], {"x": x, "y": y}), None
     if name == "feedback":
         view = action.get("view")
         if not view or not isinstance(view, str):
@@ -732,7 +742,7 @@ class DisplaydClient:
         exception, no byte on the wire -- so a bad config can neither
         crash the service loop nor reach an unexpected caller. `panel`
         is the (width, height) pair bounding coordinate actions (the
-        macbook_mouse tap point); other actions ignore it."""
+        tap point for the coordinate actions); other actions ignore it."""
         name = action.get("name") if isinstance(action, dict) else None
         resolved = resolve_action(action, panel=panel)
         if resolved is None:
@@ -872,9 +882,10 @@ def load_config(path=None):
         if (not isinstance(rect, (list, tuple)) or len(rect) != 4
                 or any(not isinstance(v, (int, float)) for v in rect)):
             raise ValueError("region %r needs rect [x, y, w, h]" % (rid,))
-        # Config-time shape check: coordinate actions (macbook_mouse)
-        # carry no x/y yet -- the tap supplies them at dispatch -- so
-        # missing coordinates are allowed here and required at dispatch.
+        # Config-time shape check: coordinate actions (macbook_mouse,
+        # talon_focus) carry no x/y yet -- the tap supplies them at
+        # dispatch -- so missing coordinates are allowed here and
+        # required at dispatch.
         action_request(region.get("action") or {},
                        allow_missing_coords=True)  # fail fast on bad actions
     cfg["confidence_feedback"] = normalize_confidence_feedback(
@@ -1237,7 +1248,7 @@ class TouchService:
                           if r["id"] == region_id)
             action = region["action"]
             if isinstance(action, dict) \
-                    and action.get("name") == "macbook_mouse":
+                    and action.get("name") in COORD_ACTIONS:
                 # Tap-supplied coordinates: the region names the action,
                 # the tap positions it. Stamped here so _resolve (and the
                 # daemon after it) validates the real point; an invalid

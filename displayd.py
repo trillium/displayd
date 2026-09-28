@@ -103,6 +103,10 @@ try:
     macbook_map_module = _load_shared_helper("macbook_map")
 except Exception:
     macbook_map_module = None
+try:
+    talon_apps_module = _load_shared_helper("talon_apps")
+except Exception:
+    talon_apps_module = None
 VT = os.environ.get("DISPLAYD_VT", "/dev/tty1")
 POLICY_FILE = os.environ.get(
     "DISPLAYD_POLICY",
@@ -2136,6 +2140,103 @@ class DisplayDaemon:
             return None
         return pending
 
+    # ---- Talon app-focus slot ------------------------------------------
+    # Panel tap -> Mac focus, same shape as the macbook-mouse slot
+    # (PR #10): POST /talon/focus queues ONE TTL command carrying a
+    # panel point; the Mac-side poller (bridges/talon_apps.py) fetches it
+    # via GET /talon/focus?since= and hands the app name to Talon. The
+    # queued command names the app ONLY from the latest feed -- the HTTP
+    # body carries coordinates, never a name -- so a tap can only ever
+    # select a listed app, never an arbitrary target. Failures refuse,
+    # never half-fire; stale commands TTL-expire instead of firing late.
+    FOCUS_TTL = 10.0  # pending commands older than this never run
+    FOCUS_FRESH = 5.0  # talon_apps feed must be this fresh to map against
+
+    def _talon_apps_state(self):
+        """Latest talon_apps feed state, or None when absent/stale."""
+        try:
+            values = self.feeds.get("talon_apps", "state")
+        except Exception:
+            return None
+        state = values[-1] if values else None
+        if not isinstance(state, dict):
+            return None
+        try:
+            age = time.time() - float(state.get("ts", 0))
+        except (TypeError, ValueError):
+            return None
+        if age < 0 or age > self.FOCUS_FRESH:
+            return None
+        return state
+
+    def request_focus_move(self, px, py):
+        """Queue a focus change for panel pixel (px, py).
+
+        Returns {"ok": True, "command": {...}} on success, or
+        {"ok": False, "reason": ...} on any refusal (wrong view,
+        stale feed, tap outside the app rows). Raises ValueError
+        only for malformed coordinates (non-int or off-panel)."""
+        for value in (px, py):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(
+                    "talon focus coordinates must be integers")
+        width, height = self.screen.W, self.screen.H
+        if not (0 <= px < width and 0 <= py < height):
+            raise ValueError(
+                "talon focus coordinates off-panel: %r,%r "
+                "for %dx%d" % (px, py, width, height))
+        if self.current != "talon_apps":
+            return {"ok": False,
+                    "reason": "talon_apps view not showing "
+                    "(showing %r)" % (self.current,)}
+        if talon_apps_module is None:
+            return {"ok": False,
+                    "reason": "app-list geometry unavailable"}
+        state = self._talon_apps_state()
+        if state is None:
+            return {"ok": False,
+                    "reason": "no fresh talon_apps feed "
+                    "(poller quiet >%ds?)" % (self.FOCUS_FRESH,)}
+        apps = state.get("apps")
+        if not isinstance(apps, list) or not apps:
+            return {"ok": False, "reason": "no running apps in feed"}
+        index = talon_apps_module.hit(px, py, width, height, len(apps))
+        if index is None:
+            return {"ok": False,
+                    "reason": "tap outside the app rows"}
+        name = talon_apps_module.clean(apps[index])
+        if not name:
+            return {"ok": False,
+                    "reason": "tap outside the app rows"}
+        command = {"app": name, "index": index, "ts": time.time()}
+        with self.lock:
+            self.focus_seq = getattr(self, "focus_seq", 0) + 1
+            command["id"] = self.focus_seq
+            self.focus_pending = command
+        self.policy.note_api()
+        return {"ok": True, "command": dict(command)}
+
+    def take_focus_move(self, since=None):
+        """Pending focus command newer than `since`, else None.
+
+        Read-only: the poller tracks the last ts it acted on, so a
+        retried fetch never double-fires and a crashed-then-restarted
+        poller skips TTL-expired commands instead of replaying them."""
+        try:
+            since = float(since) if since is not None else 0.0
+        except (TypeError, ValueError):
+            since = 0.0
+        with self.lock:
+            pending = getattr(self, "focus_pending", None)
+            pending = dict(pending) if pending else None
+        if pending is None:
+            return None
+        if pending["ts"] <= since:
+            return None
+        if time.time() - pending["ts"] > self.FOCUS_TTL:
+            return None
+        return pending
+
     # ---- policy configuration surface ------------------------------------
 
     def get_policy(self):
@@ -2508,6 +2609,7 @@ CONTROL_PAGE = """<!DOCTYPE html>
     <li><code>feedback</code> <span class="eff">&mdash; record a fixed-shape tap-to-rate feedback rating (POST /feedback)</span></li>
     <li><code>reload_confirm</code> <span class="eff">&mdash; confirm the showing reload view via tap (POST /reload/confirm)</span></li>
     <li><code>macbook_mouse</code> <span class="eff">&mdash; move the MacBook cursor to the tapped map point (POST /macbook/mouse)</span></li>
+    <li><code>talon_focus</code> <span class="eff">&mdash; focus the tapped app row (POST /talon/focus)</span></li>
   </ul>
   <div class="meta">What a tap on the panel can do (touch bridge allowlist).</div>
 </div>
@@ -3077,6 +3179,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, DAEMON.feeds.status(parts[2], parts[3]))
             except KeyError as exc:
                 return self._send(404, {"error": str(exc)})
+        if path == "/talon/focus":
+            # Mac-side poller fetch: the one pending focus command
+            # newer than ?since=, else no command. Read-only; the
+            # poller tracks what it already acted on.
+            query = parse_qs(urlsplit(self.path).query)
+            raw = query.get("since", [None])[0]
+            return self._send(200, {"command":
+                                    DAEMON.take_focus_move(raw)})
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -3144,6 +3254,21 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._send(400, {"ok": False,
                                          "error": str(exc)})
+            if result.get("ok"):
+                return self._send(200, result)
+            return self._send(409, result)
+        if path == "/talon/focus":
+            # Panel tap on an app row: queue ONE focus command for the
+            # Mac-side poller. View-gated on talon_apps showing plus a
+            # fresh feed; a miss is a 409 refusal, never a view change.
+            # The body carries panel pixels only -- the app name comes
+            # from the feed, so a tap can only select a listed app.
+            body = self._body()
+            try:
+                result = DAEMON.request_focus_move(body.get("x"),
+                                                   body.get("y"))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
             if result.get("ok"):
                 return self._send(200, result)
             return self._send(409, result)
