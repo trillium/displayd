@@ -105,7 +105,7 @@ publishes an unauthenticated control surface to everything that can route to it.
 | POST | `/show` | `{"renderer":"text","params":{...}}` | switch content |
 | POST | `/feed/<renderer>/<input>` | any JSON payload | push validated data into a view |
 | POST | `/notify` | `{"title":...}`, `body`?, `severity`? (`info`/`warn`/`critical`), `duration`? | transient notice, then automatic return |
-| POST | `/reload` | `{"sha":...}` | reload confirmation (RELOADED + full SHA + scan-confirm QR), stays until a scan or tap confirms it; answers `relay_url` when the phone can reach it |
+| POST | `/reload` | `{"sha":...}`, `highlights`? | reload confirmation (RELOADED + full SHA + scan-confirm QR, plus an optional bounded commit-message summary), stays until a scan or tap confirms it; answers `relay_url` when the phone can reach it |
 | GET | `/r/<token>` | – | one-time scan relay: 302 to the commit page + panel confirm |
 | POST | `/reload/confirm` | `{"via":"tap"}` | tap/scan confirm path for the reload view only (409 when none showing) |
 | POST | `/touch/tap` | – | touchscreen tap dismissal for the reload view (no-op otherwise) |
@@ -198,7 +198,7 @@ evidence for later human-guided work, not a control loop.
 | `clock` | no | `format`, `color`, `background` |
 | `life` | no | `cell`, `density`, `speed` |
 | `notice` | yes | `title` (required), `body`, `severity` (`info`/`warn`/`critical`), `color`, `background` |
-| `reload` | yes | `sha` (required, full 40-char deployed commit SHA; QR encodes its commit page) |
+| `reload` | yes | `sha` (required, full 40-char deployed commit SHA; QR encodes its commit page), `highlights` (optional bounded commit-message summary, drawn as text only, never in the QR) |
 | `chat` | no | `title`, `lines` (default 7), `background` — inputs: `message`, `delete` |
 | `stream` | no | `url` (snapshot JPEG to poll), `fps` (0.5–5, default 2), `fit` (cover/contain/stretch), `background`, `label` — inputs: `frame` (`{data}` base64 or `{url}`) |
 | `retro_grid` | no | `boxes` (per-cell `label`/`text` or `image` file-or-URL + `color`/`text_color`/`text_size`), `columns`/`rows` (default 4/3), `gutter`, `border`, `background`, `flash_seconds` — input: `tap` (`{cell,label,id,region,x,y}`); tap wiring in `touch-retro-grid.json.example`, see TOUCH.md "Retro grid wiring" |
@@ -395,6 +395,18 @@ answers `relay_reachable: false` with a plain `relay_note`, the QR falls
 back to the commit page, the hint says tap-only, and no dead `/r/` URL
 exists. No auth changes, no wider binds: reachability comes from the bind
 the deployment already has.
+
+`POST /reload` also takes an optional `highlights` field: a bounded
+summary of what was actually loaded, drawn large beside the QR while the
+SHA stays prominent. "Highlights" is structural, never generated: the
+commit subject line plus up to three body lines (bullet lines win,
+trailer lines never count), capped at 5 lines / 80 chars per line / 280
+total with control characters stripped (see
+`renderers/reload_highlights.py`). The host cannot read git history, so
+`deploy.sh` extracts the message Mac-side -- where git works -- and
+forwards it; the daemon re-sanitises it, the renderer draws it as plain
+text only (never into the QR), and a missing/malformed field renders the
+classic SHA+QR+hint view unchanged.
 
 Example -- confirming the currently deployed lnx-server commit:
 

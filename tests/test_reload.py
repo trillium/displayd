@@ -1031,5 +1031,173 @@ class HttpRelayTestCase(HttpReloadTestCase):
         self.assertIn("tap-only", result["relay_note"])
 
 
+class TestReloadHighlightsUnit(unittest.TestCase):
+    """sanitize()/extract(): structural, bounded, never a model."""
+
+    def test_sanitize_rejects_non_strings(self):
+        from renderers import reload_highlights as hl
+        for bad in (None, 25, ["x"], {"text": "x"}, b"bytes"):
+            self.assertIsNone(hl.sanitize(bad), "input %r" % (bad,))
+
+    def test_sanitize_rejects_blank(self):
+        from renderers import reload_highlights as hl
+        for bad in ("", "   ", "\n\n  \n", "\x00\x01\x1f"):
+            self.assertIsNone(hl.sanitize(bad), "input %r" % (bad,))
+
+    def test_sanitize_strips_control_characters(self):
+        from renderers import reload_highlights as hl
+        self.assertEqual(hl.sanitize("a\x00b\x1fc\x7fd"), "abcd")
+        self.assertEqual(hl.sanitize("tab\tseparated"), "tab separated")
+
+    def test_sanitize_bounds_are_hard(self):
+        from renderers import reload_highlights as hl
+        out = hl.sanitize("\n".join("line%d" % i for i in range(50)))
+        self.assertLessEqual(len(out.split("\n")), hl.MAX_LINES)
+        out = hl.sanitize("x" * 500)
+        self.assertLessEqual(len(out), hl.MAX_LINE)
+        out = hl.sanitize("\n".join("y" * 80 for _ in range(5)))
+        self.assertLessEqual(len(out), hl.MAX_TOTAL)
+        self.assertIsNotNone(out)
+
+    def test_sanitize_is_idempotent(self):
+        from renderers import reload_highlights as hl
+        once = hl.sanitize(" Subject \n\n- one\n- two\n")
+        self.assertEqual(hl.sanitize(once), once)
+
+    def test_extract_subject_guaranteed(self):
+        from renderers import reload_highlights as hl
+        self.assertEqual(hl.extract("Just a subject"), "Just a subject")
+        self.assertEqual(hl.extract("  Padded subject  \n"),
+                         "Padded subject")
+        self.assertEqual(hl.extract(""), "")
+        self.assertEqual(hl.extract(None), "")
+
+    def test_extract_prefers_bullets_skips_trailers(self):
+        from renderers import reload_highlights as hl
+        msg = ("Ship the thing\n\nSome prose paragraph here.\n\n"
+               "- first thing\n- second thing\n\n"
+               "Signed-off-by: X <x@y>\nCo-authored-by: Y <y@z>\n")
+        out = hl.extract(msg)
+        self.assertTrue(out.startswith("Ship the thing"), out)
+        self.assertIn("first thing", out)
+        self.assertIn("second thing", out)
+        self.assertNotIn("Signed-off-by", out)
+        self.assertNotIn("Co-authored-by", out)
+
+    def test_extract_falls_back_to_prose(self):
+        from renderers import reload_highlights as hl
+        out = hl.extract("Subject\n\nFirst body sentence.\nSecond line.\n")
+        self.assertTrue(out.startswith("Subject"), out)
+        self.assertIn("First body sentence.", out)
+
+    def test_extract_output_satisfies_sanitize(self):
+        from renderers import reload_highlights as hl
+        msg = "S\n\n" + "\n".join("- body line %d" % i
+                                      for i in range(30))
+        out = hl.extract(msg)
+        self.assertEqual(hl.sanitize(out), out)
+
+
+class TestReloadHighlightsRender(unittest.TestCase):
+    def test_highlights_drawn_beside_the_code(self):
+        drawn = drawn_strings({"sha": DEPLOYED_SHA,
+                               "highlights": "Ship the thing\nfirst thing"})
+        self.assertTrue(any("Ship the thing" in s for s in drawn), drawn)
+        self.assertTrue(any("first thing" in s for s in drawn), drawn)
+        self.assertTrue(any("RELOADED" in s for s in drawn), drawn)
+        self.assertTrue(any(DEPLOYED_SHA in s for s in drawn), drawn)
+
+    def test_malformed_highlights_renders_classic_view(self):
+        classic = run_reload({"sha": DEPLOYED_SHA})
+        for bad in (None, "", "   ", 25, ["x"], "\x00\x01"):
+            img = run_reload({"sha": DEPLOYED_SHA, "highlights": bad})
+            self.assertEqual(img.tobytes(), classic.tobytes(),
+                             "highlights %r must degrade to the classic "
+                             "frame" % (bad,))
+
+    def test_highlights_frame_is_deterministic(self):
+        first = run_reload({"sha": DEPLOYED_SHA,
+                            "highlights": "Ship it\n- one"})
+        same = run_reload({"sha": DEPLOYED_SHA,
+                           "highlights": "Ship it\n- one"})
+        other = run_reload({"sha": DEPLOYED_SHA,
+                            "highlights": "Ship it\n- two"})
+        self.assertEqual(first.tobytes(), same.tobytes())
+        self.assertNotEqual(first.tobytes(), other.tobytes())
+
+    @unittest.skipUnless(decoder_available(),
+                         "no independent QR decoder installed (cv2/pyzbar)")
+    def test_qr_unchanged_by_highlights(self):
+        img = run_reload({"sha": DEPLOYED_SHA,
+                          "highlights": "https://evil.example/x\nShip it"})
+        self.assertEqual(decode_png(to_png(img)), COMMIT_URL)
+
+
+class TestReloadHighlightsDaemon(ReloadDaemonTestCase):
+    def test_reload_carries_sanitised_highlights(self):
+        daemon = self.make_daemon()
+        daemon.show("solid", {"color": "blue"})
+        with bind_env("127.0.0.1"):
+            result = daemon.reload(DEPLOYED_SHA,
+                                   highlights="  Ship it\n\n- one\x00  ")
+        self.assertEqual(result["params"],
+                         {"sha": DEPLOYED_SHA,
+                          "highlights": "Ship it\n- one"})
+        self.assertEqual(daemon.current, "reload")
+        self.assertIsNone(result["return_in"])
+
+    def test_malformed_highlights_degrades_to_classic_params(self):
+        daemon = self.make_daemon()
+        daemon.show("solid", {"color": "blue"})
+        with bind_env("127.0.0.1"):
+            for bad in (None, "", "   ", 25, ["x"], "\x00"):
+                result = daemon.reload(DEPLOYED_SHA, highlights=bad)
+                self.assertEqual(result["params"], {"sha": DEPLOYED_SHA},
+                                 "highlights %r" % (bad,))
+
+    def test_overlong_highlights_truncated(self):
+        from renderers import reload_highlights as hl
+        daemon = self.make_daemon()
+        daemon.show("solid", {"color": "blue"})
+        with bind_env("127.0.0.1"):
+            result = daemon.reload(DEPLOYED_SHA,
+                                   highlights="\n".join(
+                                       "line%d" % i for i in range(50)))
+        got = result["params"]["highlights"]
+        self.assertLessEqual(len(got.split("\n")), hl.MAX_LINES)
+        self.assertLessEqual(len(got), hl.MAX_TOTAL)
+
+
+class TestReloadHighlightsHttp(HttpReloadTestCase):
+    def test_endpoint_accepts_and_echoes_highlights(self):
+        code, _ = self.call("POST", "/show",
+                            {"renderer": "clock", "params": {}})
+        self.assertEqual(code, 200)
+        code, result = self.call("POST", "/reload",
+                                 {"sha": DEPLOYED_SHA,
+                                  "highlights": "Ship it\n- one"})
+        self.assertEqual(code, 200)
+        self.assertEqual(result["params"],
+                         {"sha": DEPLOYED_SHA,
+                          "highlights": "Ship it\n- one"})
+        self.assertTrue(self._wait_for_frame(), "reload drew no frame")
+        code, snap = self.call("GET", "/snapshot")
+        self.assertEqual(code, 200)
+        if decoder_available():
+            self.assertEqual(decode_png(snap), COMMIT_URL)
+
+    def test_endpoint_degrades_gracefully_without_highlights(self):
+        code, _ = self.call("POST", "/show",
+                            {"renderer": "clock", "params": {}})
+        self.assertEqual(code, 200)
+        for body in ({"sha": DEPLOYED_SHA},
+                     {"sha": DEPLOYED_SHA, "highlights": ""},
+                     {"sha": DEPLOYED_SHA, "highlights": 25}):
+            code, result = self.call("POST", "/reload", body)
+            self.assertEqual(code, 200, "body %r" % (body,))
+            self.assertEqual(result["params"], {"sha": DEPLOYED_SHA},
+                             "body %r" % (body,))
+
+
 if __name__ == "__main__":
     unittest.main()

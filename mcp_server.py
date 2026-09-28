@@ -189,12 +189,15 @@ def static_tools():
                           "required": ["title"]}},
         {"name": "reload",
          "description": ("Transient reload confirmation (RELOADED + SHA + "
-                           "scan-confirm QR), then auto-return. Answers "
+                           "scan-confirm QR, plus optional commit-message "
+                           "highlights), then auto-return. Answers "
                            "relay_url when the scanning phone can reach it."),
          "inputSchema": {"type": "object",
                           "properties": {
                               "sha": {"type": "string",
                                         "description": "full 40-character deployed commit SHA"},
+                              "highlights": {"type": "string",
+                                               "description": "bounded commit-message summary; sanitised server-side, drawn as text only"},
                               "duration": {"type": "number"}},
                           "required": ["sha"]}},
         {"name": "reload_confirm",
@@ -380,8 +383,9 @@ def call_tool(name, args):
             return ok_text(api_post("/notify", body))
         if name == "reload":
             body = {"sha": args.get("sha")}
-            if args.get("duration") is not None:
-                body["duration"] = args["duration"]
+            for key in ("highlights", "duration"):
+                if args.get(key) is not None:
+                    body[key] = args[key]
             return ok_text(api_post("/reload", body))
         if name == "reload_confirm":
             return ok_text(api_post("/reload/confirm", {"via": "tap"}))

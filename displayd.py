@@ -18,9 +18,12 @@ API
   DELETE /layout                     clear the layout (blank screen)
   POST /feed/<renderer>/<input>  push a validated payload into a view
   POST /notify  {"title":...,"body"?,"severity"?,"duration"?} transient notice
-  POST /reload  {"sha":...} reload confirmation (RELOADED + SHA + QR),
-               stays until confirmed: a scan of the relay QR or a tap
-               returns early (POST /reload/confirm, POST /touch/tap)
+  POST /reload  {"sha":..., "highlights"?} reload confirmation
+               (RELOADED + SHA + QR, plus an optional bounded
+               commit-message summary drawn as text only, never in
+               the QR), stays until confirmed: a scan of the relay QR
+               or a tap returns early (POST /reload/confirm,
+               POST /touch/tap)
   GET  /r/<token>  one-time scan relay: 302 to the commit page + confirm
   POST /reload/confirm  {"via"?} tap/scan confirm path for the reload
                view only (409 when none showing)
@@ -56,6 +59,7 @@ from PIL import Image
 import playlist as playlist_module
 import policy as policy_module
 import feedback as feedback_module
+from renderers import reload_highlights as reload_highlights_module
 
 FB = "/dev/fb0"
 FB_SYS = "/sys/class/graphics/fb0/"
@@ -1666,7 +1670,7 @@ class DisplayDaemon:
             out["superseded"] = superseded
         return out
 
-    def reload(self, sha=None, duration=None):
+    def reload(self, sha=None, duration=None, highlights=None):
         """Show the reload confirmation until a tap dismisses it.
 
         `sha` must be the full 40-character hexadecimal deployed commit
@@ -1692,7 +1696,12 @@ class DisplayDaemon:
         reload shares notice's top priority level so the newest of the
         two wins. A legacy `duration` field is still validated when
         supplied but never armed: it is accepted and ignored, and the
-        response reports "return_in": None (indefinite)."""
+        response reports "return_in": None (indefinite). `highlights`
+        is an optional bounded commit-message summary (subject + a few
+        body lines, extracted Mac-side by deploy.sh where git works);
+        it is sanitised and capped here, drawn as plain text only, and a
+        missing/malformed value renders the classic view unchanged. It
+        never reaches the QR payload."""
         if sha is None or (isinstance(sha, str) and not sha.strip()):
             raise ValueError("sha is required: post the full 40-character "
                              "deployed commit SHA")
@@ -1717,6 +1726,13 @@ class DisplayDaemon:
                 raise ValueError("duration must be within [%d, %d]"
                                  % (RELOAD_DURATION_MIN, RELOAD_DURATION_MAX))
         params = {"sha": sha}
+        clean_hl = reload_highlights_module.sanitize(highlights)
+        if clean_hl:
+            # Plain text beside the code: bounded, no control
+            # characters, never URL-shaped into the QR (the renderer
+            # enforces the same bounds for /show callers). Absent or
+            # malformed input leaves params exactly as before.
+            params["highlights"] = clean_hl
         commit_url = RELOAD_COMMIT_URL_PREFIX + sha
         entry = self.renderers.get("reload")
         if not entry or "module" not in entry:
@@ -1738,7 +1754,7 @@ class DisplayDaemon:
         base, reachable, reason = relay_base_url()
         if reachable:
             relay_url = base + RELOAD_RELAY_PATH + scan_token
-            params = {"sha": sha, "relay_url": relay_url}
+            params["relay_url"] = relay_url
         else:
             # Tap-only fallback: loopback (or otherwise unreachable) bind
             # means the phone could never fetch a relay URL, so never put
@@ -1749,7 +1765,6 @@ class DisplayDaemon:
                 self.reload_tokens.pop(scan_token, None)
             scan_token = None
             relay_url = None
-            params = {"sha": sha}
         validate_params(params, entry.get("params") or {})
         self.policy.note_api()
         token, superseded = self.policy.begin_transient("reload", None)
@@ -2933,7 +2948,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/reload":
             body = self._body()
             try:
-                result = DAEMON.reload(body.get("sha"), body.get("duration"))
+                result = DAEMON.reload(body.get("sha"), body.get("duration"),
+                                       body.get("highlights"))
             except KeyError as exc:
                 return self._send(404, {"error": str(exc)})
             except ValueError as exc:
