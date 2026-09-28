@@ -63,6 +63,7 @@ from beads_common import (
     _fit,
     _font,
     _load_mirror_file,
+    _wrap,
 )
 
 
@@ -154,6 +155,11 @@ def _draw(screen, title, bg):
     widths = layout.column_widths(
         counts, screen.W - 2 * PAD,
         [layout.FLOORS[key] for key, _, _, _, _ in BUCKETS])
+    # Narrow floored columns cannot take full-size captions: step the
+    # label down and wrap the sub (V1 mockup treatment), so a caption
+    # never silently loses letters the way a bare _fit would cut it.
+    lab_font_narrow = _font(screen, "DejaVuSans-Bold", 32)
+    sub_font_narrow = _font(screen, "DejaVuSans", 26)
     x = float(PAD)
     for (key, glyph, label, color, sub), col_w in zip(BUCKETS, widths):
         text = "%s %d" % (glyph, len(snap[key]))
@@ -170,11 +176,20 @@ def _draw(screen, title, bg):
             except Exception:
                 font = count_font
         draw.text((x, 150), text, font=font or plain, fill=color)
+        narrow = col_w < 300
+        lf = lab_font_narrow if narrow and lab_font_narrow else lab_font
+        sf = sub_font_narrow if narrow and sub_font_narrow else sub_font
         draw.text((x + 6, 310),
-                  _fit(draw, label, lab_font, col_w - 12),
-                  font=lab_font or plain, fill=C_TEXT)
-        draw.text((x + 6, 362), _fit(draw, sub, sub_font, col_w - 12),
-                  font=sub_font or plain, fill=C_DIM)
+                  _fit(draw, label, lf, col_w - 12),
+                  font=lf or plain, fill=C_TEXT)
+        if narrow:
+            for row_i, row in enumerate(
+                    _wrap(draw, sub, sf, col_w - 12, 2)):
+                draw.text((x + 6, 362 + row_i * 34), row,
+                          font=sf or plain, fill=C_DIM)
+        else:
+            draw.text((x + 6, 362), _fit(draw, sub, sf, col_w - 12),
+                      font=sf or plain, fill=C_DIM)
         x += col_w
 
     # Running tally + progress.

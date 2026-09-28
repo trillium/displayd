@@ -6,6 +6,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 
+from renderers import beads
 from renderers import beads_layout as layout
 
 
@@ -77,6 +78,64 @@ class TestColumnWidths(unittest.TestCase):
 
     def test_zero_avail_gives_zeros(self):
         self.assertEqual(layout.column_widths(LIVE, 0), [0.0] * 4)
+
+
+class TestSkewedDraw(unittest.TestCase):
+    def test_narrow_columns_draw_without_error(self):
+        # Live-shaped snapshot: Rolling/Stalled columns hit their floors
+        # and take the narrow-caption branch. Must render, never raise.
+        from PIL import Image
+        import displayd
+        import time as _t
+
+        class FakeScreen:
+            W, H = 1920, 1080
+
+            def __init__(self):
+                self.frames = []
+
+            def new_image(self, background=(0, 0, 0)):
+                return Image.new("RGB", (self.W, self.H), background)
+
+            def present(self, img):
+                self.frames.append(img.copy())
+
+            @classmethod
+            def color(cls, value, default=(255, 255, 255)):
+                return displayd.Screen.color(value, default)
+
+            @staticmethod
+            def font_path(family="DejaVuSans-Bold"):
+                return displayd.Screen.font_path(family)
+
+        def raw(iid, status="open", deps=()):
+            return {"id": iid, "title": "title " + iid,
+                    "status": status, "priority": 2, "labels": [],
+                    "dependencies": [
+                        {"depends_on_id": t, "type": k} for k, t in deps]}
+
+        pairs = ([("task", raw("r%d" % i, "in_progress"))
+                  for i in range(35)]
+                 + [("task", raw("l%d" % i)) for i in range(3221)]
+                 + [("task", raw("s%d" % i, deps=[("blocks", "x%d" % i)]))
+                    for i in range(151)]
+                 + [("task", raw("x%d" % i)) for i in range(151)]
+                 + [("task", raw("p%d" % i, "closed"))
+                    for i in range(3219)])
+        snap = beads._classify(pairs)
+        self.assertEqual(len(snap["rolling"]), 35)
+        with beads._POLL["lock"]:
+            beads._POLL.update(snapshot=snap, updated=_t.time(),
+                               health="warm", error=None, source="test")
+        try:
+            screen = FakeScreen()
+            beads._draw(screen, "BEADS", (8, 8, 12))
+            self.assertTrue(screen.frames)
+            self.assertTrue(any(screen.frames[-1].tobytes()))
+        finally:
+            with beads._POLL["lock"]:
+                beads._POLL.update(snapshot=None, updated=0.0,
+                                   health="cold", error=None, source=None)
 
 
 if __name__ == "__main__":
