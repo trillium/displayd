@@ -51,10 +51,19 @@ names, or an [r, g, b] triple; a malformed colour falls back to the
 deterministic name-derived colour for that store.
 """
 
-import colorsys
-import hashlib
 import json
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import beads_color as _color
+
+# Re-exported for backwards compatibility (colour parsing lives in
+# beads_color.py; the style lookup below is the only consumer).
+NAMED_COLORS = _color.NAMED_COLORS
+parse_color = _color.parse_color
+unknown_color = _color.unknown_color
 
 CONFIG_FILENAME = "beads_stores.json"
 STATE_FILENAME = "beads-stores.json"
@@ -73,55 +82,7 @@ STORE_DEFAULTS = {
     "ideas": {"color": "#DCDC64", "icon": "\u2600"},   # GOLD SUN
 }
 
-NAMED_COLORS = {
-    "red": (255, 90, 90),
-    "green": (80, 220, 120),
-    "blue": (110, 180, 255),
-    "cyan": (80, 220, 220),
-    "magenta": (255, 120, 200),
-    "yellow": (255, 220, 100),
-    "orange": (255, 165, 0),
-    "white": (235, 235, 240),
-    "grey": (140, 140, 150),
-    "gray": (140, 140, 150),
-}
-
 _CACHE = {"key": None, "styles": None, "source": None, "error": None}
-
-
-def parse_color(value, fallback):
-    """Accept '#rgb', '#rrggbb', a few names, or an [r, g, b] triple."""
-    if value is None or value == "":
-        return fallback
-    if isinstance(value, (list, tuple)) and len(value) == 3:
-        try:
-            return tuple(max(0, min(255, int(v))) for v in value)
-        except (TypeError, ValueError):
-            return fallback
-    text = str(value).strip()
-    if text.lower() in NAMED_COLORS:
-        return NAMED_COLORS[text.lower()]
-    digits = text.lstrip("#")
-    if len(digits) == 3:
-        digits = "".join(c * 2 for c in digits)
-    if len(digits) == 6:
-        try:
-            return tuple(int(digits[i:i + 2], 16) for i in (0, 2, 4))
-        except ValueError:
-            return fallback
-    return fallback
-
-
-def unknown_color(name):
-    """Deterministic dark-panel-legible colour for an unconfigured store.
-
-    sha1(name) -> hue, fixed saturation/lightness. Same name always maps
-    to the same colour, in any process, with no config entry needed.
-    """
-    digest = hashlib.sha1(str(name or "?").encode("utf-8")).digest()
-    hue = int.from_bytes(digest[:2], "big") / 65536.0
-    r, g, b = colorsys.hls_to_rgb(hue, 0.65, 0.70)
-    return (int(r * 255), int(g * 255), int(b * 255))
 
 
 def format_tag(issue):
