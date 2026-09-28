@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.displayd.talon-apps-bridge — Talon apps <-> displayd poller.
+
+  Sibling of com.displayd.macos-state-bridge (same poller shape): reads
+  Talon's event-driven apps_state.json on mtime change, POSTs it to the
+  panel feed, and hands pending panel focus commands to Talon through
+  the file protocol (the response wait runs in the bridge process, never
+  on Talon's main thread -- see bridges/talon_apps.py).
+
+  The poller needs no Accessibility grant (plain file + HTTP I/O), but
+  like its sibling it runs here next to Talon, not on lnx-server.
+
+  Install: replace __DISPLAYD_DIR__ with the deployed displayd path
+  (~/displayd after deploy.sh -- never a task worktree), copy to
+  ~/Library/LaunchAgents/, then `launchctl bootstrap gui/$UID <file>`.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.displayd.talon-apps-bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__DISPLAYD_DIR__/bridges/talon_apps.py</string>
+    <string>--displayd</string>
+    <string>http://100.81.88.113:8980</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/trilliumsmith/Library/Logs/talon-apps-bridge.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/trilliumsmith/Library/Logs/talon-apps-bridge.log</string>
+</dict>
+</plist>

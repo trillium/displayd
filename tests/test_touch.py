@@ -1007,7 +1007,7 @@ class GuardShapeTest(unittest.TestCase):
             "playlist_next", "playlist_pause", "playlist_resume",
             "screen_on", "screen_off", "clear", "show", "options",
             "select_view", "notify", "feedback", "reload_confirm",
-            "macbook_mouse",
+            "macbook_mouse", "talon_focus",
         })
         # Every entry classifies by handler effect: a daemon endpoint the
         # tap drives, never just a name.
