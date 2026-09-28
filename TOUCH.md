@@ -366,7 +366,9 @@ Reference wiring (`touch-picker.json.example`, 1920x1080):
   `GET /renderers` set and exits 1 on anything unadvertised. `load_config()`
   validation still runs first, so a malformed config fails before any HTTP.
 - Host procedure (host-local `~/displayd/touch.json` survives redeploys):
-  back the file up, copy the new regions over, `load_config()` + `--check-views`
+  back the file up, copy the new regions over scoped under
+  `view_regions` -> `picker` (global tiles collide with the macbook
+  map sharing that space), `load_config()` + `--check-views`
   against the live panel, restart only the existing `displayd-touch` unit.
   Revert by restoring the backup and restarting the unit again.
 
@@ -506,11 +508,15 @@ command TTL-expires after 10s instead of firing late. The warp is one
 atomic OS call, so a failure lands the full point or nothing.
 
 Reference wiring (1920x1080; rect is display pixels below the 250px
-header -- the map area; list it AFTER narrower regions so they win
-their taps, and note the fullscreen `reload_confirm` entry stays last):
+header -- the map area; scope it under `"view_regions" -> "macbook"`
+so it is live only while the map shows -- a global map region collides
+with the picker tiles sharing that space, and ordering cannot save
+either (see above). The fullscreen `reload_confirm` entry stays global
+last:
 
-    {"id": "mac-map", "rect": [0, 250, 1920, 830],
-     "action": {"name": "macbook_mouse"}}
+    "view_regions": {"macbook": [
+      {"id": "mac-map", "rect": [0, 250, 1920, 830],
+       "action": {"name": "macbook_mouse"}}]}
 
 Host procedure (host-local `~/displayd/touch.json` survives redeploys):
 back the file up, insert the region, validate with
@@ -521,6 +527,62 @@ panel API is tailnet-bound without authentication, so anything that can
 reach it could move the cursor -- same trust boundary as before, now
 driving input as well as display.
 
+
+## Per-view region sets + drawn-vs-live check (/touch/check)
+
+Global regions cannot separate two view-specific areas sharing screen
+space: the picker tile grid `[160,40,1600,860]` and the macbook map area
+`[0,250,1920,830]` overlap almost entirely, and `hit_test()` takes the
+first match -- so ordering alone cannot fix it (map-first breaks picker
+taps, tiles-first breaks map taps), and the daemon's view gate (409
+unless the macbook view shows) cannot rescue a tap the touch side
+already mis-routed: the wrong region consumes it. Hence per-view sets
+(design (a); layouts that never overlap would shrink both UIs and
+re-open the collision with every new tappable view).
+
+Config shape: plain `"regions"` stay global (chrome + gestures: home,
+strips, `reload_confirm` last); `"view_regions": {"<view>": [...]}`
+is live ONLY while that view shows. Candidates for a tap are the
+view's scoped entries FIRST, then global -- a view's own area wins its
+screen space while shared chrome still serves. Ids are unique across
+global and every scoped set. Tiles belong under `picker`, cells under
+`retro_grid`, the map under `macbook` (see the `*.example` files).
+
+The touch service learns the showing view fresh on EVERY tap (`GET
+/state`, 1s timeout): a cached view goes stale across playlist
+rotations, phone-driven shows, and transient returns -- exactly the
+drift this closes. Unknown view (unreachable daemon, blank panel,
+layout mode) means global regions only, never a guess. There is no
+config reload in the input loop (a reload path there risks mid-tap
+partial state): freshness comes from restarting the touch unit.
+
+The running service announces its effective set at startup (`POST
+/touch/announce`, best-effort -- taps serve even when displayd is
+down; re-announce without a restart via `touch.py --announce`). `GET
+/touch/check` compares DRAWN geometry (renderer functions, same code
+that draws; picker tiles use the same live-views derivation) against
+that announced set as a per-view matrix, plus the showing view in
+detail: 200 when it agrees, 409 with exact `missing`/`moved` rects and
+`presence_missing` actions when drifted, 409 `unknown` with no
+heartbeat. Undrawn live ids (strips, confirms) are reported, never
+failed. Missing retro cells on an unscoped grid are `unwired` notes,
+not failures (opt-in arcade); picker tiles, the home badge, and the
+macbook map presence always fail when absent. `deploy.sh` restarts
+`displayd-touch` and requires the check (unknown + no unit warns and
+continues; anything else fails the deploy -- the panel is already
+re-showed, so it never leaves it black).
+
+Coverage: picker tiles + retro cells exact (id+rect+action), home badge
+exact (id+rect; its target is operator choice), macbook map
+presence-only (tap-to-Quartz mapping is computed live per tap and
+cannot go stale), gesture strips / reload_confirm / feedback tiles
+reported-not-asserted, layout mode noted-not-asserted.
+
+Host procedure: back up `touch.json` (`cp touch.json
+backups/touch.json.pre-viewscope-<date>`), scope the view-specific
+regions, validate with `touch.load_config()` + `--check-views`, curl
+`GET /touch/check` (expect ok), restart `displayd-touch`, curl again.
+Revert: restore the backup and restart the unit again.
 
 ## Service supervision (lnx-server)
 

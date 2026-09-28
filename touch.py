@@ -37,6 +37,8 @@ import urllib.request
 import urllib.error
 from urllib.parse import urlsplit
 
+import touch_audit
+
 LOG = logging.getLogger("displayd-touch")
 
 # ---------------------------------------------------------------------------
@@ -660,6 +662,27 @@ def action_request(action, panel=None, allow_missing_coords=False):
     return resolved
 
 
+def post_announce(config, timeout=5.0):
+    """POST the effective region set to displayd (touch heartbeat).
+
+    Returns the daemon's ack dict. Raises RuntimeError on failure: the
+    startup caller treats it best-effort (taps must serve even when
+    displayd is down); --announce surfaces it as exit 2."""
+    payload = touch_audit.announce_payload(config)
+    url = (config.get("endpoint") or DEFAULT_ENDPOINT).rstrip(
+        "/") + "/touch/announce"
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"},
+        method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace")
+                              or "{}")
+    except Exception as exc:
+        raise RuntimeError("POST %s failed: %s" % (url, exc)) from exc
+
+
 def fetch_renderers(base_url, timeout=5.0):
     """GET /renderers view names from a live daemon. Pure HTTP read;
     raises RuntimeError when the daemon is unreachable or answers garbage."""
@@ -684,8 +707,12 @@ def check_views(config, fetch=None):
     `fetch` is injectable (base_url -> [names]) for tests."""
     fetch = fetch or fetch_renderers
     advertised = set(fetch(config["endpoint"]))
+    scoped_views = config.get("view_regions") or {}
     wanted = []
-    for region in config.get("regions") or []:
+    regions = list(config.get("regions") or [])
+    for scoped in scoped_views.values():
+        regions.extend(scoped or [])
+    for region in regions:
         action = region.get("action") or {}
         if (action.get("name") == "select_view"
                 and action.get("view")):
@@ -765,6 +792,19 @@ class DisplaydClient:
         summary["response"] = resp
         return summary
 
+    def state(self, timeout=None):
+        """GET /state -> daemon status dict (raises RuntimeError). The
+        touch service reads only the showing renderer; short timeout so a
+        sick daemon never stalls the tap path."""
+        url = self.base_url.rstrip("/") + "/state"
+        try:
+            with urllib.request.urlopen(
+                    url, timeout=self.timeout if timeout is None
+                    else timeout) as resp:
+                return json.loads(resp.read().decode("utf-8", "replace"))
+        except Exception as exc:
+            raise RuntimeError("GET %s failed: %s" % (url, exc)) from exc
+
     def tap_dismiss(self, dry_run=False):
         """Dismiss an active reload confirmation (POST /touch/tap).
 
@@ -827,6 +867,12 @@ def default_config():
              "rect": [0, 0, 640, 1080],
              "action": {"name": "screen_on"}},
         ],
+        # Per-view regions: view_regions.<view> is live ONLY while that
+        # view shows (see touch_audit.py). Plain "regions" above stay
+        # global. View-specific areas sharing screen space (picker tiles
+        # vs the macbook map) MUST be scoped -- global sets cannot tell
+        # them apart and the wrong one wins the hit-test.
+        "view_regions": {},
     }
 
 
@@ -871,27 +917,43 @@ def load_config(path=None):
             "endpoint %r is not loopback or tailnet: touch only calls "
             "displayd on the same host or over the tailnet, never the "
             "open internet (see TOUCH.md)" % (cfg["endpoint"],))
-    regions = cfg.get("regions") or []
     seen = set()
-    for region in regions:
-        rid = region.get("id")
-        if not rid or rid in seen:
-            raise ValueError("regions need unique ids")
-        seen.add(rid)
-        rect = region.get("rect")
-        if (not isinstance(rect, (list, tuple)) or len(rect) != 4
-                or any(not isinstance(v, (int, float)) for v in rect)):
-            raise ValueError("region %r needs rect [x, y, w, h]" % (rid,))
-        # Config-time shape check: coordinate actions (macbook_mouse,
-        # talon_focus) carry no x/y yet -- the tap supplies them at
-        # dispatch -- so missing coordinates are allowed here and
-        # required at dispatch.
-        action_request(region.get("action") or {},
-                       allow_missing_coords=True)  # fail fast on bad actions
+    for region in cfg.get("regions") or []:
+        _check_region(region, seen, "regions")
+    scoped = cfg.get("view_regions") or {}
+    if not isinstance(scoped, dict):
+        raise ValueError("view_regions must be an object")
+    for view, entries in scoped.items():
+        if (not view or not isinstance(view, str) or "/" in view):
+            raise ValueError("view_regions needs plain view names")
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("view_regions[%r] needs a non-empty list"
+                             % (view,))
+        for region in entries:
+            _check_region(region, seen, "view_regions[%s]" % view)
     cfg["confidence_feedback"] = normalize_confidence_feedback(
         cfg.get("confidence_feedback"))
     cfg["tap_options"] = normalize_tap_options(cfg.get("tap_options"))
     return cfg
+
+
+def _check_region(region, seen, where):
+    """Validate one region entry; ids unique across global AND every
+    scoped set (hit-test identity must be unambiguous). Fail fast."""
+    rid = region.get("id") if isinstance(region, dict) else None
+    if not rid or not isinstance(rid, str) or rid in seen:
+        raise ValueError("%s: regions need unique string ids" % where)
+    seen.add(rid)
+    rect = region.get("rect")
+    if (not isinstance(rect, (list, tuple)) or len(rect) != 4
+            or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                   for v in rect)):
+        raise ValueError("region %r needs rect [x, y, w, h]" % (rid,))
+    # Config-time shape check: coordinate actions (macbook_mouse)
+    # carry no x/y yet -- the tap supplies them at dispatch -- so
+    # missing coordinates are allowed here and required at dispatch.
+    action_request(region.get("action") or {},
+                   allow_missing_coords=True)  # fail fast on bad actions
 
 
 CONFIDENCE_DEFAULTS = {"enabled": False,
@@ -1069,8 +1131,34 @@ class TouchService:
         LOG.info("touch service stopping")
         self._stop = True
 
+    def current_view(self):
+        """Showing renderer via GET /state, else None. Fresh EVERY tap:
+        a cached view goes stale across playlist rotations, phone-driven
+        shows, and transient returns -- exactly the drift this closes.
+        Unknown (unreachable daemon, blank panel, layout mode) means
+        global regions only, never a guess."""
+        fetch = getattr(self.client, "state", None)
+        if fetch is None:
+            return None
+        try:
+            doc = fetch(timeout=1.0)
+        except Exception as exc:
+            LOG.warning("touch view fetch failed (global regions only): "
+                        "%s", exc)
+            return None
+        view = doc.get("renderer") if isinstance(doc, dict) else None
+        return view if isinstance(view, str) and view else None
+
+    def candidate_regions(self, view):
+        """Live regions for one view: view-specific FIRST, then global
+        (touch_audit.candidates: a view's own area wins its screen space
+        while shared chrome still serves)."""
+        return touch_audit.candidates(
+            self.config.get("regions") or [],
+            self.config.get("view_regions") or {}, view)
+
     def confidence_payload(self, tap, region_id, action_name,
-                             result=None, error=None):
+                             result=None, error=None, view=None):
         """Build the touch_confidence tap feed payload for a resolved tap.
 
         tap is an (x, y) display-pixel pair; x_norm/y_norm are the same
@@ -1084,6 +1172,7 @@ class TouchService:
             "x_norm": round(x / float(width - 1), 4) if width > 1 else 0.0,
             "y_norm": round(y / float(height - 1), 4) if height > 1 else 0.0,
             "hit": region_id is not None,
+            "view": view,
             "ts": time.time(),
         }
         if region_id is not None:
@@ -1182,8 +1271,9 @@ class TouchService:
             if tap is None:
                 continue
             dismissal = self.dismiss_reload(dry_run=dry_run)
-            region_id = hit_test(tap[0], tap[1],
-                                 self.config.get("regions") or [])
+            view = self.current_view()
+            candidates = self.candidate_regions(view)
+            region_id = hit_test(tap[0], tap[1], candidates)
             if region_id is None:
                 if self._dismissal_consumed(dismissal):
                     # Reload-dismiss gesture won: the panel is already on
@@ -1196,7 +1286,7 @@ class TouchService:
                     self.send_confidence(
                         self.confidence_payload(
                             tap, None, "tap_dismiss",
-                            result="reload-dismissed"),
+                            result="reload-dismissed", view=view),
                         dry_run=dry_run)
                     return dismissal
                 LOG.info("tap at %d,%d hit no region", tap[0], tap[1])
@@ -1212,7 +1302,8 @@ class TouchService:
                 if not self.tap_options.get("enabled"):
                     self.send_confidence(
                         self.confidence_payload(tap, None, None,
-                                                result="dead-zone"),
+                                                result="dead-zone",
+                                                view=view),
                         dry_run=dry_run)
                     continue
                 action = {"name": "options",
@@ -1231,7 +1322,7 @@ class TouchService:
                             tap, None, action.get("name"),
                             result=("dispatch-error" if err
                                     else "dead-zone"),
-                            error=err),
+                            error=err, view=view),
                         dry_run=dry_run)
                     return summary
                 except Exception as exc:  # keep serving touches
@@ -1241,10 +1332,11 @@ class TouchService:
                     self.send_confidence(
                         self.confidence_payload(
                             tap, None, action.get("name"),
-                            result="dispatch-error", error=str(exc)),
+                            result="dispatch-error", error=str(exc),
+                            view=view),
                         dry_run=dry_run)
                     return summary
-            region = next(r for r in self.config["regions"]
+            region = next(r for r in candidates
                           if r["id"] == region_id)
             action = region["action"]
             if isinstance(action, dict) \
@@ -1270,7 +1362,7 @@ class TouchService:
                     self.confidence_payload(
                         tap, region_id, region["action"].get("name"),
                         result="dispatch-error" if err else "dispatched",
-                        error=err),
+                        error=err, view=view),
                     dry_run=dry_run)
                 return summary
             except Exception as exc:  # keep serving touches on HTTP failure
@@ -1281,7 +1373,8 @@ class TouchService:
                 self.send_confidence(
                     self.confidence_payload(
                         tap, region_id, region["action"].get("name"),
-                        result="dispatch-error", error=str(exc)),
+                        result="dispatch-error", error=str(exc),
+                        view=view),
                     dry_run=dry_run)
                 return summary
         return None
@@ -1358,6 +1451,12 @@ def build_arg_parser():
                         help="cross-check configured select_view tiles + "
                              "tap_options renderer against GET /renderers "
                              "and exit 0/1 (no device needed)")
+    parser.add_argument("--announce", action="store_true",
+                        help="POST the config file's region set to "
+                             "/touch/announce and exit (no device needed; "
+                             "use after verifying the running service "
+                             "matches the file, e.g. post displayd "
+                             "restart)")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser
 
@@ -1397,6 +1496,26 @@ def main(argv=None):
             return 2
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0 if report["ok"] else 1
+    if args.announce:
+        try:
+            print(json.dumps(post_announce(cfg), indent=2,
+                             sort_keys=True))
+            return 0
+        except RuntimeError as exc:
+            print("announce: %s" % exc)
+            return 2
+    if not args.dry_run:
+        # Heartbeat first: displayd's /touch/check compares the DRAWN UI
+        # against this announced set, not the file. Best-effort -- taps
+        # must serve even when displayd is unreachable; the check then
+        # reports unknown until the next (re)start or --announce.
+        try:
+            ack = post_announce(cfg)
+            LOG.info("touch announce: %d regions live (%s)",
+                     ack.get("regions", 0), ack.get("regions_sha"))
+        except RuntimeError as exc:
+            LOG.warning("touch announce failed (best-effort, taps still "
+                        "serve): %s", exc)
     service = TouchService(cfg)
     signal.signal(signal.SIGINT,
                   lambda *_a: service.request_stop())

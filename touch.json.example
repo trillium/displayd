@@ -39,27 +39,9 @@
       "action": {"name": "screen_on"}
     },
     {
-      "id": "example-view-tile",
-      "_comment": "illustrative single select_view tile (reroutes the panel to clock via POST /show); the full picker grid lives in touch-picker.json.example with generated rects -- never hand-compute tile coordinates",
-      "rect": [640, 0, 640, 540],
-      "action": {"name": "select_view", "view": "clock"}
-    },
-    {
       "id": "tap-to-rate",
       "rect": [640, 840, 640, 240],
       "action": {"name": "feedback", "view": "clock", "rating": 5}
-    },
-    {
-      "id": "mac-map",
-      "_comment": "panel tap moves the MacBook cursor while the macbook map view shows (view-gated + fresh-feed-gated on the daemon; header/letterbox taps refused, never clamped). Coordinates are tap-supplied at dispatch, never stored here. Covers the map area below the 250px header; narrower regions above win their own taps first (hit_test takes the first match)",
-      "rect": [0, 250, 1920, 830],
-      "action": {"name": "macbook_mouse"}
-    },
-    {
-      "id": "talon-focus",
-      "_comment": "tap an app row while the talon_apps list view shows to focus it (view-gated: refused otherwise); region covers the list area, the tap point picks the row daemon-side",
-      "rect": [48, 250, 1824, 730],
-      "action": {"name": "talon_focus"}
     },
     {
       "id": "reload-confirm",
@@ -67,5 +49,31 @@
       "rect": [0, 0, 1920, 1080],
       "action": {"name": "reload_confirm"}
     }
-  ]
+  ],
+  "view_regions": {
+    "picker": [
+      {
+        "id": "example-view-tile",
+        "_comment": "illustrative single select_view tile, live ONLY while the picker shows (the full grid lives in touch-picker.json.example with generated rects -- never hand-compute tile coordinates)",
+        "rect": [640, 0, 640, 540],
+        "action": {"name": "select_view", "view": "clock"}
+      }
+    ],
+    "macbook": [
+      {
+        "id": "mac-map",
+        "_comment": "panel tap moves the MacBook cursor, live ONLY while the macbook map view shows (view-gated + fresh-feed-gated on the daemon; header/letterbox taps refused, never clamped). Coordinates are tap-supplied at dispatch, never stored here. Covers the map area below the 250px header; view-specific entries precede global ones, so the map wins its screen space while the strips still serve elsewhere",
+        "rect": [0, 250, 1920, 830],
+        "action": {"name": "macbook_mouse"}
+      }
+    ],
+    "talon_apps": [
+      {
+        "id": "talon-focus",
+        "_comment": "tap an app row to focus it, live ONLY while the talon_apps list view shows (view-gated: refused otherwise); region covers the list area, the tap point picks the row daemon-side. Scoped like mac-map: a global entry would collide with the picker tiles sharing that space",
+        "rect": [48, 250, 1824, 730],
+        "action": {"name": "talon_focus"}
+      }
+    ]
+  }
 }
