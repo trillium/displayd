@@ -23,13 +23,48 @@ Tap wiring quick start (1920x1080 panel)::
 Recompute the 12 hit rects for another panel size::
 
     python3 renderers/retro_grid.py --width 800 --height 480
+
+Split across retro_grid_geom.py (pure geometry + tap resolution) and
+retro_grid_draw.py (frame rendering) to stay within the project's
+250-line budget; names used by existing tests are re-exported here.
 """
 
 import os
+import sys
 import time
-import urllib.request
 
-from PIL import Image, ImageDraw, ImageFont
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from retro_grid_draw import (
+    DEFAULT_BG,
+    DEFAULT_BORDER,
+    DEFAULT_INK,
+    FLASH_BORDER,
+    PALETTE,
+    _contain,
+    _dither,
+    _fit_font,
+    _font,
+    _is_url,
+    _lighten,
+    _load_center,
+    _shade,
+    draw,
+    draw_cell,
+)
+from retro_grid_geom import (
+    DEFAULT_COLS,
+    DEFAULT_ROWS,
+    _region_index,
+    cell_at_point,
+    center_kind,
+    coerce_boxes,
+    current_highlight,
+    default_gutter,
+    grid_geometry,
+    resolve_tap,
+    touch_regions,
+)
 
 NAME = "retro_grid"
 DESCRIPTION = ("Retro 4x3 arcade button grid (tap via "
@@ -79,375 +114,7 @@ INPUTS = {
 
 POLL = 0.1  # tap polling; draws happen only on change/expiry
 
-DEFAULT_COLS = 4
-DEFAULT_ROWS = 3
 DEFAULT_FLASH_SECONDS = 1.2
-DEFAULT_BG = (16, 12, 40)
-DEFAULT_BORDER = (12, 8, 20)
-DEFAULT_INK = (18, 12, 32)  # dark label ink on bright fills
-
-# Limited arcade palette, cycled per cell unless a box sets "color".
-PALETTE = (
-    (255, 82, 82),    # arcade red
-    (255, 210, 63),   # coin yellow
-    (80, 220, 120),   # frogger green
-    (90, 200, 255),   # mario sky
-    (200, 120, 255),  # power-up purple
-    (255, 140, 60),   # sunset orange
-    (120, 220, 220),  # ice cyan
-    (255, 130, 180),  # player-2 pink
-    (150, 255, 120),  # lime
-    (120, 140, 255),  # indigo
-    (255, 240, 150),  # pale coin
-    (100, 235, 200),  # mint
-)
-
-FLASH_BORDER = (255, 255, 255)
-
-
-# ---------------------------------------------------------------------------
-# Pure geometry + config helpers (unit-testable, no screen needed)
-# ---------------------------------------------------------------------------
-
-def default_gutter(w, h):
-    """Gutter px that stays chunky from 480p to 1080p panels."""
-    return max(8, min(int(w), int(h)) // 45)
-
-
-def grid_geometry(w, h, cols=DEFAULT_COLS, rows=DEFAULT_ROWS, gutter=None):
-    """Cell rects [(x, y, cw, ch)] row-major with even gutters.
-
-    The gutter doubles as the outer margin, so the grid fills the screen
-    with uniform spacing on all sides. Pure: no screen needed, which is
-    also what the touch.json recompute helper below uses.
-    """
-    cols = max(1, int(cols or DEFAULT_COLS))
-    rows = max(1, int(rows or DEFAULT_ROWS))
-    g = default_gutter(w, h) if gutter is None else max(0, int(gutter))
-    cw = (int(w) - (cols + 1) * g) // cols
-    ch = (int(h) - (rows + 1) * g) // rows
-    cw, ch = max(1, cw), max(1, ch)
-    rects = []
-    for r in range(rows):
-        for c in range(cols):
-            rects.append((g + c * (cw + g), g + r * (ch + g), cw, ch))
-    return rects
-
-
-def coerce_boxes(params, count):
-    """Normalise the boxes param to exactly `count` cell dicts.
-
-    Each cell: {"label", "image", "color", "text_color", "text_size"}.
-    Missing cells default to labels "1".."N"; extra boxes are ignored.
-    Never raises on bad user input.
-    """
-    params = params or {}
-    raw = params.get("boxes")
-    if not isinstance(raw, (list, tuple)):
-        raw = []
-    boxes = []
-    for i in range(count):
-        entry = raw[i] if i < len(raw) and isinstance(raw[i], dict) else {}
-        label = entry.get("label", entry.get("text", str(i + 1)))
-        if label is None:
-            label = str(i + 1)
-        boxes.append({
-            "label": str(label),
-            "image": entry.get("image"),
-            "color": entry.get("color"),
-            "text_color": entry.get("text_color"),
-            "text_size": entry.get("text_size"),
-        })
-    return boxes
-
-
-def center_kind(box):
-    """Which center content a cell wants: 'image' or 'text'.
-
-    An image wins only when the box names one; unloadable images fall
-    back to text at draw time (see _load_center).
-    """
-    img = (box or {}).get("image")
-    if isinstance(img, str) and img.strip():
-        return "image"
-    return "text"
-
-
-def cell_at_point(x, y, geometry):
-    """Index of the cell containing display point (x, y), or None."""
-    try:
-        fx, fy = float(x), float(y)
-    except (TypeError, ValueError):
-        return None
-    for i, (cx, cy, cw, ch) in enumerate(geometry):
-        if cx <= fx < cx + cw and cy <= fy < cy + ch:
-            return i
-    return None
-
-
-def _region_index(token, boxes):
-    """Index for an id/label/region token: 'retro-cell-N', 'N', or label."""
-    if not isinstance(token, str) or not token:
-        return None
-    text = token.strip()
-    for prefix in ("retro-cell-", "retro_cell_", "cell-", "cell_"):
-        if text.lower().startswith(prefix):
-            text = text[len(prefix):]
-            break
-    try:
-        n = int(text)
-    except ValueError:
-        n = None
-    if n is not None:
-        if 1 <= n <= len(boxes):
-            return n - 1
-        if 0 <= n < len(boxes):
-            return n
-        return None
-    lowered = token.strip().lower()
-    for i, box in enumerate(boxes):
-        if box.get("label", "").strip().lower() == lowered:
-            return i
-    return None
-
-
-def resolve_tap(payload, boxes, geometry, w, h):
-    """Map one tap payload to a cell index, or None (dead zone / garbage).
-
-    Accepts direct ({cell} / {label} / {id}) and coordinate
-    ({x, y} / {x_norm, y_norm} / {region}) forms. Pure.
-    """
-    if not isinstance(payload, dict):
-        return None
-    if isinstance(payload.get("cell"), int) and not isinstance(payload.get("cell"), bool):
-        n = payload["cell"]
-        if 1 <= n <= len(boxes):
-            return n - 1
-        if 0 <= n < len(boxes):
-            return n
-        return None
-    for key in ("id", "label", "region"):
-        idx = _region_index(payload.get(key), boxes)
-        if idx is not None:
-            return idx
-    x, y = payload.get("x"), payload.get("y")
-    if (not isinstance(x, (int, float)) or isinstance(x, bool)
-            or not isinstance(y, (int, float)) or isinstance(y, bool)):
-        xn, yn = payload.get("x_norm"), payload.get("y_norm")
-        if (isinstance(xn, (int, float)) and isinstance(yn, (int, float))):
-            x, y = xn * w, yn * h
-        else:
-            return None
-    return cell_at_point(x, y, geometry)
-
-
-def current_highlight(taps, boxes, geometry, w, h, now, flash_seconds):
-    """Newest tap still inside its flash window -> cell index, else None.
-
-    `taps` is oldest-first [(payload, arrived_monotonic)]; a payload "ts"
-    (unix seconds) overrides the arrival time so replays behave. Pure.
-    """
-    best = None  # (time, index)
-    for payload, arrived in taps:
-        idx = resolve_tap(payload, boxes, geometry, w, h)
-        if idx is None:
-            continue
-        ts = payload.get("ts") if isinstance(payload, dict) else None
-        if isinstance(ts, (int, float)) and not isinstance(ts, bool):
-            t = float(ts)
-            base = now - (time.time() - t)  # unix ts -> monotonic frame
-        else:
-            t = None
-        moment = base if t is not None else arrived
-        if best is None or moment >= best[0]:
-            best = (moment, idx)
-    if best is None:
-        return None
-    if now - best[0] <= max(0.05, float(flash_seconds)):
-        return best[1]
-    return None
-
-
-def touch_regions(w=1920, h=1080, cols=DEFAULT_COLS, rows=DEFAULT_ROWS,
-                  gutter=None, boxes=None):
-    """touch.json region entries for this grid: one rect per cell.
-
-    Each region drives the existing allowlisted `notify` action (transient
-    "CELL N" notice, then automatic return) -- no new generic action.
-    In-grid flash comes from touch.py's confidence_feedback switch pointed
-    at renderer "retro_grid", input "tap" (see touch-retro-grid.json.example).
-    """
-    geometry = grid_geometry(w, h, cols, rows, gutter)
-    cells = boxes if boxes is not None else coerce_boxes({}, len(geometry))
-    regions = []
-    for i, (x, y, cw, ch) in enumerate(geometry):
-        label = cells[i].get("label", str(i + 1)) if i < len(cells) else str(i + 1)
-        regions.append({
-            "id": "retro-cell-%d" % (i + 1),
-            "rect": [x, y, cw, ch],
-            "action": {"name": "notify", "title": "CELL %s" % label,
-                       "body": "retro grid cell %d tapped" % (i + 1),
-                       "severity": "info"},
-        })
-    return regions
-
-
-# ---------------------------------------------------------------------------
-# Drawing (one complete PIL image + single screen.present, per contract)
-# ---------------------------------------------------------------------------
-
-def _font(screen, size):
-    try:
-        path = screen.font_path("DejaVuSans-Bold")
-    except Exception:
-        path = None
-    if path:
-        try:
-            return ImageFont.truetype(path, max(8, int(size)))
-        except Exception:
-            pass
-    try:
-        return ImageFont.load_default(size=max(8, int(size)))
-    except Exception:
-        return ImageFont.load_default()
-
-
-def _shade(rgb, factor):
-    return tuple(max(0, min(255, int(v * factor))) for v in rgb)
-
-
-def _lighten(rgb, amount):
-    return tuple(max(0, min(255, int(v + (255 - v) * amount))) for v in rgb)
-
-
-def _is_url(path):
-    return path.startswith("http://") or path.startswith("https://")
-
-
-def _load_center(source, timeout=10):
-    """Load one cell image (file path or URL); None when unloadable.
-
-    The caller falls back to the text label, so a bad path/URL degrades
-    one cell instead of failing the frame.
-    """
-    if not isinstance(source, str) or not source.strip():
-        return None
-    source = source.strip()
-    try:
-        if _is_url(source):
-            with urllib.request.urlopen(source, timeout=timeout) as resp:
-                return Image.open(resp).convert("RGB")
-        return Image.open(os.path.expanduser(source)).convert("RGB")
-    except Exception:
-        return None
-
-
-def _contain(img, width, height):
-    scale = min(width / max(1, img.width), height / max(1, img.height))
-    return img.resize((max(1, int(img.width * scale)),
-                       max(1, int(img.height * scale))))
-
-
-def _fit_font(draw, label, font_maker, max_w, max_h, start):
-    size = max(8, int(start))
-    while size > 8:
-        font = font_maker(size)
-        try:
-            box = draw.textbbox((0, 0), label, font=font)
-            if box[2] - box[0] <= max_w and box[3] - box[1] <= max_h:
-                return font
-        except Exception:
-            return font
-        size = int(size * 0.85)
-    return font_maker(8)
-
-
-def _dither(draw, rect, base):
-    """Checkerboard darkening over the fill: cheap CRT-dither feel."""
-    dark = _shade(base, 0.88)
-    x, y, w, h = rect
-    for py in range(y + 2, y + h - 2, 2):
-        for px in range(x + 2 + (py % 4 == 0) * 1, x + w - 2, 2):
-            draw.point((px, py), fill=dark)
-
-
-def draw_cell(draw, img, screen, box, rect, fill, border, highlight,
-              image=None, content_pad=14):
-    """Draw one beveled arcade button into the in-progress frame."""
-    x, y, w, h = rect
-    bw = max(4, min(screen.W, screen.H) // 135)  # chunky outline (~8px@1080p)
-    pop = max(3, bw // 2) if highlight else 0
-    x0, y0, x1, y1 = x - pop, y - pop, x + w + pop, y + h + pop
-
-    # Drop shadow (skipped when popped: the flash lifts the button).
-    if not highlight:
-        draw.rectangle([x0 + 6, y0 + 8, x1 + 6, y1 + 8], fill=(0, 0, 0))
-
-    body = _lighten(fill, 0.35) if highlight else fill
-    draw.rectangle([x0, y0, x1, y1], fill=body)
-    if not highlight:
-        _dither(draw, (x0, y0, x1 - x0, y1 - y0), body)
-
-    # Thick outline; flashing cells invert to white-hot.
-    draw.rectangle([x0, y0, x1, y1], outline=FLASH_BORDER if highlight else border,
-                   width=bw + (2 if highlight else 0))
-    # Bevel: light top/left, dark bottom/right (inset inside the outline).
-    inset = bw + 2
-    hi = _lighten(body, 0.45)
-    lo = _shade(body, 0.55)
-    draw.line([(x0 + inset, y0 + inset), (x1 - inset, y0 + inset)], fill=hi, width=3)
-    draw.line([(x0 + inset, y0 + inset), (x0 + inset, y1 - inset)], fill=hi, width=3)
-    draw.line([(x0 + inset, y1 - inset), (x1 - inset, y1 - inset)], fill=lo, width=3)
-    draw.line([(x1 - inset, y0 + inset), (x1 - inset, y1 - inset)], fill=lo, width=3)
-
-    # Center content inside the bevel.
-    pad = inset + content_pad
-    cw, ch = x1 - x0 - 2 * pad, y1 - y0 - 2 * pad
-    if cw < 8 or ch < 8:
-        return
-    if image is not None:
-        fitted = _contain(image, cw, ch)
-        # Dark plate behind photos so any image reads as one button face.
-        plate = [x0 + pad - 4, y0 + pad - 4,
-                 x0 + pad + cw + 4, y0 + pad + ch + 4]
-        draw.rectangle(plate, fill=(0, 0, 0))
-        draw.rectangle(plate, outline=hi if not highlight else FLASH_BORDER, width=2)
-        img.paste(fitted, (x0 + pad + (cw - fitted.width) // 2,
-                           y0 + pad + (ch - fitted.height) // 2))
-        caption = box.get("label", "")
-        if caption and ch - fitted.height > 40:
-            cap_font = _font(screen, max(12, ch // 10))
-            draw.text(((x0 + x1) // 2, y1 - pad - 6), caption,
-                      font=cap_font, fill=DEFAULT_INK, anchor="mb")
-        return
-    label = box.get("label", "")
-    if not label:
-        return
-    try:
-        want = int(box.get("text_size") or 0)
-    except (TypeError, ValueError):
-        want = 0
-    start = want or min(cw // max(1, len(label)), ch)
-    font = _fit_font(draw, label, lambda s: _font(screen, s),
-                     cw, int(ch * 0.72), start)
-    cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-    ink = screen.color(box.get("text_color"), DEFAULT_INK)
-    # Hard offset shadow: the readable-at-distance arcade punch.
-    draw.text((cx + 3, cy + 4), label, font=font,
-              fill=_shade(ink, 0.4) if not highlight else (80, 60, 0), anchor="mm")
-    draw.text((cx, cy), label, font=font,
-              fill=(255, 255, 255) if highlight else ink, anchor="mm")
-
-
-def draw(screen, boxes, geometry, fills, border, highlight, images, bg=None):
-    """One complete frame. Pure draw (no I/O): tests call this directly."""
-    img = screen.new_image(DEFAULT_BG if bg is None else bg)
-    d = ImageDraw.Draw(img)
-    for i, rect in enumerate(geometry):
-        box = boxes[i] if i < len(boxes) else {"label": str(i + 1)}
-        draw_cell(d, img, screen, box, rect, fills[i], border,
-                  highlight == i, image=(images or {}).get(i))
-    return img
 
 
 def run(screen, params, stop):
