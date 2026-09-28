@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.displayd.beads-activity-bridge — always-on beads-bridge activity -> displayd bridge.
+
+  The bridge polls the beads-bridge live ring on this Mac (localhost:3737)
+  and pushes validated ActivityEvents to the panel over the tailnet, so it
+  runs here next to beads-bridge, not on lnx-server.
+
+  Install: replace __DISPLAYD_DIR__ with the displayd checkout path, copy to
+  ~/Library/LaunchAgents/, then `launchctl bootstrap gui/$UID <file>`.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.displayd.beads-activity-bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__DISPLAYD_DIR__/bridges/beads_activity.py</string>
+    <string>--bridge</string>
+    <string>http://127.0.0.1:3737</string>
+    <string>--displayd</string>
+    <string>http://100.81.88.113:8980</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/trilliumsmith/Library/Logs/beads-activity-bridge.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/trilliumsmith/Library/Logs/beads-activity-bridge.log</string>
+</dict>
+</plist>
