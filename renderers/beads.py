@@ -185,7 +185,9 @@ def _draw(screen, title, bg):
         if narrow:
             for row_i, row in enumerate(
                     _wrap(draw, sub, sf, col_w - 12, 2)):
-                draw.text((x + 6, 362 + row_i * 34), row,
+                # Tighter leading than the single-line baseline: the
+                # second wrapped row must clear the progress bar at 420.
+                draw.text((x + 6, 356 + row_i * 30), row,
                           font=sf or plain, fill=C_DIM)
         else:
             draw.text((x + 6, 362), _fit(draw, sub, sf, col_w - 12),
