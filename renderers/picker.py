@@ -2,17 +2,12 @@
 
 A STATIC grid of labelled view tiles: each tile names one selectable view
 and the matching touch region fires the ``select_view`` named action, so a
-panel tap reroutes the displayed view with no phone in hand. Hit rects for
-``touch.json`` come from ``picker_regions()`` below -- generate, never
-hand-compute::
+panel tap reroutes the displayed view with no phone in hand. Hit rects
+for ``touch.json`` come from ``picker_regions()`` -- generate, never
+hand-compute (TOUCH.md has the live-set command).
 
-    python3 renderers/picker.py --width 1920 --height 1080 \\
-        --views clock,chat,row,stream,activity,options
-
-A sibling of ``options.py`` by choice: options only NAMES the picks and
-the return path, the picker SELECTS. Either can target the other without
-trapping: a dead tap while the picker shows re-shows it, and ``options``
-stays one tile away.
+A sibling of ``options.py``: options NAMES the picks, the picker
+SELECTS; either can target the other without trapping.
 
 Isolated by design: reads its own ``views``/``rect`` params only, never the
 policy clock, playlist, feeds, or any other view. The offered list is
@@ -70,22 +65,20 @@ def default_rect(w, h):
 
 def live_views(renderers):
     """Tile default from the advertised set: working renderers showable
-    with empty params (no required PARAMS), sorted. Param-gated views
-    (reload, notice, qr, image, text) and broken entries are out -- a
-    tile posts {"renderer": view, "params": {}} and show() would
-    reject them. Garbage falls back to DEFAULT_VIEWS. Pure."""
+    with empty params (no required PARAMS), sorted. Param-gated and
+    broken entries are out -- a tile posts empty params and show()
+    would reject them. Garbage falls back to DEFAULT_VIEWS. Pure."""
     try:
         items = list((renderers or {}).items())
     except AttributeError:
         return list(DEFAULT_VIEWS)
     out = []
     for name, entry in items:
-        schema = (entry.get("params") or {} if isinstance(entry, dict)
-                  else None)
+        schema = entry.get("params") if isinstance(entry, dict) else None
+        schema = schema or {}
         if (not isinstance(name, str) or not name or "/" in name
                 or not isinstance(entry, dict)
                 or "module" not in entry
-                or not isinstance(schema, dict)
                 or any(isinstance(s, dict) and s.get("required")
                        for s in schema.values())):
             continue
@@ -94,9 +87,8 @@ def live_views(renderers):
 
 
 def coerce_views(params):
-    """Views param into at most MAX_VIEWS clean names. Missing/empty
-    falls back to DEFAULT_VIEWS; non-string, blank, and slash entries
-    skipped; extras past the cap dropped. Never raises."""
+    """Views param into at most MAX_VIEWS clean names (missing/empty
+    falls back to DEFAULT_VIEWS; bad entries skipped). Never raises."""
     try:
         raw = (params or {}).get("views")
     except AttributeError:
@@ -111,8 +103,7 @@ def coerce_views(params):
 
 
 def coerce_rect(params, w, h):
-    """Rect param into [x, y, rw, rh], clamped; garbage falls back to
-    default_rect(). Never raises."""
+    """Rect param into [x, y, rw, rh], clamped; garbage -> default."""
     try:
         raw = (params or {}).get("rect")
     except AttributeError:
@@ -130,8 +121,7 @@ def coerce_rect(params, w, h):
 
 
 def grid_geometry(rect, count, cols=DEFAULT_COLS, gutter=None):
-    """Tile rects [(x, y, cw, ch)] row-major inside `rect` (cols cap at
-    DEFAULT_COLS; gutter doubles as inner spacing). Pure."""
+    """Tile rects row-major inside `rect` (cols cap at DEFAULT_COLS)."""
     count = max(1, int(count))
     cols = max(1, min(DEFAULT_COLS, count))
     rows = (count + cols - 1) // cols
@@ -145,9 +135,8 @@ def grid_geometry(rect, count, cols=DEFAULT_COLS, gutter=None):
 
 
 def picker_regions(w=1920, h=1080, views=None, rect=None, gutter=None):
-    """touch.json entries for the grid: one rect per view, each firing
-    the allowlisted ``select_view`` action (fixed-shape POST /show --
-    no generic action). List FIRST: earlier entries win overlaps."""
+    """touch.json entries: one rect per view firing ``select_view``
+    (fixed-shape POST /show). List FIRST: earlier wins overlaps."""
     views = coerce_views({"views": views} if views is not None else {})
     rect = list(rect) if rect is not None else default_rect(w, h)
     return [{"id": "view-%s" % name,
@@ -170,6 +159,23 @@ def _font(screen, size):
         return None
 
 
+def _tile_font(screen, d, name, cw, size):
+    """Biggest font for `name` fitting tile width `cw` (None when the
+    screen has no fonts). Never raises."""
+    while size > 12:
+        font = _font(screen, size)
+        if font is None:
+            return None
+        try:
+            fits = d.textbbox((0, 0), name, font=font)[2] <= cw - 16
+        except Exception:
+            fits = True
+        if fits:
+            return font
+        size -= 4
+    return font
+
+
 def draw(screen, views, geometry, rect, fills, bg, fg, dim,
          title="PICK A VIEW"):
     """One complete frame: header, tiles, side-hint labels. Pure."""
@@ -177,11 +183,9 @@ def draw(screen, views, geometry, rect, fills, bg, fg, dim,
     d = ImageDraw.Draw(img)
     w, h = screen.W, screen.H
     rx, ry, rw, rh = rect
-    tile_font = _font(screen, min(h // 14, 84))
     hint_font = _font(screen, min(h // 30, 36))
 
-    # Header lives in the top margin, skipped when the rect leaves no
-    # room (a fullscreen grid has no margin to write in).
+    # Header in the top margin; skipped when the rect leaves no room.
     if ry >= 28:
         title_font = _font(screen, min(ry - 12, h // 24, 44))
         if title_font is not None:
@@ -192,11 +196,12 @@ def draw(screen, views, geometry, rect, fills, bg, fg, dim,
         fill = fills[i % len(fills)]
         d.rectangle([x, y, x + cw, y + ch], fill=fill,
                     outline=INK, width=max(3, min(w, h) // 270))
-        if tile_font is not None:
+        shown = _tile_font(screen, d, name, cw, min(h // 14, 84))
+        if shown is not None:
             d.text((x + cw // 2 + 2, y + ch // 2 + 3), name,
-                   font=tile_font, fill=(90, 70, 110), anchor="mm")
+                   font=shown, fill=(90, 70, 110), anchor="mm")
             d.text((x + cw // 2, y + ch // 2), name,
-                   font=tile_font, fill=INK, anchor="mm")
+                   font=shown, fill=INK, anchor="mm")
         else:
             d.text((x + 8, y + 8), name, fill=INK)
 
@@ -229,9 +234,8 @@ if __name__ == "__main__":
     import json
 
     ap = argparse.ArgumentParser(
-        description="Print touch.json entries for the picker tile grid "
-                    "(default 1920x1080, fallback six views). Paste FIRST "
-                    "under regions (earlier entries win overlaps).")
+        description="Print touch.json tile-grid entries (defaults "
+                    "1920x1080, fallback six views). Paste FIRST.")
     ap.add_argument("--width", type=int, default=1920)
     ap.add_argument("--height", type=int, default=1080)
     ap.add_argument("--views", default=",".join(DEFAULT_VIEWS),
