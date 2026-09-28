@@ -28,7 +28,11 @@ import time
 import urllib.request
 
 CROP_W, CROP_H = 480, 360
-JPEG_CAP = 98304  # bytes: wire stays under ~128 KiB base64
+# File-byte cap: base64 of this many bytes is at most 133804 chars,
+# under the daemon schema ceiling (140000) with margin to spare. The
+# cap is on the WIRE size that matters, not an arbitrary round number:
+# a 1-byte-over round cap once dropped a live capture (98,305 bytes).
+JPEG_CAP = 100352
 CLICK_TTL = 15.0  # mirrors the daemon slot: stale taps never fire
 
 
@@ -91,9 +95,13 @@ def capture(crop, runner=None):
     os.close(fd)
     try:
         run = runner or subprocess.run
+        # Generous timeout: observed 3s+ stalls on a live desktop
+        # (TCC attribution + compositor); the poll tick simply runs
+        # long this once, then resumes cadence. TimeoutExpired raises
+        # like any failure -> no zoom posted, no stale image shown.
         proc = run(["/usr/sbin/screencapture", "-x", "-t", "jpg",
                     "-R%d,%d,%d,%d" % (x, y, w, h), path],
-                   timeout=10, capture_output=True)
+                   timeout=20, capture_output=True)
         if getattr(proc, "returncode", 1) != 0:
             raise RuntimeError("screencapture failed: %s" % (
                 getattr(proc, "stderr", b"") or b"")[:160])

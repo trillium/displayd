@@ -89,6 +89,13 @@ class CaptureTest(unittest.TestCase):
         self.assertIsNone(mz.encode(b""))
         self.assertIsNone(mz.encode(None))
 
+    def test_wire_bound_holds_schema_ceiling(self):
+        # Worst case: a full-cap file must still pass the daemon's
+        # maxLength gate (140000), or the bound is a lie.
+        import base64
+        text = base64.b64encode(b"x" * mz.JPEG_CAP).decode()
+        self.assertLessEqual(len(text), 140000)
+
     def test_zoom_doc(self):
         doc = mz.zoom_doc(1.5, 2.5, "abc", 100.0)
         self.assertEqual(doc, {"ts": 100.0, "x": 1.5, "y": 2.5,
