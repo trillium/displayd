@@ -26,293 +26,33 @@ If displayd is unreachable every tool fails LOUDLY -- ``isError`` with
 "display unreachable ..." -- and in particular ``feedback_record`` refuses
 to store a frameless note silently: the note is NOT recorded and the error
 says to retry once the panel is back.
+
+Split across single-concept modules within the project's 250-line budget:
+``mcp_client`` (HTTP client), ``mcp_schema`` (schema conversion),
+``mcp_tools`` (tool catalog), ``mcp_result`` (result envelopes). Names
+used by existing importers and tests are re-exported here.
 """
 
-import base64
 import json
-import os
-import re
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
+
+from mcp_client import (DISPLAYD_URL, TIMEOUT, DisplayError,
+                        DisplayUnreachable, api_get, api_post)
+from mcp_result import err_text, ok_image, ok_text, unreachable
+from mcp_tools import dynamic_tools, static_tools
 
 SERVER_NAME = "displayd-mcp"
 SERVER_VERSION = "1.0.0"
 PROTOCOL_VERSION = "2024-11-05"
 
-DISPLAYD_URL = os.environ.get("DISPLAYD_URL", "http://127.0.0.1:8980").rstrip("/")
-try:
-    TIMEOUT = float(os.environ.get("DISPLAYD_TIMEOUT", "10"))
-except ValueError:
-    TIMEOUT = 10.0
-
-
-# ---- displayd HTTP client ---------------------------------------------
-
-class DisplayUnreachable(Exception):
-    """The panel/daemon could not be reached at all (TCP refused, DNS,
-    timeout). Distinct from an HTTP error *from* displayd."""
-
-
-class DisplayError(Exception):
-    """displayd answered with a non-2xx status."""
-
-    def __init__(self, status, message):
-        super().__init__(message)
-        self.status = status
-        self.message = message
-
-
-def _request(method, path, body=None, raw=False):
-    url = DISPLAYD_URL + path
-    data = None
-    headers = {}
-    if body is not None:
-        data = json.dumps(body).encode()
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            payload = resp.read()
-            ctype = resp.headers.get("Content-Type", "")
-    except urllib.error.HTTPError as exc:
-        try:
-            detail = json.loads(exc.read().decode() or "{}")
-            message = detail.get("error", str(detail))
-        except ValueError:
-            message = "HTTP %d" % exc.code
-        raise DisplayError(exc.code, message)
-    except (urllib.error.URLError, ConnectionError, TimeoutError,
-            OSError) as exc:
-        reason = getattr(exc, "reason", exc)
-        raise DisplayUnreachable("%s: %s" % (url, reason))
-    if raw or "image/" in ctype:
-        return payload
-    if not payload:
-        return {}
-    try:
-        return json.loads(payload.decode())
-    except ValueError:
-        raise DisplayError(500, "displayd returned non-JSON")
-
-
-def api_get(path, raw=False):
-    return _request("GET", path, raw=raw)
-
-
-def api_post(path, body=None):
-    return _request("POST", path, body=body if body is not None else {})
-
-
-# ---- schema conversion -------------------------------------------------
-
-_TYPE_MAP = {"string": "string", "integer": "integer", "number": "number",
-             "boolean": "boolean", "object": "object", "array": "array"}
-
-
-def to_json_schema(spec):
-    """One displayd param/input spec -> JSON Schema fragment."""
-    spec = spec or {}
-    out = {"type": _TYPE_MAP.get(spec.get("type", "string"), "string")}
-    if spec.get("help"):
-        out["description"] = spec["help"]
-    if out["type"] == "object":
-        props = {}
-        for key, sub in (spec.get("properties") or {}).items():
-            props[key] = to_json_schema(sub)
-        if props:
-            out["properties"] = props
-        if spec.get("required"):
-            out["required"] = list(spec["required"])
-    if out["type"] == "array" and "items" in spec:
-        out["items"] = to_json_schema(spec["items"])
-    return out
-
-
-def _sanitize(name):
-    return re.sub(r"[^a-zA-Z0-9_]", "_", name)
-
 
 # ---- tool definitions ---------------------------------------------------
-
-def static_tools():
-    obj = {"type": "object"}
-    return [
-        {"name": "health", "description": "displayd liveness probe.",
-         "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "state",
-         "description": ("What is on the panel now: current view, screen "
-                         "power, feed health, switch timing."),
-         "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "renderers",
-         "description": ("Self-describing view list: params, inputs, and "
-                         "required flags. Drives tool discovery."),
-         "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "snapshot",
-         "description": ("PNG of the last presented frame, returned as an "
-                         "image content block. 404 when nothing drawn yet."),
-         "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "show",
-         "description": "Switch the panel to a view with params.",
-         "inputSchema": {"type": "object",
-                          "properties": {
-                              "renderer": {"type": "string",
-                                           "description": "view name from renderers"},
-                              "params": {"type": "object",
-                                         "description": "view params"}},
-                          "required": ["renderer"]}},
-        {"name": "feed",
-         "description": "Push a JSON payload into a running view's input.",
-         "inputSchema": {"type": "object",
-                          "properties": {
-                              "view": {"type": "string"},
-                              "input": {"type": "string"},
-                              "payload": {"description": "payload (validated by displayd)"}},
-                          "required": ["view", "input", "payload"]}},
-        {"name": "feed_status",
-         "description": "One feed's health (cold/warm/stale) and latest value.",
-         "inputSchema": {"type": "object",
-                          "properties": {"view": {"type": "string"},
-                                         "input": {"type": "string"}},
-                          "required": ["view", "input"]}},
-        {"name": "notify",
-         "description": "Transient notification card, then auto-return.",
-         "inputSchema": {"type": "object",
-                          "properties": {
-                              "title": {"type": "string"},
-                              "body": {"type": "string"},
-                              "severity": {"type": "string",
-                                           "enum": ["info", "warn", "critical"]},
-                              "duration": {"type": "number"},
-                              "color": {"type": "string"}},
-                          "required": ["title"]}},
-        {"name": "reload",
-         "description": ("Transient reload confirmation (RELOADED + SHA + "
-                           "scan-confirm QR, plus optional commit-message "
-                           "highlights), then auto-return. Answers "
-                           "relay_url when the scanning phone can reach it."),
-         "inputSchema": {"type": "object",
-                          "properties": {
-                              "sha": {"type": "string",
-                                        "description": "full 40-character deployed commit SHA"},
-                              "highlights": {"type": "string",
-                                               "description": "bounded commit-message summary; sanitised server-side, drawn as text only"},
-                              "duration": {"type": "number"}},
-                          "required": ["sha"]}},
-        {"name": "reload_confirm",
-         "description": ("Confirm the showing reload view early (tap "
-                           "path): the panel returns at once. Misses with "
-                           "an error when no reload is showing."),
-         "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "policy_get", "description": "Policy config + activity clock.",
-         "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "policy_set",
-         "description": "Update policy (idle / chat_attention / notifications).",
-         "inputSchema": {"type": "object",
-                          "properties": {"patch": {"type": "object"}},
-                          "required": ["patch"]}},
-        {"name": "clear", "description": "Blank the panel to black.",
-         "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "screen",
-         "description": "Panel power on/off.",
-         "inputSchema": {"type": "object",
-                          "properties": {"power": {"type": "string",
-                                                   "enum": ["on", "off"]}},
-                          "required": ["power"]}},
-        {"name": "feedback_record",
-         "description": ("Record a judgement about a display: captures a "
-                         "/snapshot at feedback time and links the frame, so "
-                         "a later reader sees what was judged. Refuses "
-                         "rather than storing silently when the panel is "
-                         "unreachable."),
-         "inputSchema": {"type": "object",
-                          "properties": {
-                              "view": {"type": "string",
-                                       "description": "renderer the note concerns"},
-                              "rating": {"type": "integer",
-                                         "description": "1-5",
-                                         "minimum": 1, "maximum": 5},
-                              "categories": {"type": "array",
-                                             "items": {"type": "string",
-                                                       "enum": ["readability", "layout",
-                                                                "color", "content",
-                                                                "timing", "size", "other"]}},
-                              "notes": {"type": "string"},
-                              "params": {"type": "object",
-                                         "description": "params in play when judged"},
-                              "agent": {"type": "string"},
-                              "include_frame": {"type": "boolean",
-                                                "description": "capture /snapshot (default true); "
-                                                               "set false only to record while "
-                                                               "the panel is known-unreachable"}},
-                          "required": ["view", "rating"]}},
-        {"name": "feedback_list",
-         "description": "Accumulated feedback, newest first, filterable by view.",
-         "inputSchema": {"type": "object",
-                          "properties": {"view": {"type": "string"},
-                                         "limit": {"type": "integer"}},
-                          }},
-        {"name": "feedback_get",
-         "description": "One feedback entry by id.",
-         "inputSchema": {"type": "object",
-                          "properties": {"id": {"type": "string"}},
-                          "required": ["id"]}},
-        {"name": "feedback_summary",
-         "description": ("Patterns across entries: per-view counts, mean "
-                         "rating, category histograms."),
-         "inputSchema": {"type": "object", "properties": {}}},
-    ]
-
 
 def fetch_renderers():
     """Live view list; raises DisplayUnreachable/DisplayError."""
     data = api_get("/renderers")
     return data.get("renderers", [])
-
-
-def dynamic_tools(renderers):
-    """show_<view> + feed_<view>_<input> tools derived from /renderers."""
-    tools = []
-    for renderer in renderers:
-        name = renderer.get("name", "?")
-        if renderer.get("broken"):
-            continue
-        safe = _sanitize(name)
-        params = renderer.get("params") or {}
-        props = {key: to_json_schema(spec) for key, spec in params.items()}
-        required = [key for key, spec in params.items()
-                    if isinstance(spec, dict) and spec.get("required")]
-        schema = {"type": "object", "properties": props}
-        if required:
-            schema["required"] = required
-        desc = renderer.get("description") or ""
-        tools.append({"name": "show_%s" % safe,
-                      "description": ("Show the %r view. %s"
-                                      % (name, desc)).strip(),
-                      "_view": name,
-                      "inputSchema": schema})
-        for input_name, spec in (renderer.get("inputs") or {}).items():
-            spec = spec or {}
-            if spec.get("type") == "object" and spec.get("properties"):
-                props = {key: to_json_schema(sub)
-                         for key, sub in spec["properties"].items()}
-                schema = {"type": "object", "properties": props}
-                if spec.get("required"):
-                    schema["required"] = list(spec["required"])
-                inline = True
-            else:
-                schema = {"type": "object",
-                          "properties": {"payload": to_json_schema(spec)},
-                          "required": ["payload"]}
-                inline = False
-            tools.append({"name": "feed_%s_%s" % (safe, _sanitize(input_name)),
-                          "description": ("Feed the %r input of view %r."
-                                          % (input_name, name)),
-                          "_view": name, "_input": input_name,
-                          "_inline": inline,
-                          "inputSchema": schema})
-    return tools
 
 
 def list_tools():
@@ -322,28 +62,6 @@ def list_tools():
     except (DisplayUnreachable, DisplayError):
         pass  # static tools stay; calls report the outage loudly
     return tools
-
-
-# ---- tool results --------------------------------------------------------
-
-def ok_text(data):
-    return {"content": [{"type": "text",
-                         "text": json.dumps(data, indent=2, default=str)}]}
-
-
-def ok_image(png_bytes):
-    return {"content": [{"type": "image", "data": base64.b64encode(png_bytes).decode(),
-                         "mimeType": "image/png"}]}
-
-
-def err_text(message):
-    return {"content": [{"type": "text", "text": str(message)}], "isError": True}
-
-
-def unreachable(exc):
-    return err_text("display unreachable at %s (%s). The panel state is "
-                    "unknown; nothing was changed."
-                    % (DISPLAYD_URL, exc))
 
 
 # ---- dispatch --------------------------------------------------------------
