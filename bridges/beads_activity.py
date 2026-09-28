@@ -1,69 +1,45 @@
 #!/usr/bin/env python3
 """Beads-bridge activity -> displayd bridge (polling).
 
-The beads-bridge sidecar already publishes every completed MCP tool call as
-an observational live view (``GET /live/recent`` + ``GET /live/events``
-SSE). This bridge polls that ring and pushes each new event across the
-tailnet into displayd's feed API::
+Single concept: poll the beads-bridge ``/live/recent`` ring and push each
+new event across the tailnet into displayd's feed API::
 
     beads-bridge http://<bridge-host>:3737 --HTTP--> bridge --HTTP--> displayd
 
-The bridge owns the beads-bridge protocol; displayd stays content-agnostic
-and only ever sees validated ``ActivityEvent`` payloads on
-``/feed/activity/event`` (``renderers/activity.py``).
+Event validation lives in ``beads_activity_events`` (pure functions, test
+hooks); the process entry point lives in ``beads_activity_cli`` (this file
+stays directly executable -- see its ``__main__`` guard).
 
-Protocol notes (from beads-bridge docs/live-activity.md -- do not re-derive):
-  * ``GET /live/recent?limit=N`` answers ``{"events": [...]}`` newest-first;
-  * ``GET /live/config`` answers ``{"autoFollowDefault": true,
-    "maxEvents": 200}``;
-  * an ActivityEvent carries ``seq, at, tool, outcome ('ok'|'error'),
-    caller, sessionId, client, authed, durationMs, argNames, beadRefs,
-    summary`` -- arg NAMES only, values never recorded;
-  * the ring is ephemeral (restart clears it); ``seq`` is monotonic per
-    process, so a restart (seq resets) is detected and the seen-set is
-    reseeded rather than replayed.
-
-Safety model (inherited from the sidecar -- do not weaken):
-  * observational only: this bridge never mutates a bead, creates work, or
-    writes to a store -- it polls two GET endpoints and POSTs feed payloads;
-  * bounded payloads and bounded memory: every field is truncated/capped,
-    one poll forwards at most POLL_CAP events, the seen-set is capped;
-  * loop prevention: nothing here triggers MCP tool calls, so the ring
-    cannot re-trigger itself through this bridge;
-  * failure isolation: a dead upstream or a dead displayd is a reconnect
-    with backoff, never a process death; a malformed event is dropped with
-    a debug log, never forwarded.
+Safety model (inherited from the sidecar -- do not weaken): observational
+only (two GETs polled, feed payloads POSTed, never a bead mutation);
+bounded payloads and memory; nothing here triggers MCP tool calls, so the
+ring cannot re-trigger itself; a dead upstream or displayd is a reconnect
+with backoff, never a process death.
 
 Stdlib only, no credentials anywhere (neither endpoint needs any). Exits
 non-zero only on configuration errors; a dropped upstream connection is a
 reconnect, never a death.
 """
 
-import argparse
 import json
 import logging
-import os
 import random
-import re
 import sys
 import time
 import urllib.error
 import urllib.request
 
+from beads_activity_events import (
+    ARG_NAME_LEN,  # re-exported for backwards compatibility (see below)
+    MAX_ARG_NAMES,
+    MAX_BEADREFS,
+    SUMMARY_CHARS,
+    normalize_event,
+)
+
 LOG = logging.getLogger("beads-activity-bridge")
 
-# ---- bounds (mirror the sidecar's server-side caps) ---------------------------
-
-SUMMARY_CHARS = 300   # ACTIVITY_SUMMARY_CHARS default
-MAX_BEADREFS = 10     # ACTIVITY_MAX_BEADREFS default
-MAX_ARG_NAMES = 20
-ARG_NAME_LEN = 64
-TOOL_LEN = 64
-CALLER_LEN = 64
-CLIENT_LEN = 32
-SESSION_LEN = 64
-AT_LEN = 40
-SUMMARY_IN_LEN = 4096  # inbound head accepted before truncation
+# ---- poll bounds (mirror the sidecar's server-side caps) ------------------------
 
 SEEN_CAP = 1000
 POLL_CAP = 50          # max events forwarded from a single poll
@@ -71,85 +47,10 @@ BACKOFF_FIRST = 1.0
 BACKOFF_MAX = 30.0
 HEALTHY_RESET_AFTER = 30.0  # a poll run living this long resets the ladder
 
-# Same id shape as the sidecar's extractBeadRefs (activity.ts), minus the
-# storeFromId check this side cannot run: free-text hyphenations
-# ("follow-on", "end-to-end") fail the shape test and are dropped.
-BEAD_RE = re.compile(r"^[a-z][a-z0-9]+-[a-z0-9]{3,}(?:\.[0-9]+)*$")
-
-
-# ---- validation (pure functions, test hooks) ----------------------------------
-
-def _str(value, max_len):
-    if isinstance(value, bool):
-        return ""
-    if isinstance(value, (int, float)):
-        value = str(value)
-    if not isinstance(value, str):
-        return ""
-    return value.strip()[:max_len]
-
-
-def _str_list(value, max_items, max_len):
-    if not isinstance(value, (list, tuple)):
-        return []
-    out = []
-    for item in value:
-        text = _str(item, max_len)
-        if text:
-            out.append(text)
-            if len(out) >= max_items:
-                break
-    return out
-
-
-def normalize_event(raw):
-    """Validate one upstream event -> displayd feed payload, or None.
-
-    Refusals (return None, never raise): non-dict input, missing/empty
-    ``tool``, ``outcome`` outside {'ok', 'error'}. Everything else is
-    coerced and truncated so a hostile or drifting upstream can never grow
-    the panel payload without bound.
-    """
-    if not isinstance(raw, dict):
-        return None
-    tool = _str(raw.get("tool"), TOOL_LEN)
-    if not tool:
-        return None
-    outcome = raw.get("outcome")
-    if outcome not in ("ok", "error"):
-        return None
-    try:
-        seq = int(raw.get("seq")) if raw.get("seq") is not None else None
-    except (TypeError, ValueError):
-        seq = None
-    try:
-        duration = raw.get("durationMs")
-        duration_ms = int(duration) if duration is not None else 0
-    except (TypeError, ValueError):
-        duration_ms = 0
-    duration_ms = max(0, min(3600000, duration_ms))
-    session = raw.get("sessionId")
-    bead_refs = [b for b in _str_list(raw.get("beadRefs"), MAX_BEADREFS,
-                                      SESSION_LEN)
-                 if BEAD_RE.match(b)]
-    event = {
-        "seq": seq,
-        "at": _str(raw.get("at"), AT_LEN),
-        "tool": tool,
-        "outcome": outcome,
-        "caller": _str(raw.get("caller"), CALLER_LEN),
-        "sessionId": _str(session, SESSION_LEN),
-        "client": _str(raw.get("client"), CLIENT_LEN),
-        "authed": bool(raw.get("authed")),
-        "durationMs": duration_ms,
-        "argNames": _str_list(raw.get("argNames"), MAX_ARG_NAMES, ARG_NAME_LEN),
-        "beadRefs": bead_refs,
-        "summary": _str(raw.get("summary"), SUMMARY_IN_LEN)[:SUMMARY_CHARS],
-    }
-    # Absent upstream values stay absent: the daemon validates present
-    # fields (None is not a valid string/number), and the renderer reads
-    # everything through .get with defaults.
-    return {k: v for k, v in event.items() if v is not None}
+# Validation bounds (SUMMARY_CHARS, MAX_BEADREFS, MAX_ARG_NAMES,
+# ARG_NAME_LEN) and normalize_event are imported from
+# beads_activity_events above and re-exported here so existing
+# ``import beads_activity`` users keep working.
 
 
 # ---- bridge -------------------------------------------------------------------
@@ -337,41 +238,6 @@ class ActivityBridge:
                     time.sleep(min(0.2, deadline - time.monotonic()))
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(
-        description="Beads-bridge live activity -> displayd bridge")
-    ap.add_argument("--bridge",
-                    default=os.environ.get("BEADS_BRIDGE_URL",
-                                           "http://127.0.0.1:3737"),
-                    help="beads-bridge base URL (default: %(default)s)")
-    ap.add_argument("--displayd",
-                    default=os.environ.get("DISPLAYD_BASE",
-                                           "http://100.81.88.113:8980"),
-                    help="displayd base URL (default: %(default)s)")
-    ap.add_argument("--interval", type=float,
-                    default=float(os.environ.get("ACTIVITY_INTERVAL", "3.0")),
-                    help="poll seconds, 1..120 (default: %(default)s)")
-    ap.add_argument("--limit", type=int,
-                    default=int(os.environ.get("ACTIVITY_LIMIT", "50")),
-                    help="events per poll, 1..200 (default: %(default)s)")
-    ap.add_argument("--backfill", type=int,
-                    default=int(os.environ.get("ACTIVITY_BACKFILL", "8")),
-                    help="newest events to forward on first poll, 0..50 "
-                         "(default: %(default)s)")
-    ap.add_argument("--verbose", action="store_true")
-    args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(asctime)s %(levelname)s %(message)s")
-    try:
-        bridge = ActivityBridge(args.bridge, args.displayd,
-                                interval=args.interval, limit=args.limit,
-                                backfill=args.backfill)
-    except ValueError as err:
-        ap.error(str(err))
-        return 2
-    bridge.run_forever()
-    return 0
-
-
 if __name__ == "__main__":
+    from beads_activity_cli import main
     sys.exit(main())
