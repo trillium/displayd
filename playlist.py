@@ -1,60 +1,15 @@
 """Playlist mode for displayd: automatic rotation with a progress bar.
 
 A playlist is a configured list of views ``[{renderer, params, dwell}]``.
-When enabled, a scheduler advances through the list on top of the existing
-``/show`` machinery (one ``_start_view`` per switch -- no parallel path),
-wrapping at the end. Each view's dwell time is its own.
+The scheduler advances through the list on top of the existing ``/show``
+machinery (one ``_start_view`` per switch, wrapping at the end).
 
-The progress bar fills monotonically from empty to full across the current
-view's dwell; when it reaches full the view switches. It is composited by
-the daemon onto every presented frame (see ``Screen.present``), so it
-tracks animated views frame-for-frame and is repainted on a short tick for
-static views that park after one frame.
-
-Design decisions (captain's brief, task-qll0e):
-
-- **Fill, not deplete (default).** The captain described both a shrinking
-  countdown and a loading bar that "maximums and then changes". The default
-  is a growing fill bar: at switch time the bar is full, which reads
-  unambiguously as "this view's time is up". A shrinking bar starts full
-  and could be mistaken for a border. ``direction: "drain"`` reverses it
-  for operators who prefer the countdown reading; the two are never mixed.
-- **Fill direction follows the edge.** ``top``/``bottom`` fill left to
-  right; ``left``/``right`` fill bottom to top (like a meter rising). Drain
-  mode empties in the mirror direction.
-- **Flush to the edge, thin by default.** 10px at 1080p, configurable
-  2..64. No inset: the bar owns its edge strip outright instead of floating
-  over content with margins.
-- **Smoothness.** The bar is repainted on ``tick_seconds`` (default 0.2s,
-  i.e. 5Hz). A full-width bar over a 30s dwell advances ~13px per tick --
-  below what the eye resolves at wall distance -- while a full-frame
-  present at 5Hz is ~40MB/s of framebuffer writes, comfortably cheap.
-- **Colour conformance (Option A, additive).** A renderer may declare an
-  ``ACCENT`` module attribute (``"#rrggbb"``, a colour name, or an
-  ``(r, g, b)`` tuple) naming the colour the bar should wear on that view.
-  Resolution order: per-view ``color`` in the playlist item (operator
-  override, e.g. for views owned by other tasks) > renderer ``ACCENT`` >
-  playlist-level ``color`` default > white fallback. A renderer that
-  declares nothing keeps working exactly as before. Whatever colour wins,
-  the fill is drawn with a contrast border (black on bright accents, white
-  on dark ones) over a dark track, so the bar reads on both dark views
-  (beads) and light ones (qr) instead of vanishing into the background.
-- **Rotation yields.** While a notice/attention transient holds the screen,
-  while the panel is blanked (manual off or idle-off), while a
-  static-region layout owns the panel, or after an explicit manual
-  ``/show``/``/clear``, the scheduler holds: it does not advance,
-  and the bar is hidden. Transients and blanking resume automatically with
-  a fresh dwell; a manual choice holds until an explicit resume (the
-  manual-choice-wins rule). Advancing never touches the activity clock, so
-  rotation cannot defeat idle-off.
-- **Broken views don't stall.** An unknown renderer is skipped after a
-  short error dwell; a renderer that raises mid-dwell holds its last good
-  frame (existing ``_run`` containment) and the scheduler still advances on
-  time.
-
-Renderer contract (additive -- declare nothing and nothing changes)::
-
-    ACCENT = "#4DC3FF"   # or "green", or (77, 195, 255)
+Single-concept split: colours live in :mod:`playlist_color`, bar geometry
+and compositing in :mod:`playlist_bar`, the read model (hold reasons,
+progress, status) in :mod:`playlist_state`, and view advancement in
+:mod:`playlist_schedule`. This module keeps the ``Playlist`` identity,
+lifecycle, overlay hook, and view-list validation; moved names are
+re-exported here so existing importers keep working.
 
 Config lives in the ``playlist`` section of the policy surface
 (``GET``/``POST /policy``, persisted to ``policy.json``)::
@@ -69,68 +24,11 @@ Config lives in the ``playlist`` section of the policy surface
 import threading
 import time
 
-PLACEMENTS = ("top", "left", "bottom", "right")
-DIRECTIONS = ("fill", "drain")
-
-DEFAULT_COLOR = (255, 255, 255)
-TRACK_COLOR = (38, 38, 46)
-ERROR_DWELL = 5.0  # seconds to linger (bar hidden) on an unshowable view
-HISTORY = 50
-
-NAMED = {
-    "black": (0, 0, 0),
-    "white": (255, 255, 255),
-    "red": (255, 0, 0),
-    "green": (0, 255, 0),
-    "blue": (0, 0, 255),
-    "yellow": (255, 255, 0),
-    "cyan": (0, 255, 255),
-    "magenta": (255, 0, 255),
-    "grey": (128, 128, 128),
-    "gray": (128, 128, 128),
-    "orange": (255, 165, 0),
-}
-
-
-def parse_color(value, default=None):
-    """Accept '#rgb', '#rrggbb', a few names, or an (r,g,b) tuple."""
-    if value is None or value == "":
-        return default
-    if isinstance(value, (list, tuple)) and len(value) == 3:
-        try:
-            return tuple(max(0, min(255, int(v))) for v in value)
-        except (TypeError, ValueError):
-            return default
-    text = str(value).strip()
-    if text.lower() in NAMED:
-        return NAMED[text.lower()]
-    digits = text.lstrip("#")
-    if len(digits) == 3:
-        digits = "".join(c * 2 for c in digits)
-    if len(digits) == 6:
-        try:
-            return tuple(int(digits[i:i + 2], 16) for i in (0, 2, 4))
-        except ValueError:
-            return default
-    return default
-
-
-def accent_for(renderer_entry, item_color=None, default=DEFAULT_COLOR):
-    """Resolve the bar colour for one view.
-
-    ``renderer_entry`` is a registry entry as built by
-    ``displayd.load_renderers`` (``{"module": mod, ...}``); entries without
-    a module (broken plugins) fall through to the default. Precedence:
-    per-view item ``color`` > renderer ``ACCENT`` > playlist default.
-    Never raises: garbage resolves to the default."""
-    for candidate in (item_color,
-                      getattr((renderer_entry or {}).get("module"), "ACCENT", None)
-                      if isinstance(renderer_entry, dict) else None,
-                      default):
-        parsed = parse_color(candidate, None)
-        if parsed is not None:
-            return parsed
-    return DEFAULT_COLOR
+from playlist_bar import (DIRECTIONS, PLACEMENTS, bar_boxes, draw_bar)
+from playlist_color import (DEFAULT_COLOR, NAMED, TRACK_COLOR, accent_for,
+                            parse_color)
+from playlist_schedule import (ERROR_DWELL, HISTORY, PlaylistScheduleMixin)
+from playlist_state import PlaylistStateMixin
 
 
 def validate_views(views):
@@ -209,7 +107,7 @@ def draw_bar(img, placement, thickness, fraction, direction, color):
     return img
 
 
-class Playlist:
+class Playlist(PlaylistStateMixin, PlaylistScheduleMixin):
     """Scheduler advancing through configured views on top of /show.
 
     Constructed with the daemon (duck-typed: ``.policy``, ``.screen``,
@@ -287,86 +185,6 @@ class Playlist:
             self.item_started = None
             self.index += 1
 
-    # ---- state ---------------------------------------------------------
-
-    def _config(self):
-        try:
-            return self.daemon.policy.get_config()["playlist"]
-        except Exception:
-            return {}
-
-    def _views(self, cfg):
-        views = cfg.get("views") or []
-        return views if isinstance(views, list) else []
-
-    def _hold_reason(self, cfg):
-        """Why the scheduler must not advance right now (None = run)."""
-        if not cfg.get("enabled"):
-            return "disabled"
-        if not self._views(cfg):
-            return "empty"
-        with self._lock:
-            if self.paused_by is not None:
-                return "paused:manual"
-        try:
-            if self.daemon.policy.transient_status().get("active") is not None:
-                return "transient"
-        except Exception:
-            pass
-        try:
-            if getattr(self.daemon.fb, "blanked", False):
-                return "screen-off"
-        except Exception:
-            pass
-        try:
-            # A static-region layout owns the panel region by region:
-            # rotation holds (and the bar hides) until the layout is
-            # cleared, exactly like a manual choice. getattr-guarded so
-            # test doubles without layout state still work.
-            if getattr(self.daemon, "layout", None) is not None:
-                return "layout-active"
-        except Exception:
-            pass
-        return None
-
-    def progress(self):
-        """Filled share of the current dwell in [0, 1], or None when the
-        bar should be hidden (held, error dwell, or misconfigured)."""
-        cfg = self._config()
-        if self._hold_reason(cfg) is not None:
-            return None
-        with self._lock:
-            if self.item_started is None or not self.current_ok:
-                return None
-            if self.dwell <= 0:
-                return None
-            return max(0.0, min(1.0, (self.clock() - self.item_started)
-                                / self.dwell))
-
-    def status(self):
-        cfg = self._config()
-        views = self._views(cfg)
-        with self._lock:
-            idx = self.index if views else 0
-            item = views[idx % len(views)] if views else None
-            frac = self.progress()
-            history = list(self.history[-10:])
-            paused = self.paused_by
-            err = self.last_error
-        return {
-            "enabled": bool(cfg.get("enabled", False)),
-            "hold": self._hold_reason(cfg),
-            "paused_by": paused,
-            "placement": cfg.get("placement"),
-            "thickness": cfg.get("thickness"),
-            "direction": cfg.get("direction"),
-            "index": idx,
-            "view": item,
-            "progress": round(frac, 4) if frac is not None else None,
-            "last_error": err,
-            "history": [{"at": at, "renderer": name} for at, name in history],
-        }
-
     # ---- overlay ---------------------------------------------------------
 
     def overlay_image(self, img):
@@ -395,81 +213,3 @@ class Playlist:
                             color)
         except Exception:
             return img
-
-    # ---- scheduler ---------------------------------------------------------
-
-    def _show_current(self, item, dwell):
-        name = item.get("renderer")
-        params = item.get("params") or {}
-        try:
-            self.daemon.policy.note_playlist(name, params)
-            self.daemon._start_view(name, params)
-        except (KeyError, ValueError) as err:
-            with self._lock:
-                self.last_error = "%s: %s" % (type(err).__name__, err)
-                self.item_started = self.clock()
-                self.dwell = ERROR_DWELL
-                self.current_ok = False
-            return
-        except Exception as err:  # never let a view kill the scheduler
-            with self._lock:
-                self.last_error = "%s: %s" % (type(err).__name__, err)
-                self.item_started = self.clock()
-                self.dwell = ERROR_DWELL
-                self.current_ok = False
-            return
-        with self._lock:
-            self.last_error = None
-            self.item_started = self.clock()
-            self.dwell = dwell
-            self.current_ok = True
-            self.history.append((time.time(), name))
-            del self.history[:-HISTORY]
-
-    def _loop(self):
-        while not self._stop.is_set():
-            cfg = self._config()
-            tick = cfg.get("tick_seconds") or 0.2
-            try:
-                tick = float(tick)
-            except (TypeError, ValueError):
-                tick = 0.2
-            tick = max(0.05, min(2.0, tick))
-            if self._hold_reason(cfg) is not None:
-                with self._lock:
-                    self.item_started = None
-                    self.current_ok = False
-                self._stop.wait(tick)
-                continue
-            views = self._views(cfg)
-            sig = repr([(v.get("renderer"), v.get("dwell"),
-                         repr(v.get("params"))) for v in views])
-            with self._lock:
-                if sig != self._views_sig:
-                    self._views_sig = sig
-                    self.index = 0
-                    self.item_started = None
-                if self.index >= len(views):
-                    self.index = 0
-                started = self.item_started
-                # Effective dwell: a failed show shortens to ERROR_DWELL
-                # inside _show_current, so read it back under the lock.
-                eff_dwell = self.dwell
-                idx = self.index
-            item = views[idx % len(views)]
-            try:
-                dwell = float(item.get("dwell", 30))
-            except (TypeError, ValueError):
-                dwell = 30.0
-            if started is None:
-                self._show_current(item, dwell)
-            elif self.clock() - started >= eff_dwell:
-                with self._lock:
-                    self.index = (self.index + 1) % len(views)
-                    self.item_started = None
-            else:
-                try:
-                    self.daemon.screen.repaint_overlay()
-                except Exception:
-                    pass
-            self._stop.wait(tick)
