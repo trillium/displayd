@@ -12,11 +12,10 @@ import importlib.util
 import json
 import os
 
-SUPPRESSED_CHROME = ("picker", "reload", "notice")
-COVERAGE = ("exact(id+rect+action): picker tiles, retro-grid cells; "
-            "exact(id+rect): home badge; presence-only: macbook_mouse "
-            "on macbook, talon_focus on talon_apps; reported-not-asserted: "
-            "strips, reload_confirm, feedback; unasserted: layout, blank")
+COVERAGE = ("exact(id+rect): home/sleep badges; exact(+action): picker, "
+            "retro-grid cells; presence-only: macbook_mouse, talon_focus, "
+            "sleep screen_on; reported-not-asserted: strips, "
+            "reload_confirm, feedback; unasserted: layout, blank")
 
 
 def _load_renderer(name):
@@ -103,9 +102,15 @@ def expected_for_view(view, params=None, w=1920, h=1080,
             return {"view": view, "checkable": False,
                     "reason": "picker geometry failed: %s" % exc,
                     "exact": [], "presence": []}
+        try:
+            nap = _load_renderer("sleep_chrome").audit_exact(view, w, h)
+        except Exception as exc:
+            return {"view": view, "checkable": False,
+                    "reason": "chrome geometry failed: %s" % exc,
+                    "exact": [], "presence": []}
         return {"view": view, "checkable": True,
                 "reason": "%d tile(s)" % len(exact),
-                "exact": exact, "presence": []}
+                "exact": exact + nap, "presence": []}
     exact, presence, note = [], [], ""
     if view == "retro_grid":
         try:
@@ -127,24 +132,20 @@ def expected_for_view(view, params=None, w=1920, h=1080,
             return {"view": view, "checkable": False,
                     "reason": "retro-grid geometry failed: %s" % exc,
                     "exact": [], "presence": []}
-    gated = {"macbook": "macbook_mouse", "talon_apps": "talon_focus"}
-    if view in gated:  # view-gated coord actions: unwired taps die silent
+    gated = {"macbook": "macbook_mouse", "talon_apps": "talon_focus",
+             "sleep": "screen_on"}
+    if view in gated:  # view-gated actions: unwired taps die silent
         presence.append({"action": gated[view]})
         note += " + " + view
-    if view not in SUPPRESSED_CHROME:
+    for helper in ("home_chrome", "sleep_chrome"):
         try:
-            badge = _load_renderer("home_chrome").home_region(w, h)
-            exact.append({"id": badge["id"],
-                          "rect": [int(v) for v in badge["rect"]],
-                          "action": None, "required": True})
+            exact.extend(_load_renderer(helper).audit_exact(view, w, h))
         except Exception as exc:
             return {"view": view, "checkable": False,
-                    "reason": "home-badge geometry failed: %s" % exc,
+                    "reason": "chrome geometry failed: %s" % exc,
                     "exact": [], "presence": []}
-    else:
-        note += ": dismissal is server-side, no badge drawn"
     return {"view": view, "checkable": True,
-            "reason": ("home badge" + note).strip(),
+            "reason": ("badges" + note).strip(),
             "exact": exact, "presence": presence}
 
 

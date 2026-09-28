@@ -431,6 +431,53 @@ Reference wiring (`touch-home.json.example`, 1920x1080):
   live panel, restart only the existing `displayd-touch` unit. Revert:
   restore the backup and restart the unit again.
 
+## Sleep/wake (panel sleeps itself, tap wakes it)
+
+A moon badge is composited top-right on every view through the same
+`Screen.overlay` chain (`renderers/sleep_chrome.py`, after the home
+badge -- same tile style, moon glyph, no font). Its region
+(`screen-off`) fires the existing closed `screen_off` action
+(`POST /screen/off`): no new action, no generic action. List it
+before `playlist-next`: the badge lives inside the right strip's
+width (never covers view content -- the picker grid ends at x=1760,
+the macbook map and talon columns start at y=250), and earlier
+entries win the overlap.
+
+Powering off also switches to the dedicated `sleep` view
+(`renderers/sleep.py`, near-black with a dim tap-to-wake hint for the
+lit case), remembering the pre-sleep view; powering on restores it.
+The switch is the wake signal: `view_regions` -> `sleep` holds exactly
+one fullscreen `screen_on` region (`wake`), and scoped regions are
+hit-tested before global ones -- so while asleep that target shadows
+every strip (any sensible tap wakes) and while awake it is not live at
+all (normal controls behave as today). A dedicated view name is the
+point: scoping the wake target to a generic fill would arm it on every
+unrelated use. `GET /touch/check` asserts the shape (badges exact,
+sleep presence-only).
+
+Semantics worth knowing:
+
+- A manual `/show` or `/clear` while dark voids the pending return
+  (the operator already chose), so a later power-on never yanks it
+  back. Layouts are never switched (the layout survives the nap).
+  Idle-off sleeps the same way but does not hold the playlist.
+- Sleeping holds playlist rotation (a manual choice, like `/show`);
+  waking restores the held view.
+- A corner tap during reload dismisses first AND then sleeps (region
+  hits dispatch after a dismissal, exactly as before).
+- Waking with no return pending (slept from a blank panel, or a manual
+  demo shown while lit) falls back to the clock -- the same fallback
+  the transient-expiry path uses -- so a wake always lands somewhere
+  navigable and a demo tap is a shortcut to the clock, not a trap.
+- One-way-door rule: if the touch device ever stops reporting while the
+  backlight is off, on-panel wake is impossible -- do not ship the wake
+  region then. (Verified on lnx-server: evdev keeps reporting; the
+  power path touches only backlight + framebuffer sysfs, never input.)
+- Host procedure: same as the home button (`cp touch.json
+  backups/touch.json.pre-sleep-<date>`, add the badge region +
+  `view_regions` -> `sleep`, `load_config()` + `--check-views`,
+  restart `displayd-touch`, restore the backup to revert).
+
 ## Tap anywhere: unconsumed taps route to options
 
 A tap that hits no configured region -- the middle dead zone in the

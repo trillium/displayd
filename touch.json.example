@@ -1,5 +1,5 @@
 {
-  "_comment": "Example touch.py config for lnx-server. Copy to touch.json on the host and edit: confirm device with `python3 touch.py --list-devices`, raw range with evtest, and width/height with fbset. Env overrides: DISPLAYD_TOUCH_DEVICE, DISPLAYD_URL, DISPLAYD_TOUCH_WIDTH/HEIGHT, DISPLAYD_TOUCH_CONFIDENCE (1 to enable confidence-mode tap feedback). Keep confidence_feedback disabled except during tap tests; see TOUCH.md.",
+  "_comment": "Example touch.py config for lnx-server. Copy to touch.json on the host and edit: confirm device with `python3 touch.py --list-devices`, raw range with evtest, and width/height with fbset. Env overrides: DISPLAYD_TOUCH_DEVICE, DISPLAYD_URL, DISPLAYD_TOUCH_WIDTH/HEIGHT, DISPLAYD_TOUCH_CONFIDENCE (1 to enable confidence-mode tap feedback). Keep confidence_feedback disabled except during tap tests; see TOUCH.md. Sleep/wake: the global screen-off badge sleeps the panel via the existing screen_off action; the scoped sleep wake region wakes it via screen_on (daemon restores the pre-sleep view). Revert: restore the backup (see TOUCH.md).",
   "device": "/dev/input/event8",
   "endpoint": "http://127.0.0.1:8980",
   "width": 1920,
@@ -29,6 +29,12 @@
   },
   "regions": [
     {
+      "id": "screen-off",
+      "_comment": "sleep badge (top-right moon, renderers/sleep_chrome.py): fires the existing screen_off action. Listed before the full-height strips so it wins its square (hit_test takes the first match). Powering off also switches to the sleep view, whose scoped wake region shadows every strip while asleep.",
+      "rect": [1760, 0, 160, 160],
+      "action": {"name": "screen_off"}
+    },
+    {
       "id": "playlist-next",
       "rect": [1280, 0, 640, 1080],
       "action": {"name": "playlist_next"}
@@ -51,6 +57,14 @@
     }
   ],
   "view_regions": {
+    "sleep": [
+      {
+        "id": "wake",
+        "_comment": "fullscreen wake target, live ONLY while the sleep view shows (the daemon switches there on every power-off). Scoped regions are hit-tested before global ones, so while asleep this shadows every strip and any tap wakes via the existing screen_on action (which also restores the pre-sleep view). While awake it is not live at all.",
+        "rect": [0, 0, 1920, 1080],
+        "action": {"name": "screen_on"}
+      }
+    ],
     "picker": [
       {
         "id": "example-view-tile",

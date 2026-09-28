@@ -57,6 +57,18 @@
       }
     },
     {
+      "id": "screen-off",
+      "rect": [
+        1760,
+        0,
+        160,
+        160
+      ],
+      "action": {
+        "name": "screen_off"
+      }
+    },
+    {
       "id": "screen-on",
       "rect": [
         0,
@@ -82,6 +94,20 @@
     }
   ],
   "view_regions": {
+    "sleep": [
+      {
+        "id": "wake",
+        "rect": [
+          0,
+          0,
+          1920,
+          1080
+        ],
+        "action": {
+          "name": "screen_on"
+        }
+      }
+    ],
     "picker": [
       {
         "id": "view-clock",

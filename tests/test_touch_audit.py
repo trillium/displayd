@@ -38,6 +38,10 @@ FOCUS_RIGHT = {"id": "talon-focus-right",
                "action": {"name": "talon_focus"}}
 HOME = {"id": "home", "rect": [0, 0, 160, 160],
         "action": {"name": "select_view", "view": "picker"}}
+SLEEP = {"id": "screen-off", "rect": [1760, 0, 160, 160],
+         "action": {"name": "screen_off"}}
+WAKE = {"id": "wake", "rect": [0, 0, 1920, 1080],
+        "action": {"name": "screen_on"}}
 
 
 def _region(rid, rect, action=None):
@@ -161,14 +165,22 @@ class ExpectedTest(unittest.TestCase):
         expected = touch_audit.expected_for_view("picker", {}, W, H)
         self.assertTrue(expected["checkable"])
         self.assertEqual([e["id"] for e in expected["exact"]],
-                         ["view-%s" % v for v in pk.DEFAULT_VIEWS])
+                         ["view-%s" % v for v in pk.DEFAULT_VIEWS] +
+                         ["screen-off"])
         self.assertEqual(expected["exact"][0]["rect"], [179, 59, 508, 401])
         self.assertNotIn("home", [e["id"] for e in expected["exact"]])
 
-    def test_plain_view_draws_only_home(self):
+    def test_plain_view_draws_badges(self):
         expected = touch_audit.expected_for_view("clock", {}, W, H)
         self.assertEqual([(e["id"], e["rect"]) for e in expected["exact"]],
-                         [("home", [0, 0, 160, 160])])
+                         [("home", [0, 0, 160, 160]),
+                          ("screen-off", [1760, 0, 160, 160])])
+
+    def test_sleep_view_needs_wake_presence(self):
+        expected = touch_audit.expected_for_view("sleep", {}, W, H)
+        self.assertTrue(expected["checkable"])
+        self.assertIn({"action": "screen_on"}, expected["presence"])
+        self.assertEqual(expected["exact"], [])
 
     def test_macbook_requires_mouse_presence(self):
         expected = touch_audit.expected_for_view("macbook", {}, W, H)
@@ -369,9 +381,11 @@ class DaemonDriftTest(unittest.TestCase):
         self.assertEqual(mac["presence_missing"],
                          [{"action": "macbook_mouse"}])
         # FIX: tiles scoped to picker, map scoped to macbook.
-        self._announce([dict(HOME)], {"picker": tiles,
-                                       "macbook": [dict(MAP)],
-                                       "talon_apps": [dict(FOCUS)]})
+        self._announce([dict(HOME), dict(SLEEP)],
+                         {"picker": tiles,
+                          "macbook": [dict(MAP)],
+                          "talon_apps": [dict(FOCUS)],
+                          "sleep": [dict(WAKE)]})
         passed = self.daemon.touch_check()
         self.assertTrue(passed["ok"], json.dumps(passed, indent=2))
         self.assertEqual(passed["status"], "ok")
@@ -381,9 +395,11 @@ class DaemonDriftTest(unittest.TestCase):
     def test_current_view_carries_params_and_detail(self):
         self.daemon.show("clock", {})
         self.assertEqual(self.daemon.state()["params"], {})
-        self._announce([dict(HOME)], {"picker": self._live_tiles(),
-                                        "macbook": [dict(MAP)],
-                                        "talon_apps": [dict(FOCUS)]})
+        self._announce([dict(HOME), dict(SLEEP)],
+                         {"picker": self._live_tiles(),
+                          "macbook": [dict(MAP)],
+                          "talon_apps": [dict(FOCUS)],
+                          "sleep": [dict(WAKE)]})
         report = self.daemon.touch_check()
         self.assertTrue(report["ok"])
         self.assertEqual(report["current"]["view"], "clock")
