@@ -100,6 +100,14 @@ try:
 except Exception:
     home_chrome_module = None
 try:
+    sleep_chrome_module = _load_shared_helper("sleep_chrome")
+except Exception:
+    sleep_chrome_module = None
+# Dedicated dark view behind the wake target (renderers/sleep.py):
+# powering off also switches here so the touch service's per-view wake
+# region goes live exactly while the panel is asleep (see set_power).
+SLEEP_VIEW = "sleep"
+try:
     macbook_map_module = _load_shared_helper("macbook_map")
 except Exception:
     macbook_map_module = None
@@ -1157,17 +1165,26 @@ class DisplayDaemon:
         # Playlist rotation: scheduler on top of _start_view, overlay hook
         # for the progress bar. Starts enabled only from persisted config.
         self.playlist = playlist_module.Playlist(self)
-        # Shared screen chrome, composed not replaced: the playlist bar
-        # and the home button draw through one chained overlay so both
-        # stay visible at once (a second plain assignment here would
-        # silently disable the bar). Home reads screen.current_view live
-        # and suppresses itself on picker/reload/notice; see
-        # renderers/home_chrome.py.
+        # Shared screen chrome, composed not replaced: the playlist bar,
+        # the home button, and the sleep badge draw through one chained
+        # overlay so all stay visible at once (a second plain assignment
+        # here would silently disable the earlier layers). Each badge
+        # reads screen.current_view live and suppresses itself where it
+        # is meaningless; see renderers/home_chrome.py and
+        # renderers/sleep_chrome.py.
         self.screen.overlay = self.playlist.overlay_image
         if home_chrome_module is not None:
             self.screen.overlay = home_chrome_module.chain_overlays(
                 self.screen.overlay,
                 home_chrome_module.home_overlay(self.screen))
+        if (sleep_chrome_module is not None
+                and home_chrome_module is not None):
+            # One chain primitive (home's): both badge helpers ship
+            # together, and a missing badge must never take the daemon
+            # down, so the sleep badge rides only when the chain does.
+            self.screen.overlay = home_chrome_module.chain_overlays(
+                self.screen.overlay,
+                sleep_chrome_module.sleep_overlay(self.screen))
         self.watchdog_stop = threading.Event()
         self.watchdog_thread = None
         self.stop_event = None
@@ -1179,6 +1196,10 @@ class DisplayDaemon:
         # Last POST /touch/announce: the region set the running touch
         # service is actually dispatching (None until it announces).
         self.touch_live = None
+        # Pre-sleep return target ({"renderer", "params"}), captured
+        # by the power-off path and consumed by the power-on path. None
+        # means no return pending (never slept, or already restored).
+        self.sleep_restore = None
         self.playlist.start()
         self.console_taken = self.fb.take_console()
         self.fb.set_blank(0)
@@ -1257,6 +1278,12 @@ class DisplayDaemon:
             self.stop_event = stop
             self.current = name
             self.current_params = dict(params or {})
+            # Single funnel: every navigation voids a pending sleep
+            # return, so a later power-on never yanks back a view the
+            # operator already replaced (e.g. a manual /show while
+            # dark). Only _enter_sleep_view re-arms the slot, after
+            # the sleep switch lands.
+            self.sleep_restore = None
             self.started_at = started
             self.last_error = None
             self.last_switch_at = started
@@ -1280,6 +1307,9 @@ class DisplayDaemon:
             self.current_params = None
             self.started_at = None
             self.screen.current_view = None
+            # Blanking voids a pending sleep return with it (the funnel
+            # above only covers _start_view; see layout()/clear_layout).
+            self.sleep_restore = None
             with self.cache_lock:
                 self.switch_pending = None
         self.screen.clear()
@@ -1334,10 +1364,14 @@ class DisplayDaemon:
     def _wake_if_idle(self):
         """Activity arrived while idle-off held the panel dark: power back
         on and repaint. Manual power-off is NOT woken -- the operator owns
-        that state; only the watchdog's own power-off auto-wakes."""
+        that state; only the watchdog's own power-off auto-wakes.
+        Returns True when it woke the panel (the caller then owns the
+        sleep-view return -- most callers switch views right after)."""
         if self.policy.idle_off and self.fb.blanked:
             self.fb.power_on()
             self.policy.idle_off = False
+            return True
+        return False
 
     def show(self, name, params):
         entry = self.renderers.get(name)
@@ -1514,6 +1548,7 @@ class DisplayDaemon:
             self._cancel_transient_timer()
             self._wake_if_idle()
             self._stop_locked()
+            self.sleep_restore = None  # a layout owns the panel now
             with self.layout_lock:
                 self.layout = regions
                 self.layout_started_at = started
@@ -1562,6 +1597,7 @@ class DisplayDaemon:
             self.current_params = None
             self.started_at = None
             self.screen.current_view = None
+            self.sleep_restore = None  # blank owns the panel now
             with self.cache_lock:
                 self.switch_pending = None
         self.screen.clear()
@@ -1613,7 +1649,11 @@ class DisplayDaemon:
             raise
         self.policy.note_feed()
         with self.lock:
-            self._wake_if_idle()
+            woke = self._wake_if_idle()
+        if woke:
+            # The only wake path with no follow-up view switch: land the
+            # sleep return now, or the panel lights up on the sleep view.
+            self._exit_sleep_view()
         return {"feed": pushed,
                 "attention": self._maybe_attention(renderer, input_name)}
 
@@ -2581,6 +2621,13 @@ class DisplayDaemon:
         with self.lock:
             if not self.policy.idle_due() or self.fb.blanked:
                 return {"idle_off": self.policy.idle_off}
+        # Same sleep view as the manual path (the wake target must work
+        # identically), but the rotation keeps running: idle-off is not
+        # a manual choice, so it must not hold the playlist.
+        self._enter_sleep_view()
+        with self.lock:
+            if self.fb.blanked:
+                return {"idle_off": self.policy.idle_off}
             self.fb.power_off()
             self.policy.idle_off = True
             return {"idle_off": True, "at": self.policy.last_activity()}
@@ -2606,18 +2653,83 @@ class DisplayDaemon:
 
     # ---- screen power --------------------------------------------------
 
+    def _enter_sleep_view(self):
+        """Switch to the dedicated sleep view, remembering the return.
+
+        The return target is the policy base (the pre-transient view),
+        falling back to the current view only when no base exists -- a
+        transient itself (reload/notice) is never restored, so waking
+        after its window still lands somewhere sane. No-op when already
+        there, when the sleep renderer is missing, or while a layout
+        owns the panel (the layout survives the nap untouched). The
+        power calls below do the actual darkening; this only arms the
+        touch service's wake signal (renderer == sleep)."""
+        if self.layout_state():
+            return False
+        with self.lock:
+            if self.current == SLEEP_VIEW:
+                return True
+            if ("module" not in
+                    (self.renderers.get(SLEEP_VIEW) or {})):
+                return False
+            base = copy.deepcopy(self.policy.base)
+            if base is None and self.current is not None:
+                base = {"renderer": self.current,
+                        "params": copy.deepcopy(
+                            self.current_params or {})}
+            if (base is not None
+                    and base.get("renderer") == SLEEP_VIEW):
+                base = None
+        try:
+            self._start_view(SLEEP_VIEW, {})
+        except (KeyError, ValueError):
+            return False
+        with self.lock:
+            # Re-arm only if the switch actually landed: a concurrent
+            # navigation in between owns the panel instead.
+            if self.current == SLEEP_VIEW:
+                self.sleep_restore = base
+        return True
+
+    def _exit_sleep_view(self):
+        """Restore the pre-sleep view after power-on. One-shot: the
+        slot is consumed whether or not the restore lands (an uninstalled
+        renderer must not wedge every later wake). Callers paint this
+        while still dark so the first photons are the base view."""
+        with self.lock:
+            restore = self.sleep_restore
+            self.sleep_restore = None
+        if not restore:
+            return False
+        try:
+            self._start_view(restore["renderer"],
+                             restore.get("params") or {})
+        except (KeyError, ValueError):
+            return False
+        return True
+
     def set_power(self, power):
         power = (power or "").lower()
         if power not in ("on", "off"):
             raise ValueError("power must be 'on' or 'off'")
         self.policy.note_api()
-        with self.lock:
-            # A manual power call means the operator owns the power state:
-            # it clears the watchdog's idle_off claim either way.
-            self.policy.idle_off = False
-            if power == "off":
+        if power == "off":
+            # Sleep is a manual choice like /show: hold the rotation so
+            # no invisible frames advance it mid-nap, then switch to the
+            # sleep view (arming the touch wake target) before darkening.
+            self.playlist.on_manual()
+            self._enter_sleep_view()
+            with self.lock:
+                # A manual power call means the operator owns the power
+                # state: it clears the watchdog's idle_off claim.
+                self.policy.idle_off = False
                 result = self.fb.power_off()
-            else:
+        else:
+            # Restore first (still dark), then light up: power_on
+            # repaints the last frame, which is the base view again.
+            self._exit_sleep_view()
+            with self.lock:
+                self.policy.idle_off = False
                 result = self.fb.power_on()
         state = self.state()
         state["applied"] = result

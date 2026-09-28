@@ -42,12 +42,14 @@ Suppression (deliberate, see TOUCH.md "Home button"):
   tap then also navigates per normal region rules.
 - ``notice`` -- short-lived transient; matches the playlist bar, which
   also hides while a transient holds the screen.
+- ``sleep`` -- the corner tap wakes (the fullscreen wake region wins
+  every overlap), so no home badge is drawn where no home tap lands.
 """
 
 HOME_STRIP = 160  # button lives inside the left gesture strip's width,
 # so it never covers picker tiles (the grid starts at x=160).
 HOME_VIEW = "picker"  # select_view target: the view-selection screen.
-SUPPRESSED_VIEWS = ("picker", "reload", "notice")
+SUPPRESSED_VIEWS = ("picker", "reload", "notice", "sleep")
 
 BADGE_FILL = (13, 17, 28)
 BADGE_EDGE = (255, 255, 255)
@@ -139,6 +141,17 @@ def draw_home_button(img, rect=None):
     except Exception:
         pass
     return img
+
+
+def audit_exact(view, w=1920, h=1080):
+    """touch_audit.py projection: [exact entry] drawn here, or [] when
+    this view suppresses the badge. Pure."""
+    if view in (SUPPRESSED_VIEWS or ()):
+        return []
+    badge = home_region(w, h)
+    return [{"id": badge["id"],
+             "rect": [int(v) for v in badge["rect"]],
+             "action": None, "required": True}]
 
 
 def home_overlay(screen, suppressed=SUPPRESSED_VIEWS, rect=None):
