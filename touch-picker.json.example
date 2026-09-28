@@ -1,0 +1,149 @@
+{
+  "_comment": "Picker taps for lnx-server (1920x1080): dead-zone button opens the view grid, tiles reroute the view. Copy to touch.json on the host and edit only device/endpoint: confirm device with `python3 touch.py --list-devices`. Tile rects are generated -- never hand-edit them; recompute with: python3 renderers/picker.py --width <W> --height <H> --views <csv> (paste FIRST under \"regions\": earlier entries win overlaps). No fullscreen reload_confirm region by design: it would swallow the tap-anywhere fallback, and dismissal-first ordering makes a same-tap confirm miss anyway (see TOUCH.md). Validate with `python3 touch.py --config touch.json --check-views` before restarting displayd-touch. Revert: restore the backup (see TOUCH.md).",
+  "device": "/dev/input/event8",
+  "endpoint": "http://100.81.88.113:8980",
+  "width": 1920,
+  "height": 1080,
+  "calibration": {
+    "x_min": 0,
+    "x_max": 1920,
+    "y_min": 0,
+    "y_max": 1080,
+    "swap_xy": false,
+    "invert_x": false,
+    "invert_y": false,
+    "rotation": 0
+  },
+  "tap_max_seconds": 0.5,
+  "tap_max_pixels": 40,
+  "debounce_seconds": 0.3,
+  "confidence_feedback": {
+    "enabled": true,
+    "renderer": "retro_grid",
+    "input": "tap"
+  },
+  "tap_options": {
+    "enabled": true,
+    "renderer": "picker",
+    "params": {
+      "views": [
+        "clock",
+        "chat",
+        "row",
+        "stream",
+        "activity",
+        "options"
+      ],
+      "rect": [
+        160,
+        40,
+        1600,
+        860
+      ]
+    }
+  },
+  "regions": [
+    {
+      "id": "view-clock",
+      "rect": [
+        179,
+        59,
+        508,
+        401
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "clock"
+      }
+    },
+    {
+      "id": "view-chat",
+      "rect": [
+        706,
+        59,
+        508,
+        401
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "chat"
+      }
+    },
+    {
+      "id": "view-row",
+      "rect": [
+        1233,
+        59,
+        508,
+        401
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "row"
+      }
+    },
+    {
+      "id": "view-stream",
+      "rect": [
+        179,
+        479,
+        508,
+        401
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "stream"
+      }
+    },
+    {
+      "id": "view-activity",
+      "rect": [
+        706,
+        479,
+        508,
+        401
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "activity"
+      }
+    },
+    {
+      "id": "view-options",
+      "rect": [
+        1233,
+        479,
+        508,
+        401
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "options"
+      }
+    },
+    {
+      "id": "screen-on",
+      "rect": [
+        0,
+        0,
+        160,
+        1080
+      ],
+      "action": {
+        "name": "screen_on"
+      }
+    },
+    {
+      "id": "playlist-next",
+      "rect": [
+        1760,
+        0,
+        160,
+        1080
+      ],
+      "action": {
+        "name": "playlist_next"
+      }
+    }
+  ]
+}

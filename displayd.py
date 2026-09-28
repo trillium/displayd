@@ -2330,6 +2330,7 @@ CONTROL_PAGE = """<!DOCTYPE html>
     <li><code>screen_off</code> <span class="eff">&mdash; drive panel backlight off (POST /screen/off)</span></li>
     <li><code>clear</code> <span class="eff">&mdash; blank the panel (POST /clear)</span></li>
     <li><code>show</code> <span class="eff">&mdash; replace the shown view, renderer named in config (POST /show)</span></li>
+    <li><code>select_view</code> <span class="eff">&mdash; reroute the displayed view to the named selection (POST /show)</span></li>
     <li><code>notify</code> <span class="eff">&mdash; interrupt the panel with a transient notice (POST /notify)</span></li>
     <li><code>feedback</code> <span class="eff">&mdash; record a fixed-shape tap-to-rate feedback rating (POST /feedback)</span></li>
     <li><code>reload_confirm</code> <span class="eff">&mdash; confirm the showing reload view via tap (POST /reload/confirm)</span></li>
