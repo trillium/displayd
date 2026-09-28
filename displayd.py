@@ -107,6 +107,16 @@ try:
     talon_apps_module = _load_shared_helper("talon_apps")
 except Exception:
     talon_apps_module = None
+try:
+    import touch_audit
+except Exception:
+    touch_audit = None
+# Host touch.json (host-local, never overwritten by deploys): read-only
+# context for /touch/check, never the live set (see touch_audit.py).
+TOUCH_JSON_PATH = os.environ.get(
+    "DISPLAYD_TOUCH_JSON",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "touch.json"),
+)
 VT = os.environ.get("DISPLAYD_VT", "/dev/tty1")
 POLICY_FILE = os.environ.get(
     "DISPLAYD_POLICY",
@@ -1147,8 +1157,12 @@ class DisplayDaemon:
         self.stop_event = None
         self.thread = None
         self.current = None
+        self.current_params = None  # params the showing view was started with
         self.started_at = None
         self.last_error = None
+        # Last POST /touch/announce: the region set the running touch
+        # service is actually dispatching (None until it announces).
+        self.touch_live = None
         self.playlist.start()
         self.console_taken = self.fb.take_console()
         self.fb.set_blank(0)
@@ -1226,6 +1240,7 @@ class DisplayDaemon:
             stop = threading.Event()
             self.stop_event = stop
             self.current = name
+            self.current_params = dict(params or {})
             self.started_at = started
             self.last_error = None
             self.last_switch_at = started
@@ -1246,6 +1261,7 @@ class DisplayDaemon:
         with self.lock:
             self._stop_locked()
             self.current = None
+            self.current_params = None
             self.started_at = None
             self.screen.current_view = None
             with self.cache_lock:
@@ -1492,6 +1508,7 @@ class DisplayDaemon:
                     self.region_frames[region["name"]] = Image.new(
                         "RGB", (w, h), (0, 0, 0))
             self.current = None
+            self.current_params = None
             self.started_at = None
             self.screen.current_view = "layout"
             for region in regions:
@@ -1526,6 +1543,7 @@ class DisplayDaemon:
             self._wake_if_idle()
             self._stop_locked()
             self.current = None
+            self.current_params = None
             self.started_at = None
             self.screen.current_view = None
             with self.cache_lock:
@@ -2003,6 +2021,135 @@ class DisplayDaemon:
         file is written host-side by deploy.sh, never through the API."""
         return read_deploy_stamp()
 
+    def announce_touch(self, body):
+        """Touch-service heartbeat (POST /touch/announce): the region
+        set the running service is actually dispatching. Best-effort on
+        the touch side, validated here. Never touches the policy clock:
+        a machine heartbeat is not operator activity."""
+        if touch_audit is None:
+            raise ValueError("touch audit helper unavailable")
+        cleaned = touch_audit.validate_announce(body or {})
+        with self.lock:
+            self.touch_live = {
+                "announced": cleaned,
+                "regions_sha": touch_audit.regions_sha(cleaned),
+                "announced_at": time.time(),
+            }
+            sha = self.touch_live["regions_sha"]
+            count = (len(cleaned["regions"])
+                     + sum(len(v) for v in
+                           cleaned["view_regions"].values()))
+        return {"ok": True, "regions": count, "regions_sha": sha}
+
+    def _expected_picker_views(self, params):
+        """Mirror of _picker_live_params for the check path: explicit
+        views win, else the live advertised set. None only when the
+        picker module itself is unloadable (then not assertable)."""
+        mod = (self.renderers.get("picker") or {}).get("module")
+        if mod is None:
+            return None
+        params = params if isinstance(params, dict) else {}
+        try:
+            if "views" in params:
+                return mod.coerce_views(params)
+            if hasattr(mod, "live_views"):
+                return mod.live_views(self.renderers)
+            return mod.coerce_views(params)
+        except Exception:
+            return None
+
+    def touch_check(self):
+        """GET /touch/check body: DRAWN geometry vs the LIVE announced
+        region set, evaluated per view (matrix) plus the showing view in
+        detail. ok False is unknown (no heartbeat: restart displayd-touch)
+        or mismatch (exact moved/missing rects). Undrawn live ids are
+        reported, never failed. Non-showing views assume default params."""
+        if touch_audit is None:
+            return {"ok": False, "status": "error",
+                    "error": "touch audit helper unavailable"}
+        live = self.touch_live
+        if live is None:
+            return {"ok": False, "status": "unknown",
+                    "current_view": self.current,
+                    "error": "no touch heartbeat: restart displayd-touch "
+                    "(it announces at startup) or run touch.py --announce",
+                    "coverage": touch_audit.COVERAGE}
+        announced = live.get("announced") or {}
+        scoped = announced.get("view_regions") or {}
+        global_regions = announced.get("regions") or []
+        w, h = self.screen.W, self.screen.H
+        views = sorted(name for name, entry in self.renderers.items()
+                       if isinstance(entry, dict) and "module" in entry)
+        results = {}
+        for name in views:
+            if name == "picker":
+                params = (self.current_params
+                          if name == self.current else {})
+                picker_views = self._expected_picker_views(params)
+                if picker_views is None:
+                    results[name] = {"ok": True, "checkable": False,
+                                     "reason": "picker unloadable"}
+                    continue
+            else:
+                params, picker_views = (self.current_params
+                                        if name == self.current else {}), None
+            expected = touch_audit.expected_for_view(
+                name, params, w, h, picker_views=picker_views)
+            if not expected["checkable"]:
+                results[name] = {"ok": True, "checkable": False,
+                                 "reason": expected["reason"]}
+                continue
+            live_norm = touch_audit.normalize_live(
+                touch_audit.candidates(global_regions, scoped, name))
+            compared = touch_audit.compare_exact(
+                expected["exact"], live_norm,
+                force_strict=name in scoped)
+            presence = touch_audit.compare_presence(expected["presence"],
+                                                    live_norm)
+            results[name] = {
+                "ok": compared["ok"] and presence["ok"],
+                "reason": expected["reason"],
+                "missing": compared["missing"],
+                "moved": compared["moved"],
+                "unwired": compared["unwired"],
+                "presence_missing": presence["missing"],
+                "unasserted": compared["unasserted"]}
+        file_info = {"present": False}
+        try:
+            with open(TOUCH_JSON_PATH, "r", encoding="utf-8") as fh:
+                doc = json.load(fh) or {}
+            file_sha = touch_audit.regions_sha(doc)
+            file_info = {"present": True,
+                         "regions_sha": file_sha,
+                         "matches_live": file_sha == live["regions_sha"]}
+        except Exception as exc:
+            file_info = {"present": False, "error": str(exc)}
+        current = None
+        if self.current is not None and self.current in results:
+            current = {"view": self.current,
+                       "params": self.current_params,
+                       **results[self.current]}
+            if self.current == "picker":
+                current["expected"] = touch_audit.expected_for_view(
+                    "picker", self.current_params, w, h,
+                    picker_views=self._expected_picker_views(
+                        self.current_params))["exact"]
+        ok = all(r.get("ok", True) for r in results.values())
+        report = {"ok": ok, "status": "ok" if ok else "mismatch",
+                  "current_view": self.current,
+                  "display": [w, h], "current": current,
+                  "views": results,
+                  "unknown_views": sorted(set(scoped) - set(views)),
+                  "announced_at": live["announced_at"],
+                  "regions_sha": live["regions_sha"],
+                  "touch_json": file_info,
+                  "coverage": touch_audit.COVERAGE}
+        if self.layout_state():
+            report["note"] = ("layout active: matrix still evaluates "
+                                "single-view wiring; no per-view taps "
+                                "asserted while the layout owns the panel")
+        return report
+
     def dismiss_reload(self):
         """Dismiss an active reload transient after a touchscreen tap.
 
@@ -2312,7 +2459,7 @@ class DisplayDaemon:
     def state(self):
         return {
             "renderer": self.current,
-            "params": None,
+            "params": self.current_params,
             "started_at": self.started_at,
             "age_seconds": round(time.time() - self.started_at, 1) if self.started_at else None,
             "screen": {
@@ -3144,6 +3291,15 @@ class Handler(BaseHTTPRequestHandler):
                                     DAEMON.take_mouse_move(raw)})
         if path == "/layout":
             return self._send(200, {"layout": DAEMON.layout_state()})
+        if path == "/touch/check":
+            # Drawn-vs-live region assertion (see touch_audit.py): 200
+            # when the per-view matrix agrees, 409 with the exact
+            # differing rects/ids when drifted or unknown. A GET: never
+            # touches the idle clock.
+            report = DAEMON.touch_check()
+            if report.get("ok"):
+                return self._send(200, report)
+            return self._send(409, report)
         if path == "/feedback":
             query = parse_qs(urlsplit(self.path).query)
             try:
@@ -3240,6 +3396,17 @@ class Handler(BaseHTTPRequestHandler):
             # Always 200 -- dismissing anything else is a harmless no-op.
             self._body()  # drained for keep-alive; no fields read
             return self._send(200, DAEMON.dismiss_reload())
+        if path == "/touch/announce":
+            # Touch-service heartbeat: the region set it is actually
+            # dispatching. 200 + count/sha, or 400 naming the defect.
+            # A machine heartbeat, not operator activity: the idle clock
+            # is untouched.
+            try:
+                return self._send(200,
+                                    DAEMON.announce_touch(self._body()))
+            except ValueError as exc:
+                return self._send(400, {"ok": False,
+                                         "error": str(exc)})
         if path == "/macbook/mouse":
             # Panel tap -> MacBook cursor: touch.py posts panel pixels
             # (closed `macbook_mouse` action); the Mac-side poller

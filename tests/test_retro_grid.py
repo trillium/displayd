@@ -248,7 +248,9 @@ class TouchRegionsTest(unittest.TestCase):
         self.assertEqual(doc["confidence_feedback"],
                          {"enabled": True, "renderer": "retro_grid",
                           "input": "tap"})
-        self.assertEqual(doc["regions"], rg.touch_regions())
+        self.assertEqual(doc["view_regions"]["retro_grid"],
+                         rg.touch_regions())
+        self.assertEqual(doc["regions"], [])
         cfg = dict(doc)
         cfg.pop("_comment", None)
         loaded = touch.load_config(None)  # defaults still validate

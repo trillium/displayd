@@ -17,6 +17,10 @@
 #      and the control page. The stamp is host-side only -- it is never
 #      committed, so the repo stays clean.
 #   6. Verifies: panel healthy, stamp shows this SHA, screen has content.
+#   7. Restarts the touch service (it loads touch.json once at ITS OWN
+#      startup, so a daemon-only restart leaves stale regions live) and
+#      requires GET /touch/check to agree: drawn UI vs live regions, with
+#      the exact differing rects on failure.
 #
 # Configuration (environment overrides):
 #   DISPLAYD_HOST        ssh target (default trillium@lnx-server)
@@ -153,4 +157,41 @@ RENDERER=$(printf '%s' "$NOW" | python3 -c \
 BL=$(printf '%s' "$NOW" | python3 -c \
     "import json,sys; b=json.load(sys.stdin)['screen']['backlight']; print(b.get('value') or 0)")
 echo "panel: renderer=$RENDERER backlight=$BL stamp=$SHA"
+
+# 7. Touch freshness: restart the touch unit so it re-announces its
+#    effective regions, then require the drawn-vs-live check to agree.
+#    The panel is already re-showed above, so a failing gate never leaves
+#    it black -- it fails the deploy loudly instead of shipping drift.
+if $SSH "$HOST" 'sudo -n systemctl restart displayd-touch'; then
+    TOUCH_RESTARTED=1
+    echo "touch service restarted"
+else
+    TOUCH_RESTARTED=0
+    echo "warning: displayd-touch restart failed (unit not installed?)" >&2
+fi
+# Top-level "ok" only: per-view entries carry their own "ok", so a
+# grep would match a nested agreement while the matrix disagrees.
+CHECK_OK=""; CHECK_STATUS=""
+check_probe() {
+    CHECK=$(curl -s -m 5 "http://$PANEL/touch/check" || true)
+    PROBE=$(printf '%s' "$CHECK" | python3 -c \
+        "import json,sys; r=json.load(sys.stdin); print(r.get('ok'), r.get('status'))" 2>/dev/null || echo "PARSE_FAIL")
+    CHECK_OK=$(printf '%s' "$PROBE" | cut -d' ' -f1)
+    CHECK_STATUS=$(printf '%s' "$PROBE" | cut -d' ' -f2)
+    [ "$CHECK_OK" = "True" ]
+}
+i=0
+until check_probe || [ "$i" -ge 15 ]; do
+    i=$((i + 1)); sleep 1
+done
+if [ "$CHECK_OK" = "True" ]; then
+    echo "touch regions agree: $(printf '%s' "$CHECK" | python3 -c \
+        "import json,sys; r=json.load(sys.stdin); print(r.get('current_view'), '-', r.get('status'))")"
+elif [ "$TOUCH_RESTARTED" = "0" ] && [ "$CHECK_STATUS" = "unknown" ]; then
+    echo "warning: no touch heartbeat and no unit to restart; continuing without the touch check" >&2
+else
+    echo "touch region check failed: $CHECK" >&2
+    echo "deploy.sh: drawn UI and live touch regions disagree (GET /touch/check); fix touch.json and re-run" >&2
+    exit 1
+fi
 echo "deployed $SHA at $DATE by $DEPLOYER"

@@ -155,7 +155,8 @@ class RegionsTest(unittest.TestCase):
         self.assertEqual(doc["width"], 1920)
         self.assertEqual(doc["height"], 1080)
         self.assertEqual(doc["tap_options"]["renderer"], "picker")
-        tiles = [r for r in doc["regions"] if r["id"].startswith("view-")]
+        tiles = [r for r in doc["view_regions"]["picker"]
+                 if r["id"].startswith("view-")]
         views = [r["action"]["view"] for r in tiles]
         # The example is generated from the live set, not hand-written:
         # it must still expose the views this fix is for.
@@ -168,11 +169,14 @@ class RegionsTest(unittest.TestCase):
             method, path_, body = touch.action_request(region["action"])
             self.assertEqual((method, path_), ("POST", "/show"))
             self.assertEqual(body, {"renderer": view, "params": {}})
-        # Selection tiles come first: earlier entries win every overlap.
-        first_non_tile = next(i for i, r in enumerate(doc["regions"])
-                              if not r["id"].startswith("view-"))
+        # No view tiles leak into the global set (they would collide
+        # with the macbook map sharing that space); scoped entries go
+        # first at tap time, ahead of global chrome.
+        self.assertTrue(all(not r["id"].startswith("view-")
+                            for r in doc["regions"]))
+        ordered = (doc["view_regions"]["picker"] + doc["regions"])
         self.assertTrue(all(r["id"].startswith("view-")
-                            for r in doc["regions"][:first_non_tile]))
+                            for r in ordered[:len(tiles)]))
         # The example itself validates (minus its comment key).
         cfg = dict(doc)
         cfg.pop("_comment", None)
