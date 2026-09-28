@@ -169,16 +169,25 @@ else
     TOUCH_RESTARTED=0
     echo "warning: displayd-touch restart failed (unit not installed?)" >&2
 fi
-CHECK=""; i=0
-until [ "$i" -ge 15 ]; do
+# Top-level "ok" only: per-view entries carry their own "ok", so a
+# grep would match a nested agreement while the matrix disagrees.
+CHECK_OK=""; CHECK_STATUS=""
+check_probe() {
     CHECK=$(curl -s -m 5 "http://$PANEL/touch/check" || true)
-    echo "$CHECK" | grep -q '"ok": *true' && break
+    PROBE=$(printf '%s' "$CHECK" | python3 -c \
+        "import json,sys; r=json.load(sys.stdin); print(r.get('ok'), r.get('status'))" 2>/dev/null || echo "PARSE_FAIL")
+    CHECK_OK=$(printf '%s' "$PROBE" | cut -d' ' -f1)
+    CHECK_STATUS=$(printf '%s' "$PROBE" | cut -d' ' -f2)
+    [ "$CHECK_OK" = "True" ]
+}
+i=0
+until check_probe || [ "$i" -ge 15 ]; do
     i=$((i + 1)); sleep 1
 done
-if echo "$CHECK" | grep -q '"ok": *true'; then
+if [ "$CHECK_OK" = "True" ]; then
     echo "touch regions agree: $(printf '%s' "$CHECK" | python3 -c \
-        "import json,sys; r=json.load(sys.stdin); print(r.get('view'), '-', r.get('reason'))")"
-elif [ "$TOUCH_RESTARTED" = "0" ] && echo "$CHECK" | grep -q '"status": *"unknown"'; then
+        "import json,sys; r=json.load(sys.stdin); print(r.get('current_view'), '-', r.get('status'))")"
+elif [ "$TOUCH_RESTARTED" = "0" ] && [ "$CHECK_STATUS" = "unknown" ]; then
     echo "warning: no touch heartbeat and no unit to restart; continuing without the touch check" >&2
 else
     echo "touch region check failed: $CHECK" >&2
