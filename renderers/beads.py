@@ -44,6 +44,7 @@ from PIL import ImageDraw
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import beads_common as common
+import beads_layout as layout
 import beads_style as style_mod
 from beads_common import (
     BUCKETS,
@@ -144,13 +145,18 @@ def _draw(screen, title, bg):
         screen.present(img)
         return
 
-    # Four buckets, one glanceable strip. Big counts shrink to fit their
-    # column so a four-digit tally never collides with its neighbour.
-    counts = {key: len(snap[key]) for key, _, _, _, _ in BUCKETS}
-    col_w = (screen.W - 2 * PAD) / 4.0
-    for idx, (key, glyph, label, color, sub) in enumerate(BUCKETS):
-        x = PAD + idx * col_w
-        text = "%s %d" % (glyph, counts[key])
+    # Four buckets, one glanceable strip, V1 proportional parade: column
+    # widths follow share of beads on a square-root scale (floored so
+    # Rolling and Stalled stay legible -- see beads_layout). Big counts
+    # shrink to fit their own column so a tally never collides with its
+    # neighbour.
+    counts = [len(snap[key]) for key, _, _, _, _ in BUCKETS]
+    widths = layout.column_widths(
+        counts, screen.W - 2 * PAD,
+        [layout.FLOORS[key] for key, _, _, _, _ in BUCKETS])
+    x = float(PAD)
+    for (key, glyph, label, color, sub), col_w in zip(BUCKETS, widths):
+        text = "%s %d" % (glyph, len(snap[key]))
         font = count_font
         if font is not None:
             try:
@@ -164,8 +170,12 @@ def _draw(screen, title, bg):
             except Exception:
                 font = count_font
         draw.text((x, 150), text, font=font or plain, fill=color)
-        draw.text((x + 6, 310), label, font=lab_font or plain, fill=C_TEXT)
-        draw.text((x + 6, 362), sub, font=sub_font or plain, fill=C_DIM)
+        draw.text((x + 6, 310),
+                  _fit(draw, label, lab_font, col_w - 12),
+                  font=lab_font or plain, fill=C_TEXT)
+        draw.text((x + 6, 362), _fit(draw, sub, sub_font, col_w - 12),
+                  font=sub_font or plain, fill=C_DIM)
+        x += col_w
 
     # Running tally + progress.
     total = snap["total"] or 1
