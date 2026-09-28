@@ -8,6 +8,7 @@ renderers/ -- the core knows nothing about any particular one.
 API
   GET  /                             web control page (this panel)
   GET  /health                       liveness
+  GET  /version                      application semver (APP_VERSION)
   GET  /state                        what is showing + screen power
   GET  /renderers                    available renderers and their params
   GET  /snapshot                     PNG of the last presented frame
@@ -69,6 +70,14 @@ BACKLIGHT_GLOB = "/sys/class/backlight"
 # paired with a host firewall or a private network such as a VPN or tailnet.
 PORT = int(os.environ.get("DISPLAYD_PORT", "8980"))
 BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
+# Application version: the single source of truth for displayd's semver.
+# It lives here -- not in pyproject.toml -- because the daemon ships as a
+# plain script (rsync + systemd, never pip-installed) and still supports
+# Python 3.8+, so it cannot rely on importlib.metadata or tomllib to read
+# a [project] table. Bump per CHANGELOG.md's convention on every change;
+# the daemon reports it via GET /version, GET /state's "version" key,
+# and the startup log line in main().
+APP_VERSION = "0.1.0"
 # Optional shared secret for the HTTP API. When set, every request (except
 # the unauthenticated health probes below) must carry
 #   Authorization: Bearer <token>
@@ -2748,6 +2757,7 @@ class DisplayDaemon:
 
     def state(self):
         return {
+            "version": APP_VERSION,
             "renderer": self.current,
             "params": self.current_params,
             "started_at": self.started_at,
@@ -3539,6 +3549,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(401, auth_error)
         if path == "/state":
             return self._send(200, DAEMON.state())
+        if path == "/version":
+            return self._send(200, {"version": APP_VERSION})
         if path == "/renderers":
             return self._send(200, {"renderers": DAEMON.renderer_list()})
         if path == "/snapshot":
@@ -3852,7 +3864,8 @@ def main():
     DAEMON.playlist.boot()
     DAEMON.start_watchdog()
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
-    print("displayd listening on %s:%d with %d renderer(s)" % (args.bind, args.port, len(DAEMON.renderers)))
+    print("displayd v%s listening on %s:%d with %d renderer(s)"
+          % (APP_VERSION, args.bind, args.port, len(DAEMON.renderers)))
     try:
         server.serve_forever()
     finally:
