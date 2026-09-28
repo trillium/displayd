@@ -104,10 +104,30 @@ if [ -n "$PRIOR" ]; then
     fi
 fi
 # Prove the build on the panel itself: RELOADED + SHA + commit QR, then
-# auto-returns to the re-showed view (or the clock when none).
+# auto-returns to the re-showed view (or the clock when none). The host
+# cannot read git history (its .git is a gitdir pointer at a MacBook
+# path), so the highlights summary is extracted here where git works and
+# forwarded with the proof request: bounded structural extraction
+# (subject + a few body lines, no model) via
+# renderers/reload_highlights.py. Empty extraction posts sha alone --
+# the panel then renders the classic view, exactly as before.
+HIGHLIGHTS=""
+if MSG=$(git -C "$HERE" log -1 --format=%B "$SHA" 2>/dev/null); then
+    HIGHLIGHTS=$(printf '%s' "$MSG" \
+        | python3 "$HERE/renderers/reload_highlights.py" 2>/dev/null || true)
+fi
+RELOAD_BODY=$(SHA="$SHA" HIGHLIGHTS="$HIGHLIGHTS" python3 -c \
+    "import json,os; body={'sha':os.environ['SHA']};"\
+    "hl=os.environ.get('HIGHLIGHTS','').strip();"\
+    "body.update({'highlights':hl} if hl else {}); print(json.dumps(body))")
+if [ -n "$HIGHLIGHTS" ]; then
+    echo "reload highlights: $(printf '%s' "$HIGHLIGHTS" | head -n 1)"
+else
+    echo "reload highlights: none (classic SHA+QR view)"
+fi
 if curl -s -m 10 -X POST "http://$PANEL/reload" \
     -H 'Content-Type: application/json' \
-    -d "{\"sha\":\"$SHA\"}" | grep -q '"view"'; then
+    -d "$RELOAD_BODY" | grep -q '"view"'; then
     echo "reload confirmation showing on panel"
 else
     echo "warning: /reload proof failed; continuing" >&2
