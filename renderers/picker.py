@@ -160,13 +160,16 @@ def draw(screen, views, geometry, rect, fills, bg, fg, dim,
     d = ImageDraw.Draw(img)
     w, h = screen.W, screen.H
     rx, ry, rw, rh = rect
-    title_font = _font(screen, min(h // 20, 54))
     tile_font = _font(screen, min(h // 14, 84))
     hint_font = _font(screen, min(h // 30, 36))
 
-    if title_font is not None:
-        d.text((w // 2, max(8, ry // 2)), title, font=title_font,
-               fill=fg, anchor="ma")
+    # Header lives in the top margin: sized to fit it, skipped when the
+    # rect leaves no room (a fullscreen grid has no margin to write in).
+    if ry >= 28:
+        title_font = _font(screen, min(ry - 12, h // 24, 44))
+        if title_font is not None:
+            d.text((w // 2, ry // 2), title, font=title_font,
+                   fill=fg, anchor="mm")
 
     for i, (name, (x, y, cw, ch)) in enumerate(zip(views, geometry)):
         fill = fills[i % len(fills)]
