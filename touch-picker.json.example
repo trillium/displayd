@@ -1,5 +1,5 @@
 {
-  "_comment": "Picker taps for lnx-server (1920x1080): dead-zone button opens the view grid, tiles reroute the view. Copy to touch.json on the host and edit only device/endpoint: confirm device with `python3 touch.py --list-devices`. Tile rects are generated -- never hand-edit them; recompute with: python3 renderers/picker.py --width <W> --height <H> --views <csv> (paste FIRST under \"regions\": earlier entries win overlaps). No fullscreen reload_confirm region by design: it would swallow the tap-anywhere fallback, and dismissal-first ordering makes a same-tap confirm miss anyway (see TOUCH.md). Validate with `python3 touch.py --config touch.json --check-views` before restarting displayd-touch. Revert: restore the backup (see TOUCH.md).",
+  "_comment": "Picker taps for lnx-server (1920x1080): tiles reroute the view. Tile list defaults to the live advertised set (renderers/picker.py live_views: every renderer showable with empty params, sorted, capped at 24 with alphabetically-last overflow dropped); tap_options carries no views list so a new view appears with no config edit. Tile rects are generated -- never hand-edit them; recompute with: python3 renderers/picker.py --width <W> --height <H> --views <csv> (paste FIRST under \"regions\": earlier entries win overlaps). Validate with `python3 touch.py --config touch.json --check-views` before restarting displayd-touch. Revert: restore the backup (see TOUCH.md).",
   "device": "/dev/input/event8",
   "endpoint": "http://100.81.88.113:8980",
   "width": 1920,
@@ -26,14 +26,6 @@
     "enabled": true,
     "renderer": "picker",
     "params": {
-      "views": [
-        "clock",
-        "chat",
-        "row",
-        "stream",
-        "activity",
-        "options"
-      ],
       "rect": [
         160,
         40,
@@ -44,64 +36,12 @@
   },
   "regions": [
     {
-      "id": "view-clock",
-      "rect": [
-        179,
-        59,
-        508,
-        401
-      ],
-      "action": {
-        "name": "select_view",
-        "view": "clock"
-      }
-    },
-    {
-      "id": "view-chat",
-      "rect": [
-        706,
-        59,
-        508,
-        401
-      ],
-      "action": {
-        "name": "select_view",
-        "view": "chat"
-      }
-    },
-    {
-      "id": "view-row",
-      "rect": [
-        1233,
-        59,
-        508,
-        401
-      ],
-      "action": {
-        "name": "select_view",
-        "view": "row"
-      }
-    },
-    {
-      "id": "view-stream",
-      "rect": [
-        179,
-        479,
-        508,
-        401
-      ],
-      "action": {
-        "name": "select_view",
-        "view": "stream"
-      }
-    },
-    {
       "id": "view-activity",
       "rect": [
-        706,
-        479,
+        179,
+        59,
         508,
-        401
+        121
       ],
       "action": {
         "name": "select_view",
@@ -109,16 +49,211 @@
       }
     },
     {
+      "id": "view-beads",
+      "rect": [
+        706,
+        59,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "beads"
+      }
+    },
+    {
+      "id": "view-beads-detail",
+      "rect": [
+        1233,
+        59,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "beads-detail"
+      }
+    },
+    {
+      "id": "view-chat",
+      "rect": [
+        179,
+        199,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "chat"
+      }
+    },
+    {
+      "id": "view-clock",
+      "rect": [
+        706,
+        199,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "clock"
+      }
+    },
+    {
+      "id": "view-feed_health",
+      "rect": [
+        1233,
+        199,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "feed_health"
+      }
+    },
+    {
+      "id": "view-life",
+      "rect": [
+        179,
+        339,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "life"
+      }
+    },
+    {
+      "id": "view-macbook",
+      "rect": [
+        706,
+        339,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "macbook"
+      }
+    },
+    {
       "id": "view-options",
       "rect": [
         1233,
-        479,
+        339,
         508,
-        401
+        121
       ],
       "action": {
         "name": "select_view",
         "view": "options"
+      }
+    },
+    {
+      "id": "view-picker",
+      "rect": [
+        179,
+        479,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "picker"
+      }
+    },
+    {
+      "id": "view-resources",
+      "rect": [
+        706,
+        479,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "resources"
+      }
+    },
+    {
+      "id": "view-retro_grid",
+      "rect": [
+        1233,
+        479,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "retro_grid"
+      }
+    },
+    {
+      "id": "view-row",
+      "rect": [
+        179,
+        619,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "row"
+      }
+    },
+    {
+      "id": "view-services",
+      "rect": [
+        706,
+        619,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "services"
+      }
+    },
+    {
+      "id": "view-solid",
+      "rect": [
+        1233,
+        619,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "solid"
+      }
+    },
+    {
+      "id": "view-stream",
+      "rect": [
+        179,
+        759,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "stream"
+      }
+    },
+    {
+      "id": "view-touch_confidence",
+      "rect": [
+        706,
+        759,
+        508,
+        121
+      ],
+      "action": {
+        "name": "select_view",
+        "view": "touch_confidence"
       }
     },
     {

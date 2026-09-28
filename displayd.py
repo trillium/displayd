@@ -1175,9 +1175,23 @@ class DisplayDaemon:
 
     # ---- content -------------------------------------------------------
 
+    def _picker_live_params(self, entry, params):
+        """Picker default views: no explicit list means the live
+        advertised set (picker.live_views), so a new view appears with
+        no config edit. Explicit lists win. Never raises."""
+        params = dict(params or {})
+        mod = (entry or {}).get("module")
+        if getattr(mod, "NAME", "") == "picker" and "views" not in params:
+            try:
+                params["views"] = mod.live_views(self.renderers)
+            except Exception:
+                pass
+        return params
+
     def _run(self, entry, params, stop):
         try:
-            entry["module"].run(self.screen, params, stop)
+            entry["module"].run(
+                self.screen, self._picker_live_params(entry, params), stop)
         except Exception as err:
             self.last_error = "%s: %s" % (type(err).__name__, err)
 
@@ -1348,7 +1362,8 @@ class DisplayDaemon:
         error is recorded for /state and the region keeps its
         last-good-frame -- other regions never notice."""
         try:
-            entry["module"].run(screen, params, stop)
+            entry["module"].run(
+                screen, self._picker_live_params(entry, params), stop)
         except Exception as err:
             with self.layout_lock:
                 if (self.layout is not None and

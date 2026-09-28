@@ -303,8 +303,11 @@ the grid (they stay reachable in margins/gutters). Validate with
 ## View-selection tiles (picker wiring)
 
 `renderers/picker.py` is the tappable selection screen: a STATIC grid of
-labelled view tiles (default the pinned six -- clock, chat, row, stream,
-activity, options -- capped at 12, `views` param). Each tile's hit rect
+labelled view tiles. With no explicit `views` param the daemon fills in
+the live advertised set (`live_views()`: every renderer showable with
+empty params, sorted, capped at 24 with alphabetically-last overflow
+dropped), so a newly shipped view appears with no config edit; an explicit
+`views` list still wins. Each tile's hit rect
 fires the allowlisted `select_view` action above, so a panel tap reroutes
 the view with no phone in hand. `options.py` stays what it was: the
 non-selecting screen that only NAMES the picks and the return path, one
@@ -314,10 +317,19 @@ shows simply re-shows it.
 Reference wiring (`touch-picker.json.example`, 1920x1080):
 
 - Tile rects are GENERATED, never hand-computed -- the same function the
-  renderer draws from (`picker_regions()` / `grid_geometry()`):
+  renderer draws from (`picker_regions()` / `grid_geometry()`). Regenerate
+  from the live set whenever the renderer set changes (a new view ships)
+  -- same rule the daemon uses (`live_views()`: advertised, no required
+  params, sorted):
 
+        python3 -c 'import json,urllib.request; doc=json.load(\
+          urllib.request.urlopen("http://100.81.88.113:8980/renderers")); \
+          print(",".join(sorted(r["name"] for r in doc["renderers"] \
+          if "broken" not in r and not any(\
+          isinstance(s,dict) and s.get("required") \
+          for s in (r.get("params") or {}).values()))))' > /tmp/views.csv
         python3 renderers/picker.py --width 1920 --height 1080 \
-            --views clock,chat,row,stream,activity,options
+            --views "$(cat /tmp/views.csv)"
 
   Paste the output FIRST under `"regions"`: `hit_test()` gives earlier
   entries every overlap, so tiles must precede the gesture strips.
@@ -334,8 +346,9 @@ Reference wiring (`touch-picker.json.example`, 1920x1080):
   badge is the always-available button that opens the picker from any
   view.
 - Point the tap-anywhere fallback at the picker (`"tap_options":
-  {"enabled": true, "renderer": "picker", "params": {"views":
-  [...], "rect": [...]}}`), so pressing that dead zone opens the grid.
+  {"enabled": true, "renderer": "picker", "params": {"rect":
+  [...]}}` -- no `views` list, so it draws the live set too), so pressing
+  that dead zone opens the grid.
 - Cross-check before shipping to the host (no device needed):
 
         python3 touch.py --config touch.json --check-views

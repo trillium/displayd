@@ -58,9 +58,34 @@ class CoerceViewsTest(unittest.TestCase):
                                                     None, 5, " chat "]}),
                          ["clock", "chat"])
 
-    def test_capped_at_twelve(self):
-        many = ["v%d" % i for i in range(15)]
-        self.assertEqual(pk.coerce_views({"views": many}), many[:12])
+    def test_capped_at_max_views(self):
+        many = ["v%d" % i for i in range(30)]
+        self.assertEqual(pk.coerce_views({"views": many}),
+                         many[:pk.MAX_VIEWS])
+        self.assertEqual(pk.MAX_VIEWS, 24)
+
+
+class LiveViewsTest(unittest.TestCase):
+    def test_filters_param_gated_and_broken(self):
+        registry = {
+            "clock": {"module": object(), "params": {}},
+            "macbook": {"module": object(),
+                          "params": {"title": {"type": "string"}}},
+            "reload": {"module": object(),
+                         "params": {"sha": {"type": "string",
+                                              "required": True}}},
+            "notice": {"module": object(),
+                         "params": {"title": {"type": "string",
+                                                "required": True}}},
+            "broken": {"broken": "boom"},
+            "a/b": {"module": object(), "params": {}},
+        }
+        self.assertEqual(pk.live_views(registry), ["clock", "macbook"])
+
+    def test_garbage_falls_back(self):
+        self.assertEqual(pk.live_views(None), list(pk.DEFAULT_VIEWS))
+        self.assertEqual(pk.live_views({}), list(pk.DEFAULT_VIEWS))
+        self.assertEqual(pk.live_views("nope"), list(pk.DEFAULT_VIEWS))
 
 
 class RectTest(unittest.TestCase):
@@ -131,8 +156,18 @@ class RegionsTest(unittest.TestCase):
         self.assertEqual(doc["height"], 1080)
         self.assertEqual(doc["tap_options"]["renderer"], "picker")
         tiles = [r for r in doc["regions"] if r["id"].startswith("view-")]
+        views = [r["action"]["view"] for r in tiles]
+        # The example is generated from the live set, not hand-written:
+        # it must still expose the views this fix is for.
+        self.assertIn("macbook", views)
+        self.assertEqual([r["id"] for r in tiles],
+                         ["view-%s" % v for v in views])
         self.assertEqual(tiles, pk.picker_regions(
-            1920, 1080, VIEWS, rect=pk.default_rect(1920, 1080)))
+            1920, 1080, views, rect=pk.default_rect(1920, 1080)))
+        for region, view in zip(tiles, views):
+            method, path_, body = touch.action_request(region["action"])
+            self.assertEqual((method, path_), ("POST", "/show"))
+            self.assertEqual(body, {"renderer": view, "params": {}})
         # Selection tiles come first: earlier entries win every overlap.
         first_non_tile = next(i for i, r in enumerate(doc["regions"])
                               if not r["id"].startswith("view-"))
