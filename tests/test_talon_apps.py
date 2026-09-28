@@ -459,6 +459,48 @@ class TalonSideTest(unittest.TestCase):
         self.assertEqual(resp, {"id": 3, "ok": True,
                                 "focused": "Safari"})
 
+    def test_capture_doc_captures_rect_to_fixed_path(self):
+        if not hasattr(TALON_SIDE, "handle_capture_doc"):
+            self.skipTest("talon side predates the capture verb")
+        made = {}
+
+        def rect_of(x, y, w, h):
+            made["rect"] = (x, y, w, h)
+            return made["rect"]
+
+        def shoot(rect, path):
+            made["shot"] = (rect, path)
+        req = {"id": 9, "x": 10, "y": 20, "w": 480, "h": 360,
+               "ts": time.time()}
+        self.assertEqual(TALON_SIDE.handle_capture_doc(
+            req, rect_of, shoot, "/tmp/fixed.png"),
+            {"id": 9, "ok": True})
+        self.assertEqual(made["rect"], (10.0, 20.0, 480.0, 360.0))
+        self.assertEqual(made["shot"],
+                         (made["rect"], "/tmp/fixed.png"))
+
+    def test_capture_doc_refuses_without_capturing(self):
+        if not hasattr(TALON_SIDE, "handle_capture_doc"):
+            self.skipTest("talon side predates the capture verb")
+        calls = []
+
+        def shoot(rect, path):
+            calls.append((rect, path))
+
+        stale = {"id": 1, "x": 0, "y": 0, "w": 10, "h": 10,
+                 "ts": time.time() - 60}
+        resp = TALON_SIDE.handle_capture_doc(stale, None, shoot,
+                                             "/tmp/fixed.png")
+        self.assertFalse(resp["ok"])
+        for bad in ({"id": 2, "x": 0, "y": 0, "w": 99999,
+                     "h": 10, "ts": time.time()},
+                    {"id": 3, "ts": time.time()},
+                    "junk"):
+            resp = TALON_SIDE.handle_capture_doc(bad, None, shoot,
+                                                 "/tmp/fixed.png")
+            self.assertFalse(resp["ok"])
+        self.assertEqual(calls, [])
+
     def test_no_blocking_rpc_import(self):
         # The Talon side must not use the command_client blocking
         # primitive (brain-15l95): no rpc_client call, no main-thread

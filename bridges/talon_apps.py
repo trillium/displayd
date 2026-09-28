@@ -36,6 +36,10 @@ try:
     import talon_windows
 except Exception:  # Linux panel / tests: flat list, no placement
     talon_windows = None
+try:
+    import talon_channel as channel
+except Exception:  # never: stdlib-only sibling, same directory
+    channel = None
 
 INTERVAL, TIMEOUT = 0.5, 5.0
 WAIT_RESPONSE = 4.0
@@ -44,6 +48,8 @@ NAME_CHARS, MAX_APPS = 48, 30
 
 def comm_dir(path=None):
     """Agree with the Talon side on the file-protocol directory."""
+    if channel is not None:
+        return channel.comm_dir(path)
     if path:
         return path
     suffix = "-%s" % os.getuid() if hasattr(os, "getuid") else ""
@@ -126,37 +132,17 @@ def run_focus(directory, cmd):
     """Hand one command to Talon, wait for its answer (here, in this
     process). Returns the response doc or None on timeout. Files are
     consumed either way so nothing replays."""
-    req_path = os.path.join(directory, "focus_request.json")
-    resp_path = os.path.join(directory, "focus_response.json")
     body = {"id": cmd.get("id"), "name": cmd.get("app"),
             "ts": cmd.get("ts", time.time())}
-    try:
-        for stale in (resp_path,):
-            try:
-                os.unlink(stale)
-            except FileNotFoundError:
-                pass
-        tmp = "%s.tmp-%d" % (req_path, os.getpid())
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(body, fh)
-        os.replace(tmp, req_path)
-    except Exception as err:
-        LOG.warning("focus request write failed: %s", err)
+    if channel is None:
         return None
-    deadline = time.monotonic() + WAIT_RESPONSE
-    while time.monotonic() < deadline:
-        try:
-            with open(resp_path, encoding="utf-8") as fh:
-                resp = json.load(fh)
-            if isinstance(resp, dict) and resp.get("id") == body["id"]:
-                return resp
-        except (FileNotFoundError, ValueError):
-            pass
-        except Exception as err:
-            LOG.debug("response read failed: %s", err)
-        time.sleep(0.05)
-    LOG.warning("focus command %r timed out waiting for Talon", body["id"])
-    return None
+    resp = channel.exchange(directory, "focus_request.json",
+                            "focus_response.json", body,
+                            timeout=WAIT_RESPONSE)
+    if resp is None:
+        LOG.warning("focus command %r timed out waiting for Talon",
+                    body["id"])
+    return resp
     # NOTE: request file is consumed by Talon's tick (unlink on read);
     # the response file is unlinked by the caller after reading it.
 

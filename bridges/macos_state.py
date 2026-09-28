@@ -202,7 +202,8 @@ def main(argv=None):
                 warp_mouse(cmd["x"], cmd["y"])
                 LOG.info("cursor -> (%.0f, %.0f)", cmd["x"], cmd["y"])
                 if mac_zoom is not None and mac_zoom.position_hook(
-                        args.displayd, state, cmd["x"], cmd["y"]):
+                        args.displayd, mac_zoom.comm_dir(),
+                        state, cmd["x"], cmd["y"]):
                     LOG.info("review capture posted")
         except Exception as err:  # a failed warp moves nothing, by design
             LOG.warning("mouse move failed: %s", err)

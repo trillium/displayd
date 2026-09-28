@@ -1,38 +1,41 @@
 """Magnified-tap confirmation for the macbook view (runs on the MacBook).
 
-Two-stage tap support next to ``bridges/macos_state.py`` (same stdlib
-shape, PyObjC and subprocesses isolated in small functions so the pure
-math stays importable anywhere):
+After the bridge warps the cursor (stage 1: move ONLY), Talon itself
+captures the crop -- ``screen.capture_rect`` over the file channel
+(``bridges/talon_channel.py``) -- and the bridge POSTs bounded base64
+JPEG to ``/feed/macbook/zoom`` for the review surface. Stage 2
+(``GET /macbook/click?since=``) posts one CG down+up pair.
 
-- After the bridge warps the cursor (stage 1: move ONLY, never click),
-  :func:`capture_around` grabs a small crop around the new position
-  with ``screencapture`` and the bridge POSTs it to
-  ``/feed/macbook/zoom`` as bounded base64 JPEG. The panel blows it up
-  as the review surface: what is under the cursor before stage 2.
-- Stage 2 arrives as a click command (``GET /macbook/click?since=``);
-  :func:`do_click` posts one left down+up pair at that point.
-
-Bounds (deliberate): the crop is CROP_W x CROP_H Quartz points and the
-JPEG byte cap is JPEG_CAP, so the wire document can never exceed ~4/3
-of that -- the daemon schema enforces the same ceiling. A stale or
-missing capture is a reason to show NOTHING (the renderer draws a hint
-instead), never an old screenshot presented as current.
+Bounds: JPEG_CAP bounds the wire (~4/3, schema-enforced); Talon
+writes one FIXED comm-dir PNG (no channel-supplied path, no
+traversal), converted here via PIL. No fresh capture -> no image,
+never a stale one; Talon down degrades to hint + stage-2 refusal
+while the direct warp keeps working.
 """
 
 import base64
+import io
 import json
 import os
-import subprocess
-import tempfile
+import sys
 import time
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import talon_channel as channel
+except Exception:  # never: stdlib-only sibling, same directory
+    channel = None
 
 CROP_W, CROP_H = 480, 360
 # File-byte cap: base64 of this many bytes is at most 133804 chars,
 # under the daemon schema ceiling (140000) with margin to spare. The
-# cap is on the WIRE size that matters, not an arbitrary round number:
-# a 1-byte-over round cap once dropped a live capture (98,305 bytes).
+# cap is on the WIRE size that matters, not an arbitrary round number.
 JPEG_CAP = 100352
+# PNG read cap: a 480x360 UI crop never approaches this; over is refused.
+PNG_CAP = 524288
+CAPTURE_IMAGE = "capture_image.png"
+JPEG_QUALITY = 70
 CLICK_TTL = 15.0  # mirrors the daemon slot: stale taps never fire
 
 
@@ -80,44 +83,74 @@ def crop_for(x, y, displays, w=CROP_W, h=CROP_H):
     return {"x": cx, "y": cy, "w": w, "h": h}
 
 
-def capture(crop, runner=None):
+def comm_dir(path=None):
+    """Talon channel directory (None when the channel is missing)."""
+    try:
+        return channel.comm_dir(path) if channel is not None else None
+    except Exception:
+        return None
+
+
+def capture_id(ts=None):
+    """Unique capture request id (bridge pid + time). Never raises."""
+    try:
+        return "%d-%d" % (os.getpid(), int((ts or time.time()) * 1e6))
+    except Exception:
+        return "capture-%d" % os.getpid()
+
+
+def capture(directory, crop, timeout=4.0):
     """Screenshot one crop rect -> JPEG bytes (bounded by JPEG_CAP).
 
-    `runner` injects the subprocess call for tests. Raises on any
-    failure (screen recording denied, tool missing): the caller logs
-    and posts nothing, so no review surface appears without a fresh
-    capture behind it."""
+    Asks Talon through the file channel, converts its fixed-name PNG
+    to JPEG here. Raises on any failure: the caller posts nothing."""
     x, y, w, h = (int(crop["x"]), int(crop["y"]),
                   int(crop["w"]), int(crop["h"]))
     if w <= 0 or h <= 0 or w * h > 4 * CROP_W * CROP_H:
         raise ValueError("crop out of bounds: %r" % (crop,))
-    fd, path = tempfile.mkstemp(prefix="displayd-zoom-", suffix=".jpg")
-    os.close(fd)
+    if channel is None:
+        raise RuntimeError("talon channel unavailable")
     try:
-        run = runner or subprocess.run
-        # Generous timeout: observed 3s+ stalls on a live desktop
-        # (TCC attribution + compositor); the poll tick simply runs
-        # long this once, then resumes cadence. TimeoutExpired raises
-        # like any failure -> no zoom posted, no stale image shown.
-        proc = run(["/usr/sbin/screencapture", "-x", "-t", "jpg",
-                    "-R%d,%d,%d,%d" % (x, y, w, h), path],
-                   timeout=20, capture_output=True)
-        if getattr(proc, "returncode", 1) != 0:
-            raise RuntimeError("screencapture failed: %s" % (
-                getattr(proc, "stderr", b"") or b"")[:160])
+        from PIL import Image
+    except Exception:
+        raise RuntimeError("PIL unavailable for PNG->JPEG")
+    body = {"id": capture_id(), "x": x, "y": y, "w": w, "h": h,
+            "ts": time.time()}
+    resp = channel.exchange(directory, "capture_request.json",
+                            "capture_response.json", body,
+                            timeout=timeout)
+    try:
+        channel.cleanup(directory, "capture_response.json")
+    except Exception:
+        pass
+    if not isinstance(resp, dict) or not resp.get("ok"):
+        raise RuntimeError("talon capture refused: %r" % (resp,))
+    if resp.get("id") != body["id"]:
+        raise RuntimeError("talon capture id mismatch")
+    path = os.path.join(directory, CAPTURE_IMAGE)
+    try:
         with open(path, "rb") as fh:
-            data = fh.read(JPEG_CAP + 1)
-        if not data:
-            raise RuntimeError("screencapture produced no image")
-        if len(data) > JPEG_CAP:
-            raise RuntimeError("capture %d bytes over cap %d"
-                               % (len(data), JPEG_CAP))
-        return data
+            png = fh.read(PNG_CAP + 1)
+    except Exception as err:
+        raise RuntimeError("capture image unreadable: %s" % (err,))
     finally:
         try:
             os.unlink(path)
         except Exception:
             pass
+    if not png or len(png) > PNG_CAP:
+        raise RuntimeError("capture PNG missing or over cap")
+    try:
+        shot = Image.open(io.BytesIO(png))
+        shot.load()
+        out = io.BytesIO()
+        shot.convert("RGB").save(out, "JPEG", quality=JPEG_QUALITY)
+        data = out.getvalue()
+    except Exception as err:
+        raise RuntimeError("PNG->JPEG failed: %s" % (err,))
+    if not data or len(data) > JPEG_CAP:
+        raise RuntimeError("capture JPEG missing or over cap")
+    return data
 
 
 def encode(data, cap=JPEG_CAP):
@@ -158,8 +191,7 @@ def post_zoom(displayd_base, doc, timeout=5.0):
 
 
 def fetch_click_command(displayd_base, since=0.0, timeout=2.0):
-    """Pending click command newer than `since`; None when idle.
-    Best-effort like the mouse fetch: any failure means no click."""
+    """Pending click newer than `since`; None when idle or stale."""
     url = (displayd_base.rstrip("/") + "/macbook/click"
            + "?since=%s" % since)
     try:
@@ -177,10 +209,9 @@ def fetch_click_command(displayd_base, since=0.0, timeout=2.0):
             "display_index": cmd.get("display_index")}
 
 
-def position_hook(displayd_base, state, x, y, now=None):
-    """Stage-1 follow-through: capture around (x, y) and POST zoom.
-    Returns True when a fresh capture was posted. Never raises: any
-    failure posts nothing, so the panel shows no misleading image."""
+def position_hook(displayd_base, directory, state, x, y, now=None):
+    """Stage-1 follow-through: capture around (x, y), POST zoom.
+    True when posted; never raises (failure posts nothing)."""
     try:
         now = time.time() if now is None else float(now)
         displays = (state.get("displays") if isinstance(state, dict)
@@ -188,7 +219,7 @@ def position_hook(displayd_base, state, x, y, now=None):
         crop = crop_for(x, y, displays)
         if crop is None:
             return False
-        text = encode(capture(crop))
+        text = encode(capture(directory, crop))
         doc = zoom_doc(x, y, text, now)
         return bool(doc) and post_zoom(displayd_base, doc)
     except Exception:
@@ -198,11 +229,9 @@ def position_hook(displayd_base, state, x, y, now=None):
 def do_click(x, y):
     """One left click at Quartz (x, y): down+up posted atomically.
 
-    Direct CGEventPost, NOT Talon (the existing Talon click path stays
-    untouched; this is the panel's own second-tap commit). Raises on
-    failure so the caller logs and skips -- a failed click clicks
-    nothing, by design. Range-checked BEFORE the Quartz import so the
-    refusal is testable (and safe) on machines without PyObjC."""
+    Direct CGEventPost, NOT Talon (the panel's own second-tap commit).
+    Raises on failure (clicks nothing); range-checked before the
+    Quartz import so the refusal is testable without PyObjC."""
     try:
         qx, qy = float(x), float(y)
     except (TypeError, ValueError):

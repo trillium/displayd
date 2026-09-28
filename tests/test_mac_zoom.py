@@ -8,6 +8,7 @@ Run from the repo root:  python3 -m unittest tests.test_mac_zoom -v
 """
 
 import base64
+import io
 import json
 import os
 import sys
@@ -53,36 +54,81 @@ class CropTest(unittest.TestCase):
 
 
 class CaptureTest(unittest.TestCase):
-    def test_capture_reads_bounded_bytes(self):
-        blob = b"\xff\xd8" + b"x" * 1000
+    def _png(self, color=(40, 90, 140), size=(480, 360)):
+        # Stand-in for Talon's fixed-name PNG (real Screenshot bytes
+        # come from screen.capture_rect in the live Talon process).
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", size, color).save(buf, "PNG")
+        return buf.getvalue()
 
-        def runner(cmd, timeout=None, capture_output=None):
-            path = cmd[-1]
-            with open(path, "wb") as fh:
-                fh.write(blob)
+    def _talon(self, directory, png=None, ok=True, delay=0.05):
+        # Fake Talon capture tick: answer the request id, drop the PNG
+        # at the FIXED filename (never a channel-supplied path).
+        import json as _json
 
-            class Proc:
-                returncode = 0
-                stderr = b""
-            return Proc()
+        def run():
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                req = os.path.join(directory, "capture_request.json")
+                if os.path.exists(req):
+                    try:
+                        with open(req) as fh:
+                            doc = _json.load(fh)
+                    except Exception:
+                        doc = None
+                    try:
+                        os.unlink(req)
+                    except Exception:
+                        pass
+                    if isinstance(doc, dict):
+                        if png is not None:
+                            with open(os.path.join(
+                                    directory, mz.CAPTURE_IMAGE),
+                                    "wb") as fh:
+                                fh.write(png)
+                        body = {"id": doc.get("id"), "ok": ok}
+                        tmp = os.path.join(
+                            directory, "capture_response.json.tmp")
+                        with open(tmp, "w") as fh:
+                            _json.dump(body, fh)
+                        os.replace(tmp, os.path.join(
+                            directory, "capture_response.json"))
+                        return
+                time.sleep(0.01)
+        return threading.Thread(target=run)
 
-        self.assertEqual(mz.capture({"x": 0, "y": 0, "w": 480,
-                                     "h": 360}, runner=runner), blob)
-        self.assertEqual(mz.encode(blob), base64.b64encode(blob).decode())
+    def test_capture_converts_talon_png_to_bounded_jpeg(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = self._talon(tmp, self._png())
+            worker.start()
+            data = mz.capture(tmp, {"x": 0, "y": 0, "w": 480,
+                                     "h": 360})
+            worker.join(timeout=10)
+            self.assertTrue(data.startswith(b"\xff\xd8"))  # JPEG
+            self.assertLessEqual(len(data), mz.JPEG_CAP)
+            self.assertEqual(mz.encode(data),
+                             base64.b64encode(data).decode())
 
     def test_capture_failures_raise(self):
-        def failing(cmd, timeout=None, capture_output=None):
-            class Proc:
-                returncode = 1
-                stderr = b"denied"
-            return Proc()
-
-        with self.assertRaises(RuntimeError):
-            mz.capture({"x": 0, "y": 0, "w": 480, "h": 360},
-                       runner=failing)
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            # Talon refuses.
+            worker = self._talon(tmp, self._png(), ok=False)
+            worker.start()
+            with self.assertRaises(RuntimeError):
+                mz.capture(tmp, {"x": 0, "y": 0, "w": 480,
+                                 "h": 360})
+            worker.join(timeout=10)
+            # Nobody home: timeout, not a hang.
+            with tempfile.TemporaryDirectory() as tmp2:
+                with self.assertRaises(RuntimeError):
+                    mz.capture(tmp2, {"x": 0, "y": 0, "w": 480,
+                                      "h": 360}, timeout=0.2)
         with self.assertRaises(ValueError):
-            mz.capture({"x": 0, "y": 0, "w": 99999, "h": 99999},
-                       runner=failing)
+            mz.capture(tmp, {"x": 0, "y": 0, "w": 99999,
+                             "h": 99999})
 
     def test_encode_caps_size(self):
         self.assertIsNone(mz.encode(b"x" * (mz.JPEG_CAP + 1)))
