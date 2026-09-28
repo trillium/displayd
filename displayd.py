@@ -74,6 +74,27 @@ BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
 # off-host with a shared secret in front of it.
 API_TOKEN = os.environ.get("DISPLAYD_API_TOKEN", "").encode()
 RENDERER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "renderers")
+
+
+def _load_shared_helper(name):
+    """Load a shared renderers/ helper for daemon-side reuse.
+
+    Helpers have no run(), so the renderer loader skips them -- but the
+    daemon itself can still use them (home_chrome's compositor chrome).
+    Raises like any import: callers that must survive a broken helper
+    catch it (a missing badge must never take the daemon down)."""
+    path = os.path.join(RENDERER_DIR, name + ".py")
+    spec = importlib.util.spec_from_file_location("displayd_" + name,
+                                                  path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+try:
+    home_chrome_module = _load_shared_helper("home_chrome")
+except Exception:
+    home_chrome_module = None
 VT = os.environ.get("DISPLAYD_VT", "/dev/tty1")
 POLICY_FILE = os.environ.get(
     "DISPLAYD_POLICY",
@@ -1094,7 +1115,17 @@ class DisplayDaemon:
         # Playlist rotation: scheduler on top of _start_view, overlay hook
         # for the progress bar. Starts enabled only from persisted config.
         self.playlist = playlist_module.Playlist(self)
+        # Shared screen chrome, composed not replaced: the playlist bar
+        # and the home button draw through one chained overlay so both
+        # stay visible at once (a second plain assignment here would
+        # silently disable the bar). Home reads screen.current_view live
+        # and suppresses itself on picker/reload/notice; see
+        # renderers/home_chrome.py.
         self.screen.overlay = self.playlist.overlay_image
+        if home_chrome_module is not None:
+            self.screen.overlay = home_chrome_module.chain_overlays(
+                self.screen.overlay,
+                home_chrome_module.home_overlay(self.screen))
         self.watchdog_stop = threading.Event()
         self.watchdog_thread = None
         self.stop_event = None
