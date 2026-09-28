@@ -74,9 +74,11 @@ def containing(x, y, displays):
 
 def window_bounds(windows, pid, ax_title=""):
     """Focused-window bounds for pid from one CG pass (layer-0 only).
-    Matches the AX title, else the first named window, else None -- the
-    None case is honest (windowless frontmost app renders app-only)."""
-    fallback = None
+    Matches the AX title, else the first named window, else the topmost
+    window regardless of name (window names need Screen Recording; bounds
+    and order do not). None only when pid has no windows at all -- the
+    honest windowless case. Never raises."""
+    fallback = top = None
     for w in windows or []:
         get = getattr(w, "get", None)  # NSDictionary is not a dict
         if get is None or get("kCGWindowLayer") != 0: continue
@@ -88,9 +90,10 @@ def window_bounds(windows, pid, ax_title=""):
         if None in (x, y, bw, bh) or bw <= 0 or bh <= 0:
             continue
         bounds, name = {"x": x, "y": y, "w": bw, "h": bh}, get("kCGWindowName") or ""
+        if top is None: top = bounds
         if ax_title and name == ax_title: return bounds
         if fallback is None and name: fallback = bounds
-    return fallback
+    return fallback if fallback is not None else top
 
 
 def app_info(pid):

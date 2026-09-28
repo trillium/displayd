@@ -157,12 +157,13 @@ def _draw_header(draw, screen, title, state, stale, fonts):
             draw.text((PAD, y), row, font=title_font or plain,
                       fill=(225, 225, 232))
             y += TITLE_SIZE + 6
-    elif state.get("accessibility_trusted") is False:
-        draw.text((PAD, y), "app only -- accessibility off?",
-                  font=meta_font or plain, fill=C_DIM)
-    else:
-        draw.text((PAD, y), "app only -- no focused window",
-                  font=meta_font or plain, fill=C_DIM)
+    elif not focus.get("window_bounds"):
+        if state.get("accessibility_trusted") is False:
+            draw.text((PAD, y), "app only -- accessibility off?",
+                      font=meta_font or plain, fill=C_DIM)
+        else:
+            draw.text((PAD, y), "app only -- no focused window",
+                      font=meta_font or plain, fill=C_DIM)
     if stale:
         draw.text((PAD, y + TITLE_SIZE + 10), "STALE -- feed quiet >3s",
                   font=meta_font or plain, fill=C_STALE)

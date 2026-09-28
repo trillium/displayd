@@ -106,6 +106,18 @@ class TestWindowBounds(unittest.TestCase):
         self.assertEqual(window_bounds(windows, 9),
                          {"x": 0, "y": 0, "w": 500, "h": 500})
 
+    def test_nameless_top_window_fallback(self):
+        # Without Screen Recording, CG strips window names (verified live
+        # under launchd) but keeps bounds/order/owner: the topmost window
+        # of the pid is still a real, showable rect.
+        windows = [cg_window(7, "", 5, 5, 111, 222),
+                   cg_window(7, "", 0, 0, 100, 100)]
+        self.assertEqual(window_bounds(windows, 7),
+                         {"x": 5, "y": 5, "w": 111, "h": 222})
+
+    def test_nameless_other_pid_ignored(self):
+        self.assertIsNone(window_bounds([cg_window(9, "", 0, 0, 5, 5)], 7))
+
     def test_windowless_pid_is_none(self):
         # Frontmost app with no windows (Safari, no open windows): honest
         # None even though another app's windows top the Z-order.
