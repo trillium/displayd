@@ -313,8 +313,10 @@ Reference wiring (`touch-picker.json.example`, 1920x1080):
   anyway (`POST /touch/tap` ends the transient before the region
   dispatches). The reload lifecycle stays covered without it: tap-dismiss
   on any tap, scan-confirm via the QR relay, timeout auto-return. The
-  bar is deliberately dead -- a tap there is the always-available button
-  that opens the picker from any view.
+  bar is deliberately dead -- with the tap-anywhere fallback off (see
+  "Home button" above) a tap there does nothing; the persistent home
+  badge is the always-available button that opens the picker from any
+  view.
 - Point the tap-anywhere fallback at the picker (`"tap_options":
   {"enabled": true, "renderer": "picker", "params": {"views":
   [...], "rect": [...]}}`), so pressing that dead zone opens the grid.
@@ -334,6 +336,60 @@ Reference wiring (`touch-picker.json.example`, 1920x1080):
 tap best-effort AFTER the tile action dispatches, pointed wherever the host
 config says (during picker use the retro_grid target simply buffers -- feeds
 are global, so nothing errors and nothing changes on screen).
+
+## Home button (persistent top-left badge)
+
+A home badge is composited top-left on every view through the shared
+`Screen.overlay` hook (`renderers/home_chrome.py`, chained with the
+playlist progress bar so both draw at once -- see "chain, do not
+replace" below). No renderer draws it: per-renderer drawing would
+redesign every screen type, and the compositor already runs once per
+frame for all of them. The badge is a dark rounded tile with a white
+house glyph (no font needed), suppressed only on `picker` (meaningless
+there -- a tap re-shows the picker, a harmless no-op), `reload` (the
+deploy-proof QR stays fully scannable) and `notice` (short-lived
+transient, same precedent as the hidden progress bar).
+
+Reference wiring (`touch-home.json.example`, 1920x1080):
+
+- The region entry is GENERATED, never hand-computed -- the same
+  geometry the badge draws from:
+
+        python3 renderers/home_chrome.py --width 1920 --height 1080
+
+  Paste the output FIRST under `"regions"`: `hit_test()` gives earlier
+  entries every overlap, so `home` must precede the picker tiles and
+  the full-height gesture strips. The badge lives inside the left
+  strip's width (never covers picker tiles -- the grid starts at
+  x=160); the strip's top 160px now opens the picker while the rest
+  still fires `screen_on`.
+- The region reuses the existing `select_view` action
+  (`{"name": "select_view", "view": "picker"}`) -- no second action
+  for the same effect.
+- The tap-anywhere fallback is OFF on the host (`"tap_options":
+  {"enabled": false, ...}` -- renderer/params kept so re-enabling is
+  one boolean). Dead-zone taps log + optionally feed confidence, and
+  navigate nowhere. The fallback's `options` action still exists for
+  hosts that want it; see "Tap anywhere" below.
+- Reload dismissal is unchanged: every valid tap still `POST /touch/tap`
+  first, including taps in the badge corner (a corner tap during reload
+  dismisses AND then navigates to the picker per normal region rules).
+  The rest of the screen dismisses exactly as before.
+- Chain, do not replace: `DisplayDaemon` composes
+  `home_chrome.chain_overlays(playlist.overlay_image,
+  home_chrome.home_overlay(screen))`. A second plain assignment to
+  `Screen.overlay` would silently disable the progress bar -- that is
+  the regression this guards. `chain_overlays` skips failing layers so
+  one broken chrome can never blank the panel, and the frame cache
+  keeps pre-overlay frames so a cached re-entry never serves a stale
+  badge.
+- Host procedure (host-local `~/displayd/touch.json` survives
+  redeploys): back the file up (`cp touch.json
+  backups/touch.json.pre-home-<date>`), prepend the home region,
+  set `tap_options.enabled` false, validate with `touch.load_config()`
+  + `python3 touch.py --config touch.json --check-views` against the
+  live panel, restart only the existing `displayd-touch` unit. Revert:
+  restore the backup and restart the unit again.
 
 ## Tap anywhere: unconsumed taps route to options
 
