@@ -217,7 +217,9 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Screenshot poller: `bridges/obs_poll.py` (stdlib only) grabs
   `GetSourceScreenshot` over obs-websocket v5 on a 0.5..5 fps cadence and
   POSTs `{data}` to `/feed/stream/frame`; password via `OBS_PASSWORD` env
-  only. Tests in `tests/test_obs_poll.py`; live checklist in its docstring.
+  only. Tests in `tests/test_obs_poll.py`; transport (`obs_ws.py`), protocol
+  pure functions (`obs_protocol.py`), and CLI (`obs_poll_cli.py`, with the
+  live checklist) are split out, re-exported via `obs_poll.py`.
 - Start/stop is one action: `POST /show {renderer: stream, params: ...}` /
   bare `/show` or `/clear`. No auth/header params exist on purpose: serve
   snapshots tailnet-bound, unauthenticated, with no keys in files or logs.
