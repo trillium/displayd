@@ -2694,16 +2694,25 @@ class DisplayDaemon:
     def _exit_sleep_view(self):
         """Restore the pre-sleep view after power-on. One-shot: the
         slot is consumed whether or not the restore lands (an uninstalled
-        renderer must not wedge every later wake). Callers paint this
-        while still dark so the first photons are the base view."""
+        renderer must not wedge every later wake). Only acts when the
+        sleep view is actually showing -- a plain power-on never yanks
+        the current view. With no return pending (slept from a blank
+        panel, or a manual demo), falls back to the clock, mirroring
+        the transient-expiry fallback: waking must always land somewhere
+        navigable, never on a touch-sticky lit sleep view. Callers paint
+        this while still dark so the first photons are the base view."""
         with self.lock:
             restore = self.sleep_restore
             self.sleep_restore = None
-        if not restore:
+            waking = (self.current == SLEEP_VIEW)
+        if not waking:
             return False
         try:
-            self._start_view(restore["renderer"],
-                             restore.get("params") or {})
+            if restore:
+                self._start_view(restore["renderer"],
+                                 restore.get("params") or {})
+            else:
+                self._start_view("clock", {})
         except (KeyError, ValueError):
             return False
         return True

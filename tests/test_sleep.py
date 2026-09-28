@@ -243,6 +243,29 @@ class PowerTest(unittest.TestCase):
         self.assertEqual(daemon.current, "clock")
         self.assertFalse(daemon.fb.blanked)
 
+    def test_on_never_yanks_a_lit_view(self):
+        daemon = self.make_daemon()
+        daemon.show("chat", {})
+        daemon.set_power("on")
+        self.assertEqual(daemon.current, "chat")
+
+    def test_wake_from_blank_falls_back_to_clock(self):
+        daemon = self.make_daemon()
+        daemon.clear()
+        self.assertIsNone(daemon.current)
+        daemon.set_power("off")
+        self.assertEqual(daemon.current, "sleep")
+        daemon.set_power("on")
+        # No return pending: land navigable, never lit-sleep.
+        self.assertEqual(daemon.current, "clock")
+        self.assertFalse(daemon.fb.blanked)
+
+    def test_manual_demo_wake_lands_clock(self):
+        daemon = self.make_daemon()
+        daemon.show("sleep", {})
+        daemon.set_power("on")
+        self.assertEqual(daemon.current, "clock")
+
     def test_off_holds_playlist(self):
         daemon = self.make_daemon()
         daemon.show("clock", {})

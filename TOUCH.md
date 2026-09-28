@@ -465,9 +465,10 @@ Semantics worth knowing:
   waking restores the held view.
 - A corner tap during reload dismisses first AND then sleeps (region
   hits dispatch after a dismissal, exactly as before).
-- A `sleep` view shown while lit (manual demo) is touch-sticky: every
-  tap hits the wake target, which is a no-op with nothing to restore.
-  Leave via the control page, like the options view.
+- Waking with no return pending (slept from a blank panel, or a manual
+  demo shown while lit) falls back to the clock -- the same fallback
+  the transient-expiry path uses -- so a wake always lands somewhere
+  navigable and a demo tap is a shortcut to the clock, not a trap.
 - One-way-door rule: if the touch device ever stops reporting while the
   backlight is off, on-panel wake is impossible -- do not ship the wake
   region then. (Verified on lnx-server: evdev keeps reporting; the
