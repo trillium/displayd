@@ -8,6 +8,12 @@
   bounded JSON to the panel over the tailnet, so it runs here next to the
   screen it observes, not on lnx-server.
 
+  The poller needs PyObjC and the Accessibility grant: on this machine
+  that means the pyenv python3 (system /usr/bin/python3 and Homebrew's
+  both lack PyObjC; a different binary would also need its own grant).
+  If the interpreter moves, update ProgramArguments AND re-check the
+  grant (a wrong binary fails safe: the panel shows app-only degraded).
+
   Install: replace __DISPLAYD_DIR__ with the displayd checkout path, copy to
   ~/Library/LaunchAgents/, then `launchctl bootstrap gui/$UID <file>`.
 -->
@@ -17,7 +23,7 @@
   <string>com.displayd.macos-state-bridge</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/python3</string>
+    <string>/Users/trilliumsmith/.pyenv/shims/python3</string>
     <string>__DISPLAYD_DIR__/bridges/macos_state.py</string>
     <string>--displayd</string>
     <string>http://100.81.88.113:8980</string>
