@@ -40,9 +40,9 @@ PARAMS = {
               "help": "primary text colour, default white"},
 }
 
-# Fallback only: the daemon fills the live set when views is absent.
+# Fallback six; daemon fills the live set when views is absent. Cap 24.
 DEFAULT_VIEWS = ("clock", "chat", "row", "stream", "activity", "options")
-MAX_VIEWS = 24  # 3 columns x 8 rows max; overflow drops alphabetically-last
+MAX_VIEWS = 24
 DEFAULT_COLS = 3
 
 PALETTE = (
@@ -176,8 +176,7 @@ def _tile_font(screen, d, name, cw, size):
     return font
 
 
-def draw(screen, views, geometry, rect, fills, bg, fg, dim,
-         title="PICK A VIEW"):
+def draw(screen, views, geometry, rect, fills, bg, fg, dim, title="PICK A VIEW"):
     """One complete frame: header, tiles, side-hint labels. Pure."""
     img = screen.new_image(bg)
     d = ImageDraw.Draw(img)
