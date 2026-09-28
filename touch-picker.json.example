@@ -1,5 +1,5 @@
 {
-  "_comment": "Picker taps for lnx-server (1920x1080): dead-zone button opens the view grid, tiles reroute the view. Copy to touch.json on the host and edit only device/endpoint: confirm device with `python3 touch.py --list-devices`. Tile rects are generated -- never hand-edit them; recompute with: python3 renderers/picker.py --width <W> --height <H> --views <csv> (paste FIRST under \"regions\": earlier entries win overlaps). Validate with `python3 touch.py --config touch.json --check-views` before restarting displayd-touch. Revert: restore the backup (see TOUCH.md).",
+  "_comment": "Picker taps for lnx-server (1920x1080): dead-zone button opens the view grid, tiles reroute the view. Copy to touch.json on the host and edit only device/endpoint: confirm device with `python3 touch.py --list-devices`. Tile rects are generated -- never hand-edit them; recompute with: python3 renderers/picker.py --width <W> --height <H> --views <csv> (paste FIRST under \"regions\": earlier entries win overlaps). No fullscreen reload_confirm region by design: it would swallow the tap-anywhere fallback, and dismissal-first ordering makes a same-tap confirm miss anyway (see TOUCH.md). Validate with `python3 touch.py --config touch.json --check-views` before restarting displayd-touch. Revert: restore the backup (see TOUCH.md).",
   "device": "/dev/input/event8",
   "endpoint": "http://100.81.88.113:8980",
   "width": 1920,
@@ -143,19 +143,6 @@
       ],
       "action": {
         "name": "playlist_next"
-      }
-    },
-    {
-      "id": "reload-confirm",
-      "_comment": "tap anywhere while the RELOADED view shows to confirm it (view-gated: no-op otherwise); last so narrower regions win their own taps first (hit_test takes the first match)",
-      "rect": [
-        0,
-        0,
-        1920,
-        1080
-      ],
-      "action": {
-        "name": "reload_confirm"
       }
     }
   ]

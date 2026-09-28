@@ -306,8 +306,13 @@ Reference wiring (`touch-picker.json.example`, 1920x1080):
   Paste the output FIRST under `"regions"`: `hit_test()` gives earlier
   entries every overlap, so tiles must precede the gesture strips.
 - The default grid rect leaves side strips plus a bottom button bar: left
-  strip `screen_on`, right strip `playlist_next`, fullscreen
-  `reload_confirm` LAST (narrower regions win their own taps first). The
+  strip `screen_on`, right strip `playlist_next`, and NO fullscreen
+  `reload_confirm` region -- deliberately. A fullscreen confirm region
+  would swallow the fallback (hit_test returns it for every dead tap),
+  and the dismissal-first ordering means a same-tap confirm always misses
+  anyway (`POST /touch/tap` ends the transient before the region
+  dispatches). The reload lifecycle stays covered without it: tap-dismiss
+  on any tap, scan-confirm via the QR relay, timeout auto-return. The
   bar is deliberately dead -- a tap there is the always-available button
   that opens the picker from any view.
 - Point the tap-anywhere fallback at the picker (`"tap_options":
