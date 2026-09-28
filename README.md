@@ -99,6 +99,7 @@ publishes an unauthenticated control surface to everything that can route to it.
 | --- | --- | --- | --- |
 | GET | `/` | – | web control panel (live preview, renderer picker, power) |
 | GET | `/health` | – | liveness |
+| GET | `/version` | – | application semver (`{"version": ...}`); same value is in `/state`'s `"version"` key and the startup log |
 | GET | `/state` | – | what is showing, screen power, display facts |
 | GET | `/renderers` | – | available renderers and their params |
 | GET | `/snapshot` | – | PNG of the last frame presented |
@@ -141,6 +142,24 @@ Every mutating call returns the new `/state` payload, so a caller never has to
 poll to find out what happened. `/state` also carries `feeds` (per-input
 buffer counts, last-update age, and `cold`/`warm`/`stale` health) and `switch`
 (request-to-first-pixel and request-to-fresh-frame timings in milliseconds).
+
+## Versioning
+
+displayd follows semantic versioning on every change: tiny fixes bump the
+patch number, medium backwards-compatible changes bump the minor number, and
+large or breaking changes bump the major number. The first versioned release
+is `0.1.0` — deliberately `0.x`, because the project has not yet made any
+stability promise a `1.0.0` would imply.
+
+The version has one source of truth: `APP_VERSION` at the top of
+`displayd.py`. It lives there (rather than in `pyproject.toml`'s `[project]`)
+because the daemon ships as a plain script over rsync — never pip-installed —
+and still supports Python 3.8+, so it cannot read a `[project]` table at
+runtime. A running daemon reports its own version three ways: `GET /version`,
+the `"version"` key of `GET /state`, and the `displayd vX.Y.Z listening ...`
+startup log line. Every change must bump `APP_VERSION` per the rule above and
+add a `CHANGELOG.md` entry; the screenshots in `docs/screenshots/` record the
+version they were taken at (see that directory's README).
 
 ## Feeds: pushing live data into a view
 
