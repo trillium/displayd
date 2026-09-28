@@ -76,7 +76,7 @@ BACKOFF_MAX = 30.0
 HEALTHY_RESET_AFTER = 30.0  # a connection living this long resets the ladder
 REQUEST_TIMEOUT_PAD = 2.0   # extra seconds beyond one frame interval
 IMAGE_WIDTH = 960           # screenshot width cap: keeps frames panel-sized
-IMAGE_QUALITY = 70          # jpeg quality: small frames, still readable
+IMAGE_QUALITY = 92          # jpeg quality: crisp frames, still small
 
 
 # ---- minimal WebSocket client (stdlib; same shape as firebot_chat.py) -------

@@ -78,7 +78,8 @@ def _clamp_fps(raw):
 def _fit_cover(img, width, height):
     scale = max(width / img.width, height / img.height)
     resized = img.resize((max(1, int(img.width * scale)),
-                          max(1, int(img.height * scale))))
+                          max(1, int(img.height * scale))),
+                          resample=Image.BILINEAR)
     left = (resized.width - width) // 2
     top = (resized.height - height) // 2
     return resized.crop((left, top, left + width, top + height))
@@ -87,7 +88,8 @@ def _fit_cover(img, width, height):
 def _fit_contain(img, width, height, bg):
     scale = min(width / img.width, height / img.height)
     fitted = img.resize((max(1, int(img.width * scale)),
-                         max(1, int(img.height * scale))))
+                         max(1, int(img.height * scale))),
+                         resample=Image.BILINEAR)
     canvas = Image.new("RGB", (width, height), bg)
     canvas.paste(fitted, ((width - fitted.width) // 2,
                           (height - fitted.height) // 2))
@@ -212,7 +214,7 @@ def run(screen, params, stop):
                 try:
                     img = _decode(raw)
                     if fit == "stretch":
-                        canvas = img.resize((screen.W, screen.H))
+                        canvas = img.resize((screen.W, screen.H), resample=Image.BILINEAR)
                     elif fit == "contain":
                         canvas = _fit_contain(img, screen.W, screen.H, bg)
                     else:
