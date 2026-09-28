@@ -37,6 +37,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import macos_state_format as _format
 
+try:
+    import mac_zoom
+except Exception:  # zoom/click unavailable: state polling continues
+    mac_zoom = None
+
 # Re-exported for backwards compatibility (pure feed-document shaping
 # lives in macos_state_format.py; the live poller below is the only
 # in-repo consumer besides the tests).
@@ -181,10 +186,13 @@ def main(argv=None):
         return 0
     send, interval = make_sender(args.displayd), min(max(float(args.interval), 0.25), 10.0)
     last_mouse_ts = time.time()  # only taps from now on ever fire
+    last_click_ts = time.time()
     while True:
         t0 = time.monotonic()
+        state = None
         try:
-            send(poll())
+            state = poll()
+            send(state)
         except Exception as err:  # never die on a bad tick
             LOG.warning("poll tick failed: %s", err)
         try:
@@ -193,8 +201,21 @@ def main(argv=None):
                 last_mouse_ts = max(last_mouse_ts, cmd["ts"])
                 warp_mouse(cmd["x"], cmd["y"])
                 LOG.info("cursor -> (%.0f, %.0f)", cmd["x"], cmd["y"])
+                if mac_zoom is not None and mac_zoom.position_hook(
+                        args.displayd, state, cmd["x"], cmd["y"]):
+                    LOG.info("review capture posted")
         except Exception as err:  # a failed warp moves nothing, by design
             LOG.warning("mouse move failed: %s", err)
+        try:
+            if mac_zoom is not None:
+                cmd = mac_zoom.fetch_click_command(args.displayd,
+                                                   since=last_click_ts)
+                if cmd is not None:
+                    last_click_ts = max(last_click_ts, cmd["ts"])
+                    mac_zoom.do_click(cmd["x"], cmd["y"])
+                    LOG.info("click -> (%.0f, %.0f)", cmd["x"], cmd["y"])
+        except Exception as err:  # a failed click clicks nothing
+            LOG.warning("mouse click failed: %s", err)
         time.sleep(max(0.05, interval - (time.monotonic() - t0)))
 
 

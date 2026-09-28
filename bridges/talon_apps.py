@@ -31,6 +31,12 @@ import urllib.request
 
 LOG = logging.getLogger("talon-apps-bridge")
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import talon_windows
+except Exception:  # Linux panel / tests: flat list, no placement
+    talon_windows = None
+
 INTERVAL, TIMEOUT = 0.5, 5.0
 WAIT_RESPONSE = 4.0
 NAME_CHARS, MAX_APPS = 48, 30
@@ -72,6 +78,18 @@ def load_state(directory, now=None):
             "apps": apps}
     if doc.get("focused"):
         out["focused"] = clean(doc["focused"])
+    if talon_windows is not None:
+        # Per-app screen placement (side-button grouping). Best
+        # effort: any failure keeps the flat list, never the tick.
+        try:
+            owners, boxes = talon_windows.snapshot()
+            if owners and boxes:
+                placed = talon_windows.place(apps, owners, boxes)
+                if placed:
+                    out["windows"] = placed
+                    out["displays"] = boxes
+        except Exception as err:
+            LOG.debug("window snapshot skipped: %s", err)
     return mtime, out
 
 

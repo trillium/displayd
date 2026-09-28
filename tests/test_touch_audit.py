@@ -25,12 +25,17 @@ import touch_audit
 from renderers import picker as pk
 
 W, H = 1920, 1080
-MAP = {"id": "mac-map", "rect": [0, 250, 1920, 830],
+MAP = {"id": "mac-map", "rect": [0, 250, 1920, 490],
        "action": {"name": "macbook_mouse"}}
+ZOOM = {"id": "mac-zoom", "rect": [0, 740, 1920, 340],
+        "action": {"name": "macbook_click"}}
 TILE = {"id": "view-clock", "rect": [179, 59, 508, 401],
         "action": {"name": "select_view", "view": "clock"}}
-FOCUS = {"id": "talon-focus", "rect": [48, 250, 1824, 730],
+FOCUS = {"id": "talon-focus-left", "rect": [48, 250, 560, 782],
          "action": {"name": "talon_focus"}}
+FOCUS_RIGHT = {"id": "talon-focus-right",
+               "rect": [1312, 250, 560, 782],
+               "action": {"name": "talon_focus"}}
 HOME = {"id": "home", "rect": [0, 0, 160, 160],
         "action": {"name": "select_view", "view": "picker"}}
 
@@ -285,13 +290,15 @@ class AcceptancePairTest(unittest.TestCase):
                          [a.get("name") for a in svc.client.dispatched])
 
     def test_talon_tap_focuses_row_on_its_view(self):
+        # (200, 500) sits on a left-column side button; the centre gap
+        # (960, 500) dispatches nothing by design.
         svc = self._service("talon_apps")
-        summary = self._tap(svc, 960, 500)
+        summary = self._tap(svc, 200, 500)
         self.assertEqual(summary["action"], "talon_focus")
         sent = svc.client.dispatched[0]
-        self.assertEqual((sent["x"], sent["y"]), (960, 500))
+        self.assertEqual((sent["x"], sent["y"]), (200, 500))
         other = self._service("picker")
-        self._tap(other, 960, 500)
+        self._tap(other, 200, 500)
         self.assertNotIn("talon_focus",
                          [a.get("name")
                           for a in other.client.dispatched])
