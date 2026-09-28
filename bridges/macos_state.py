@@ -35,6 +35,8 @@ import urllib.request
 LOG = logging.getLogger("macos-state-bridge")
 
 INTERVAL, TITLE_CHARS, TIMEOUT = 0.5, 60, 5.0
+MOUSE_FETCH_TIMEOUT = 2.0  # command fetch must never slow the 2 Hz tick
+MOUSE_TTL = 10.0  # mirrors the daemon slot: stale taps never fire
 TALON_STATE = os.path.expanduser("~/.talon/user/trillium_talon/"
     "trillium/plugin/mode_indicator/mode_indicator_state.json")
 BUNDLE_DENY = frozenset({"com.1password.1password", "com.apple.keychainaccess"})
@@ -220,6 +222,40 @@ def make_sender(displayd_base):
     return send
 
 
+def fetch_mouse_command(displayd_base, since=0.0):
+    """Pending cursor command newer than `since`; None when idle.
+    Best-effort: any failure means no move -- the tap simply does not
+    fire, and the daemon TTL-expires it, so failure can never land the
+    cursor somewhere unexpected."""
+    url = (displayd_base.rstrip("/") + "/macbook/mouse"
+           + "?since=%s" % since)
+    try:
+        with urllib.request.urlopen(url, timeout=MOUSE_FETCH_TIMEOUT) as resp:
+            doc = json.loads(resp.read(4096).decode("utf-8", "replace"))
+        cmd = doc.get("command") if isinstance(doc, dict) else None
+        x, y, ts = float(cmd["x"]), float(cmd["y"]), float(cmd.get("ts", 0))
+    except Exception as err:
+        LOG.debug("mouse fetch skipped (%s)", err)
+        return None
+    if abs(x) > 100000 or abs(y) > 100000:
+        LOG.warning("mouse command out of range ignored: %r", cmd)
+        return None
+    return {"x": x, "y": y, "ts": ts,
+            "display_index": cmd.get("display_index")}
+
+
+def warp_mouse(x, y):
+    """Move the cursor to Quartz (x, y) in one atomic OS call.
+
+    Direct CGWarpMouseCursorPosition, NOT Talon: Talon follows the OS
+    cursor (verified 2026-09-28 -- a bare warp reads back identically
+    through the Talon REPL), so there is no desync to avoid and no
+    Talon-running dependency to add. Either the whole point lands or
+    nothing does; raises on failure so the caller logs and skips."""
+    import Quartz
+    Quartz.CGWarpMouseCursorPosition((float(x), float(y)))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="macOS state -> displayd")
     ap.add_argument("--displayd", default=os.environ.get("DISPLAYD_BASE", "http://100.81.88.113:8980"))
@@ -232,12 +268,21 @@ def main(argv=None):
         print(json.dumps(poll(), indent=2)[:4000])
         return 0
     send, interval = make_sender(args.displayd), min(max(float(args.interval), 0.25), 10.0)
+    last_mouse_ts = time.time()  # only taps from now on ever fire
     while True:
         t0 = time.monotonic()
         try:
             send(poll())
         except Exception as err:  # never die on a bad tick
             LOG.warning("poll tick failed: %s", err)
+        try:
+            cmd = fetch_mouse_command(args.displayd, since=last_mouse_ts)
+            if cmd is not None:
+                last_mouse_ts = max(last_mouse_ts, cmd["ts"])
+                warp_mouse(cmd["x"], cmd["y"])
+                LOG.info("cursor -> (%.0f, %.0f)", cmd["x"], cmd["y"])
+        except Exception as err:  # a failed warp moves nothing, by design
+            LOG.warning("mouse move failed: %s", err)
         time.sleep(max(0.05, interval - (time.monotonic() - t0)))
 
 

@@ -8,6 +8,13 @@ directly and the renderer stays under the file-size budget.
 
 PAD = 8.0  # inset inside the map area, panel px
 
+# Map-area frame inside a panel: shared by the renderer
+# (renderers/macbook.py _draw_map) and the daemon's tap-mapping path
+# (POST /macbook/mouse). One source of truth so a tap lands where the
+# drawn map is; tests pin the renderer's constants to these.
+MAP_PAD = 48.0
+MAP_TOP = 250.0
+
 
 def union(displays):
     """Bounding box of all display bounds -> (x, y, w, h). None if empty."""
@@ -54,6 +61,63 @@ def fit(box, area_w, area_h, pad=PAD):
 def project(x, y, scale, ox, oy):
     """One Quartz point -> panel point."""
     return (x * scale + ox, y * scale + oy)
+
+
+def unproject(px, py, scale, ox, oy):
+    """One panel point -> Quartz point (inverse of project)."""
+    try:
+        s = float(scale)
+    except (TypeError, ValueError):
+        return None
+    if s == 0:
+        return None
+    try:
+        return ((float(px) - float(ox)) / s, (float(py) - float(oy)) / s)
+    except (TypeError, ValueError):
+        return None
+
+
+def frame(box, panel_w, panel_h, pad=MAP_PAD, top=MAP_TOP):
+    """(scale, ox, oy) for the map area inside a panel frame.
+
+    Mirrors renderers/macbook.py _draw_map: the map fills the panel
+    below a `top`-px header with a `pad`-px margin. The +top fold-in
+    lives here so renderer and tap-mapping cannot drift."""
+    scale, ox, oy = fit(box, panel_w - 2 * pad, panel_h - pad - top)
+    return (scale, ox, oy + top)
+
+
+def locate(px, py, displays, panel_w, panel_h,
+           pad=MAP_PAD, top=MAP_TOP):
+    """Panel point -> {"display_index", "x", "y"} Quartz, or None.
+
+    Unprojects through frame() then containment-tests each display
+    (bx <= q < bx+bw, same edges as the poller's containing()). None
+    when geometry is missing, degenerate, non-numeric, or the point
+    falls in letterbox/padding rather than on a display. Never raises."""
+    try:
+        if not isinstance(displays, (list, tuple)) or not displays:
+            return None
+        pw, ph = float(panel_w), float(panel_h)
+        qx, qy = unproject(float(px), float(py),
+                           *frame(union(displays), pw, ph, pad, top))
+    except TypeError:
+        return None
+    except (ValueError, ArithmeticError):
+        return None
+    for i, d in enumerate(displays):
+        b = d.get("bounds") if isinstance(d, dict) else None
+        if not isinstance(b, dict):
+            continue
+        try:
+            bx, by = float(b["x"]), float(b["y"])
+            bw, bh = float(b["w"]), float(b["h"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if bw > 0 and bh > 0 and bx <= qx < bx + bw \
+                and by <= qy < by + bh:
+            return {"display_index": i, "x": qx, "y": qy}
+    return None
 
 
 def rect(bounds, scale, ox, oy, min_px=3.0):

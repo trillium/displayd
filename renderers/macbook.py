@@ -181,9 +181,9 @@ def _draw_map(draw, screen, state, fonts):
         draw.text((PAD, MAP_TOP + 20), "no display geometry in feed",
                   font=plain, fill=C_DIM)
         return
-    area_w, area_h = screen.W - 2 * PAD, screen.H - MAP_TOP - PAD
-    scale, ox, oy = macbook_map.fit(box, area_w, area_h)
-    oy += MAP_TOP
+    # Shared frame math (map area below the header): tap-mapping in
+    # macbook_map.locate() must invert exactly this transform.
+    scale, ox, oy = macbook_map.frame(box, screen.W, screen.H)
     if scale <= 0:
         return
     focus, mouse = state.get("focus") or {}, state.get("mouse") or {}
