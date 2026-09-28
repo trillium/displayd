@@ -39,6 +39,12 @@
       "action": {"name": "screen_on"}
     },
     {
+      "id": "example-view-tile",
+      "_comment": "illustrative single select_view tile (reroutes the panel to clock via POST /show); the full picker grid lives in touch-picker.json.example with generated rects -- never hand-compute tile coordinates",
+      "rect": [640, 0, 640, 540],
+      "action": {"name": "select_view", "view": "clock"}
+    },
+    {
       "id": "tap-to-rate",
       "rect": [640, 840, 640, 240],
       "action": {"name": "feedback", "view": "clock", "rating": 5}

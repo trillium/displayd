@@ -21,8 +21,9 @@ from touch import (
     ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_SLOT, ABS_MT_TRACKING_ID,
     ABS_X, ABS_Y, BTN_TOUCH, ACTION_TABLE, CONFIDENCE_DEFAULTS, EV_ABS,
     EV_KEY, EV_SYN, SYN_REPORT, DisplaydClient, EvdevParser, TapDetector,
-    TouchEvent, TouchService, action_request, confidence_env_override,
-    default_config, endpoint_allowed, hit_test, load_config, normalize,
+    TouchEvent, TouchService, action_request, check_views,
+    confidence_env_override, default_config, endpoint_allowed, hit_test,
+    load_config, normalize,
     normalize_confidence_feedback, normalize_tap_options, pack_event,
     parse_event, resolve_action,
 )
@@ -1005,7 +1006,7 @@ class GuardShapeTest(unittest.TestCase):
         self.assertEqual(set(ACTION_TABLE), {
             "playlist_next", "playlist_pause", "playlist_resume",
             "screen_on", "screen_off", "clear", "show", "options",
-            "notify", "feedback", "reload_confirm",
+            "select_view", "notify", "feedback", "reload_confirm",
         })
         # Every entry classifies by handler effect: a daemon endpoint the
         # tap drives, never just a name.
@@ -1359,6 +1360,135 @@ class TapOptionsConfigTest(unittest.TestCase):
                             "touch.json.example")
         cfg = load_config(path)
         self.assertTrue(cfg["tap_options"]["enabled"])
+
+
+class SelectViewTest(unittest.TestCase):
+    def test_valid_select_view(self):
+        method, path, body = action_request(
+            {"name": "select_view", "view": "clock"})
+        self.assertEqual((method, path), ("POST", "/show"))
+        self.assertEqual(body, {"renderer": "clock", "params": {}})
+
+    def test_view_whitespace_stripped(self):
+        _, _, body = action_request(
+            {"name": "select_view", "view": "  chat "})
+        self.assertEqual(body["renderer"], "chat")
+
+    def test_body_pinned_no_smuggling(self):
+        # Extra keys are ignored: the posted body has exactly the fixed
+        # shape, so a tile can never address another path or smuggle
+        # renderer params.
+        _, _, body = action_request(
+            {"name": "select_view", "view": "row",
+             "params": {"lines": 99}, "renderer": "clock",
+             "title": "hi", "path": "/clear"})
+        self.assertEqual(body, {"renderer": "row", "params": {}})
+
+    def test_malformed_denied_by_both_variants(self):
+        bad = [{}, {"name": "select_view"},
+               {"name": "select_view", "view": ""},
+               {"name": "select_view", "view": "   "},
+               {"name": "select_view", "view": "a/b"},
+               {"name": "select_view", "view": "../clear"},
+               {"name": "select_view", "view": 5},
+               {"name": "select_view", "view": True},
+               {"name": "select_view", "view": None},
+               {"name": "select_view", "view": ["clock"]}]
+        for action in bad:
+            with self.assertRaises(ValueError, msg=repr(action)):
+                action_request(action)
+            self.assertIsNone(resolve_action(action), msg=repr(action))
+
+    def test_dispatch_posts_show(self):
+        calls = []
+
+        class FakeHTTP:
+            def post(self, path, body):
+                calls.append((path, body))
+                return 200, {"ok": True}
+
+        client = DisplaydClient("http://127.0.0.1:9")
+        client.post = FakeHTTP().post
+        summary = client.dispatch({"name": "select_view",
+                                   "view": "stream"})
+        self.assertEqual(calls, [("/show", {"renderer": "stream",
+                                              "params": {}})])
+        self.assertEqual(summary["status"], 200)
+
+    def test_region_tap_reroutes_view(self):
+        # End-to-end: a tap inside a select_view tile dispatches the
+        # reroute through the shared input path.
+        cfg = default_config()
+        cfg.update({"width": 1920, "height": 1080,
+                    "calibration": dict(CAL),
+                    "tap_max_seconds": 60, "debounce_seconds": 0,
+                    "regions": [
+                        {"id": "view-clock",
+                         "rect": [0, 0, 1920, 1080],
+                         "action": {"name": "select_view",
+                                    "view": "clock"}}]})
+        dispatched = []
+
+        class FakeClient:
+            def dispatch(self, action, dry_run=False):
+                dispatched.append((action, dry_run))
+                return {"action": action["name"], "dry_run": dry_run}
+
+        svc = TouchService(cfg, client=FakeClient())
+        svc.handle_frame([TouchEvent("down", 0, 2047, 2047)],
+                         dry_run=True)
+        summary = svc.handle_frame([TouchEvent("up", 0, 2047, 2047)],
+                                   dry_run=True)
+        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(dispatched[0][0],
+                         {"name": "select_view", "view": "clock"})
+        self.assertTrue(summary["dry_run"])
+
+
+class CheckViewsTest(unittest.TestCase):
+    def _config(self, **overrides):
+        cfg = default_config()
+        cfg.update({"endpoint": "http://127.0.0.1:9",
+                    "regions": [
+                        {"id": "view-clock", "rect": [0, 0, 10, 10],
+                         "action": {"name": "select_view",
+                                    "view": "clock"}}]})
+        cfg["tap_options"] = {"enabled": True, "renderer": "picker",
+                                "params": {}}
+        cfg.update(overrides)
+        return cfg
+
+    def test_ok_when_all_advertised(self):
+        report = check_views(self._config(),
+                             fetch=lambda base: ["clock", "picker"])
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["unknown"], [])
+        self.assertEqual(len(report["selected"]), 2)
+
+    def test_unknown_view_flagged(self):
+        report = check_views(self._config(),
+                             fetch=lambda base: ["clock"])
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["unknown"], ["picker"])
+
+    def test_disabled_fallback_not_checked(self):
+        cfg = self._config(tap_options={"enabled": False})
+        report = check_views(cfg, fetch=lambda base: ["clock"])
+        self.assertTrue(report["ok"])
+
+    def test_non_tile_regions_ignored(self):
+        cfg = self._config(regions=[
+            {"id": "next", "rect": [0, 0, 10, 10],
+             "action": {"name": "playlist_next"}}])
+        report = check_views(cfg, fetch=lambda base: ["picker"])
+        self.assertTrue(report["ok"])
+        self.assertEqual(len(report["selected"]), 1)
+
+    def test_fetch_failure_propagates(self):
+        def boom(base):
+            raise RuntimeError("unreachable")
+        with self.assertRaises(RuntimeError):
+            check_views(self._config(), fetch=boom)
 
 
 if __name__ == "__main__":

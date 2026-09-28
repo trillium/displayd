@@ -31,7 +31,8 @@ Quick start (foreground smoke test)::
   MagicDNS -- use the tailnet IP literal), and non-http(s) schemes all
   fail closed. See "Named-action allowlist + caller rule" below.
 - The action model is a closed allowlist (today: `playlist_next/pause/resume`,
-  `screen_on/off`, `clear`, `show`, `notify`, `feedback`, `reload_confirm`). There is no generic
+  `screen_on/off`, `clear`, `show`, `options`, `select_view`, `notify`,
+  `feedback`, `reload_confirm`). There is no generic
   "POST any path" or shell action, so a bad config cannot become command
   execution. No credentials live in source control; there are none to
   configure.
@@ -101,6 +102,18 @@ and taps elsewhere keep their normal actions. It is the tap half of the
 scan-confirmed reload relay (see README "Reload confirmation"): scanning
 the QR confirms via `GET /r/<token>`, tapping confirms via this action,
 and the view still auto-returns on timeout either way.
+
+The third is `select_view`: a tap reroutes the displayed view --
+`{"name": "select_view", "view": "clock"}` posts the pinned body
+`{"renderer": "clock", "params": {}}` to `POST /show`, with the
+`params` half pinned empty so a tile can smuggle nothing. The view must be
+a plain name (no `/`, no blanks), so the action can only ever address that
+one endpoint -- it can never become an arbitrary-path action. Membership in
+the advertised set lives where the set lives: the daemon's `show()` rejects
+unknown names with the current view undisturbed, the tile list is generated
+from `GET /renderers` (never a probe), and `touch.py --check-views`
+cross-checks a config file against the live set before it ships to the host.
+See "View-selection tiles" below.
 
 ## Device discovery
 
@@ -271,6 +284,52 @@ earlier entries every overlap, and the full-height thirds otherwise shadow
 the grid (they stay reachable in margins/gutters). Validate with
 `touch.load_config()` before restarting the service.
 
+## View-selection tiles (picker wiring)
+
+`renderers/picker.py` is the tappable selection screen: a STATIC grid of
+labelled view tiles (default the pinned six -- clock, chat, row, stream,
+activity, options -- capped at 12, `views` param). Each tile's hit rect
+fires the allowlisted `select_view` action above, so a panel tap reroutes
+the view with no phone in hand. `options.py` stays what it was: the
+non-selecting screen that only NAMES the picks and the return path, one
+tile away, so neither screen traps the user -- a dead tap while the picker
+shows simply re-shows it.
+
+Reference wiring (`touch-picker.json.example`, 1920x1080):
+
+- Tile rects are GENERATED, never hand-computed -- the same function the
+  renderer draws from (`picker_regions()` / `grid_geometry()`):
+
+        python3 renderers/picker.py --width 1920 --height 1080 \
+            --views clock,chat,row,stream,activity,options
+
+  Paste the output FIRST under `"regions"`: `hit_test()` gives earlier
+  entries every overlap, so tiles must precede the gesture strips.
+- The default grid rect leaves side strips plus a bottom button bar: left
+  strip `screen_on`, right strip `playlist_next`, fullscreen
+  `reload_confirm` LAST (narrower regions win their own taps first). The
+  bar is deliberately dead -- a tap there is the always-available button
+  that opens the picker from any view.
+- Point the tap-anywhere fallback at the picker (`"tap_options":
+  {"enabled": true, "renderer": "picker", "params": {"views":
+  [...], "rect": [...]}}`), so pressing that dead zone opens the grid.
+- Cross-check before shipping to the host (no device needed):
+
+        python3 touch.py --config touch.json --check-views
+
+  It reports every tile view plus the fallback renderer against the live
+  `GET /renderers` set and exits 1 on anything unadvertised. `load_config()`
+  validation still runs first, so a malformed config fails before any HTTP.
+- Host procedure (host-local `~/displayd/touch.json` survives redeploys):
+  back the file up, copy the new regions over, `load_config()` + `--check-views`
+  against the live panel, restart only the existing `displayd-touch` unit.
+  Revert by restoring the backup and restarting the unit again.
+
+`confidence_feedback` keeps working untouched: it still POSTs every resolved
+tap best-effort AFTER the tile action dispatches, pointed wherever the host
+config says (during picker use the retro_grid target simply buffers -- feeds
+are global, so nothing errors and nothing changes on screen).
+
 ## Tap anywhere: unconsumed taps route to options
 
 A tap that hits no configured region -- the middle dead zone in the
@@ -313,6 +372,9 @@ stream) plus that return path.
 Configure (`touch.json`):
 
     "tap_options": {"enabled": true, "renderer": "options", "params": {}}
+
+Point `"renderer": "picker"` (with the matching `views`/`rect` params) to
+open the tappable selection grid instead -- see "View-selection tiles".
 
 `false` (or `{"enabled": false}`) restores the old dead-zone behaviour
 (log + optional confidence feedback, no navigation). `renderer` must be a

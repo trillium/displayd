@@ -177,6 +177,11 @@ ACTION_TABLE = {
         "method": "POST", "path": "/show",
         "params": ("renderer", "params"),
     },
+    "select_view": {
+        "effect": "reroute the displayed view to the named selection",
+        "method": "POST", "path": "/show",
+        "params": ("view",),
+    },
     "notify": {
         "effect": "interrupt the panel with a transient notice",
         "method": "POST", "path": "/notify",
@@ -523,6 +528,24 @@ def _resolve(action):
             return None, "options params must be an object"
         return ("POST", "/show",
                 {"renderer": renderer, "params": params}), None
+    if name == "select_view":
+        # View-reroute tile: {"name": "select_view", "view": "clock"}
+        # posts the pinned body {"renderer": view, "params": {}} to
+        # POST /show. The view must be a plain name (no "/", no blanks)
+        # so the action can only ever address that one endpoint -- it can
+        # never become an arbitrary-path action. Membership in the
+        # daemon's advertised renderer set (GET /renderers) is enforced
+        # where the set lives: show() rejects unknown names with the
+        # current view undisturbed; `touch.py --check-views` cross-checks
+        # a config file against the live set before it ships to the host.
+        view = action.get("view")
+        if not view or not isinstance(view, str):
+            return None, "select_view action needs a view name"
+        view = view.strip()
+        if not view or "/" in view:
+            return None, "select_view view must be a plain view name"
+        return ("POST", "/show",
+                {"renderer": view, "params": {}}), None
     if name == "notify":
         title = action.get("title")
         if not title or not isinstance(title, str):
@@ -580,6 +603,49 @@ def action_request(action):
     if resolved is None:
         raise ValueError(reason)
     return resolved
+
+
+def fetch_renderers(base_url, timeout=5.0):
+    """GET /renderers view names from a live daemon. Pure HTTP read;
+    raises RuntimeError when the daemon is unreachable or answers garbage."""
+    url = base_url.rstrip("/") + "/renderers"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            doc = json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception as exc:
+        raise RuntimeError("GET %s failed: %s" % (url, exc)) from exc
+    try:
+        return sorted(r["name"] for r in doc.get("renderers") or []
+                      if isinstance(r, dict) and r.get("name"))
+    except Exception as exc:
+        raise RuntimeError("GET %s answered garbage: %s"
+                           % (url, exc)) from exc
+
+
+def check_views(config, fetch=None):
+    """Cross-check every configured selection against the daemon's
+    advertised renderer set: each select_view tile's view plus the
+    tap_options fallback renderer. Returns a report dict with "ok".
+    `fetch` is injectable (base_url -> [names]) for tests."""
+    fetch = fetch or fetch_renderers
+    advertised = set(fetch(config["endpoint"]))
+    wanted = []
+    for region in config.get("regions") or []:
+        action = region.get("action") or {}
+        if (action.get("name") == "select_view"
+                and action.get("view")):
+            wanted.append((region.get("id"), action["view"]))
+    tap = config.get("tap_options") or {}
+    if tap.get("enabled") and tap.get("renderer"):
+        wanted.append(("(tap_options)", tap["renderer"]))
+    unknown = sorted({view for _, view in wanted
+                      if view not in advertised})
+    return {"endpoint": config["endpoint"],
+            "advertised": sorted(advertised),
+            "selected": [{"region": rid, "view": view}
+                           for rid, view in wanted],
+            "unknown": unknown,
+            "ok": not unknown}
 
 
 class DisplaydClient:
@@ -1216,6 +1282,10 @@ def build_arg_parser():
                              "feed (same as DISPLAYD_TOUCH_CONFIDENCE=1)")
     parser.add_argument("--list-devices", action="store_true",
                         help="list /dev/input/event* with names and exit")
+    parser.add_argument("--check-views", action="store_true",
+                        help="cross-check configured select_view tiles + "
+                             "tap_options renderer against GET /renderers "
+                             "and exit 0/1 (no device needed)")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser
 
@@ -1247,6 +1317,14 @@ def main(argv=None):
     if args.confidence_feedback:
         cfg["confidence_feedback"] = normalize_confidence_feedback(
             dict(cfg.get("confidence_feedback") or {}, enabled=True))
+    if args.check_views:
+        try:
+            report = check_views(cfg)
+        except RuntimeError as exc:
+            print("check-views: %s" % exc)
+            return 2
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["ok"] else 1
     service = TouchService(cfg)
     signal.signal(signal.SIGINT,
                   lambda *_a: service.request_stop())
