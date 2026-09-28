@@ -208,9 +208,16 @@ ACTION_TABLE = {
         "params": ("x", "y"),
     },
     "talon_focus": {
-        "effect": "focus the tapped app row (view-gated: refused "
-                    "unless the talon_apps list view is showing)",
+        "effect": "focus the tapped app button (view-gated: refused "
+                    "unless the talon_apps side-button view is showing)",
         "method": "POST", "path": "/talon/focus",
+        "params": ("x", "y"),
+    },
+    "macbook_click": {
+        "effect": "click the reviewed point on the magnified image "
+                    "(view-gated: refused unless the macbook view is "
+                    "showing, plus fresh-capture and cursor-still gates)",
+        "method": "POST", "path": "/macbook/click",
         "params": ("x", "y"),
     },
 }
@@ -219,8 +226,8 @@ ACTION_TABLE = {
 # tap point positions it. Coordinates are stamped at dispatch (never
 # stored in config) and validated twice -- here and daemon-side, where
 # the point maps to a feed-listed app (talon_focus) or a Quartz point
-# (macbook_mouse). Both names share the _resolve branch below.
-COORD_ACTIONS = ("talon_focus", "macbook_mouse")
+# (macbook_mouse, macbook_click). All three share the _resolve branch.
+COORD_ACTIONS = ("talon_focus", "macbook_mouse", "macbook_click")
 
 # Backwards-compatible name list (was the whole allowlist before the
 # guard-shaped table above). New code should read ACTION_TABLE.

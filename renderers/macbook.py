@@ -17,7 +17,7 @@ import time
 
 from PIL import ImageDraw, ImageFont
 
-import macbook_map
+import macbook_zoom
 
 NAME = "macbook"
 DESCRIPTION = "MacBook state: frontmost app, focused window, screens, Talon mode"
@@ -67,6 +67,18 @@ INPUTS = {
         },
         "buffer": 1,
     },
+    "zoom": {
+        "type": "object",
+        "help": "magnified review capture (see bridges/mac_zoom.py)",
+        "required": ["ts", "x", "y", "jpeg"],
+        "properties": {
+            "ts": {"type": "number"},
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+            "jpeg": {"type": "string", "maxLength": 140000},
+        },
+        "buffer": 1,
+    },
 }
 
 POLL = 0.25
@@ -95,8 +107,8 @@ def _font(screen, name, size):
     return ImageFont.truetype(path, size) if path else None
 
 
-def _latest(screen):
-    states = [s for s in screen.get_input("macbook", "state")
+def _latest(screen, name="state"):
+    states = [s for s in screen.get_input("macbook", name)
               if isinstance(s, dict)]
     return states[-1] if states else None
 
@@ -172,49 +184,7 @@ def _draw_header(draw, screen, title, state, stale, fonts):
     return HEADER_H
 
 
-def _draw_map(draw, screen, state, fonts):
-    _, _, meta_font = fonts
-    plain = meta_font
-    displays = state.get("displays") or []
-    box = macbook_map.union(displays)
-    if box is None:
-        draw.text((PAD, MAP_TOP + 20), "no display geometry in feed",
-                  font=plain, fill=C_DIM)
-        return
-    # Shared frame math (map area below the header): tap-mapping in
-    # macbook_map.locate() must invert exactly this transform.
-    scale, ox, oy = macbook_map.frame(box, screen.W, screen.H)
-    if scale <= 0:
-        return
-    focus, mouse = state.get("focus") or {}, state.get("mouse") or {}
-    active = focus.get("display_index")
-    for i, d in enumerate(displays):
-        if not isinstance(d, dict):
-            continue
-        r = macbook_map.rect((d.get("bounds") or {}), scale, ox, oy)
-        if r is None:
-            continue
-        is_active = (i == active)
-        draw.rectangle(r, outline=ACCENT if is_active else (90, 90, 110),
-                       width=5 if is_active else 2)
-        tag = macbook_map.label(i, bool(d.get("main")))
-        if is_active:
-            tag += " FOCUS"
-        draw.text((r[0] + 10, r[1] + 8), tag, font=plain,
-                  fill=(255, 255, 255) if is_active else C_DIM)
-    bounds = focus.get("window_bounds")
-    rect = macbook_map.rect(bounds, scale, ox, oy) \
-        if isinstance(bounds, dict) else None
-    if rect is not None:
-        draw.rectangle(rect, outline=ACCENT, width=3)
-    if isinstance(mouse.get("x"), (int, float)) and \
-            isinstance(mouse.get("y"), (int, float)):
-        px, py = macbook_map.project(mouse["x"], mouse["y"], scale, ox, oy)
-        draw.ellipse([px - 9, py - 9, px + 9, py + 9],
-                     fill=(255, 255, 255), outline=(0, 0, 0), width=2)
-
-
-def _draw(screen, title, state, stale, bg):
+def _draw(screen, title, state, stale, bg, zoom):
     img = screen.new_image(bg)
     draw = ImageDraw.Draw(img)
     fonts = (_font(screen, "DejaVuSans-Bold", APP_SIZE),
@@ -226,7 +196,10 @@ def _draw(screen, title, state, stale, bg):
         draw.text((PAD, HEADER_H + 40), "waiting for macbook feed -- run bridges/macos_state.py", font=fonts[2] or plain, fill=(120, 120, 130))
         return img
     _draw_header(draw, screen, title, state, stale, fonts)
-    _draw_map(draw, screen, state, fonts)
+    # Shared frame math (map above the review pane): tap-mapping in
+    # macbook_map.locate(bottom=...) must invert exactly this.
+    macbook_zoom.draw_map(img, draw, screen, state, fonts[2], ACCENT)
+    macbook_zoom.draw(img, draw, screen, zoom, fonts[2])
     return img
 
 
@@ -236,13 +209,15 @@ def run(screen, params, stop):
     last_key = None
     while not stop.is_set():
         state = _latest(screen)
+        zoom = _latest(screen, "zoom")
         stale = bool(state) and \
             time.time() - state.get("ts", 0) > STALE_AFTER
-        key = (_key(state), stale)
+        key = (_key(state), macbook_zoom.key(zoom), stale)
         if key != last_key:
             last_key = key
             try:
-                screen.present(_draw(screen, title, state, stale, bg))
+                screen.present(_draw(screen, title, state, stale, bg,
+                                     zoom))
             except Exception:
                 pass
         stop.wait(POLL)

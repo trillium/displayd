@@ -77,18 +77,22 @@ def unproject(px, py, scale, ox, oy):
         return None
 
 
-def frame(box, panel_w, panel_h, pad=MAP_PAD, top=MAP_TOP):
+def frame(box, panel_w, panel_h, pad=MAP_PAD, top=MAP_TOP,
+          bottom=None):
     """(scale, ox, oy) for the map area inside a panel frame.
 
-    Mirrors renderers/macbook.py _draw_map: the map fills the panel
-    below a `top`-px header with a `pad`-px margin. The +top fold-in
-    lives here so renderer and tap-mapping cannot drift."""
-    scale, ox, oy = fit(box, panel_w - 2 * pad, panel_h - pad - top)
+    Mirrors the macbook renderer: the map fills the panel between a
+    `top`-px header and `bottom` (default: the panel base -- the zoom
+    review pane passes its own top so taps map where the drawn map
+    is). The fold-ins live here so renderer and tap-mapping cannot
+    drift."""
+    base = panel_h if bottom is None else bottom
+    scale, ox, oy = fit(box, panel_w - 2 * pad, base - pad - top)
     return (scale, ox, oy + top)
 
 
 def locate(px, py, displays, panel_w, panel_h,
-           pad=MAP_PAD, top=MAP_TOP):
+           pad=MAP_PAD, top=MAP_TOP, bottom=None):
     """Panel point -> {"display_index", "x", "y"} Quartz, or None.
 
     Unprojects through frame() then containment-tests each display
@@ -100,7 +104,8 @@ def locate(px, py, displays, panel_w, panel_h,
             return None
         pw, ph = float(panel_w), float(panel_h)
         qx, qy = unproject(float(px), float(py),
-                           *frame(union(displays), pw, ph, pad, top))
+                           *frame(union(displays), pw, ph, pad, top,
+                                  bottom))
     except TypeError:
         return None
     except (ValueError, ArithmeticError):

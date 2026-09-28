@@ -102,46 +102,101 @@ class RendererTest(unittest.TestCase):
         self.assertEqual(len(RENDERER.clean(long_name)),
                          RENDERER.NAME_CHARS)
 
-    def test_hit_rows_and_misses(self):
-        w, h = 1920, 1080
+    def _state(self, apps=("Safari", "Terminal", "Mail")):
+        return {"ts": 1.0, "apps": list(apps), "focused": "Safari"}
+
+    def test_hit_side_buttons_and_misses(self):
+        # Flat feed (no windows): split mode, Safari/Terminal left,
+        # Mail right. Left column x=48.., right column x=1312... .
+        w, h, state = 1920, 1080, self._state()
+        grouped = RENDERER.groups(state)
+        self.assertEqual(grouped["mode"], "split")
         self.assertEqual(RENDERER.hit(100, RENDERER.LIST_TOP + 5,
-                                     w, h, 3), 0)
-        self.assertEqual(RENDERER.hit(100, RENDERER.LIST_TOP
-                                     + RENDERER.ROW_H + 5, w, h, 3), 1)
-        self.assertEqual(RENDERER.hit(100, RENDERER.LIST_TOP
-                                     + 9 * RENDERER.ROW_H + 5, w, h, 12), 9)
+                                     w, h, state), 0)
+        self.assertEqual(RENDERER.hit(1400, RENDERER.LIST_TOP + 5,
+                                     w, h, state), 2)
         self.assertIsNone(RENDERER.hit(100, RENDERER.LIST_TOP - 5,
-                                       w, h, 3))  # header
-        self.assertIsNone(RENDERER.hit(100, RENDERER.LIST_TOP
-                                       + 3 * RENDERER.ROW_H + 5,
-                                       w, h, 3))  # past count
-        self.assertIsNone(RENDERER.hit(10, RENDERER.LIST_TOP + 5,
-                                       w, h, 3))  # left of PAD
+                                       w, h, state))  # header
+        self.assertIsNone(RENDERER.hit(700, RENDERER.LIST_TOP + 5,
+                                       w, h, state))  # centre gap
         self.assertIsNone(RENDERER.hit(100, RENDERER.LIST_TOP + 5,
-                                       w, h, 0))  # empty list
-        self.assertIsNone(RENDERER.hit(100, RENDERER.LIST_TOP
-                                       + 10 * RENDERER.ROW_H + 5,
-                                       w, h, 30))  # past MAX_ROWS cap
+                                       w, h, self._state(())))  # empty
+        self.assertIsNone(RENDERER.hit(100, RENDERER.LIST_TOP + 5,
+                                       w, h, None))  # no state
+        self.assertIsNone(RENDERER.hit(100, RENDERER.LIST_TOP + 5,
+                                       w, h, "junk"))  # garbage
+
+    def test_hit_follows_display_grouping(self):
+        # Two-display feed: leftmost-display app hits left, the rest
+        # hits right, wherever the columns are drawn.
+        w, h = 1920, 1080
+        state = {"ts": 1.0, "apps": ["Left", "Right"],
+                 "windows": {"Left": {"x": 100, "y": 100, "d": 1},
+                               "Right": {"x": 2000, "y": 500,
+                                           "d": 0}},
+                 "displays": [{"bounds": {"x": 0, "y": 0,
+                                              "w": 1728, "h": 1117}},
+                                {"bounds": {"x": -1692, "y": -135,
+                                              "w": 1692, "h": 945}}]}
+        grouped = RENDERER.groups(state)
+        self.assertEqual(grouped["mode"], "sides")
+        self.assertEqual(grouped["left"], [0])
+        self.assertEqual(grouped["right"], [1])
+        self.assertEqual(RENDERER.hit(100, RENDERER.LIST_TOP + 5,
+                                     w, h, state), 0)
+        self.assertEqual(RENDERER.hit(1400, RENDERER.LIST_TOP + 5,
+                                     w, h, state), 1)
 
     def test_draw_and_hit_cannot_drift(self):
-        # Every drawable row hit-tests to itself on a real Screen size.
-        w, h = 1920, 1080
-        for i in range(RENDERER.MAX_ROWS):
-            x, y, rw, rh = RENDERER.row_rect(i, w)
-            self.assertEqual(RENDERER.hit(x + 5, y + 5, w, h,
-                                          RENDERER.MAX_ROWS), i)
+        # Every drawable button hit-tests to itself on a real size.
+        from renderers import talon_layout as layout
+        w, h, state = 1920, 1080, self._state(
+            tuple("App%d" % i for i in range(18)))
+        grouped = RENDERER.groups(state)
+        for side in ("left", "right"):
+            for slot, index in enumerate(grouped[side]):
+                x, y, rw, rh = layout.button_rect(side, slot, w)
+                self.assertEqual(RENDERER.hit(x + 5, y + 5, w, h,
+                                              state), index)
 
 
 class FocusSlotTest(DaemonCase):
     def test_tap_queues_feed_named_command(self):
+        # Split mode: Safari/Terminal left, Mail right slot 0.
         daemon = self.make_daemon()
         daemon.show("talon_apps", {})
         self.feed_apps(daemon)
-        y = RENDERER.LIST_TOP + 2 * RENDERER.ROW_H + 5
-        result = daemon.request_focus_move(200, y)
+        result = daemon.request_focus_move(
+            1400, RENDERER.LIST_TOP + 5)
         self.assertTrue(result["ok"])
         self.assertEqual(result["command"]["app"], "Mail")
         self.assertEqual(result["command"]["index"], 2)
+        left = daemon.request_focus_move(
+            100, RENDERER.LIST_TOP + 5)
+        self.assertTrue(left["ok"])
+        self.assertEqual(left["command"]["app"], "Safari")
+
+    def test_tap_follows_display_sides(self):
+        daemon = self.make_daemon()
+        daemon.show("talon_apps", {})
+        daemon.feed("talon_apps", "state",
+                    {"ts": time.time(),
+                     "apps": ["Left", "Right"], "focused": "Left",
+                     "windows": {"Left": {"x": 100, "y": 100,
+                                             "d": 1}},
+                     "displays": [
+                         {"bounds": {"x": 0, "y": 0, "w": 1728,
+                                      "h": 1117}},
+                         {"bounds": {"x": -1692, "y": -135,
+                                      "w": 1692, "h": 945}}]})
+        left = daemon.request_focus_move(
+            100, RENDERER.LIST_TOP + 5)
+        self.assertTrue(left["ok"], left)
+        self.assertEqual(left["command"]["app"], "Left")
+        right = daemon.request_focus_move(
+            1400, RENDERER.LIST_TOP + 5)
+        self.assertTrue(right["ok"], right)
+        self.assertEqual(right["command"]["app"], "Right")
 
     def test_name_comes_from_feed_never_caller(self):
         # The body carries pixels only: there is no parameter that could
@@ -403,6 +458,48 @@ class TalonSideTest(unittest.TestCase):
         self.assertEqual(calls, ["Safari"])
         self.assertEqual(resp, {"id": 3, "ok": True,
                                 "focused": "Safari"})
+
+    def test_capture_doc_captures_rect_to_fixed_path(self):
+        if not hasattr(TALON_SIDE, "handle_capture_doc"):
+            self.skipTest("talon side predates the capture verb")
+        made = {}
+
+        def rect_of(x, y, w, h):
+            made["rect"] = (x, y, w, h)
+            return made["rect"]
+
+        def shoot(rect, path):
+            made["shot"] = (rect, path)
+        req = {"id": 9, "x": 10, "y": 20, "w": 480, "h": 360,
+               "ts": time.time()}
+        self.assertEqual(TALON_SIDE.handle_capture_doc(
+            req, rect_of, shoot, "/tmp/fixed.png"),
+            {"id": 9, "ok": True})
+        self.assertEqual(made["rect"], (10.0, 20.0, 480.0, 360.0))
+        self.assertEqual(made["shot"],
+                         (made["rect"], "/tmp/fixed.png"))
+
+    def test_capture_doc_refuses_without_capturing(self):
+        if not hasattr(TALON_SIDE, "handle_capture_doc"):
+            self.skipTest("talon side predates the capture verb")
+        calls = []
+
+        def shoot(rect, path):
+            calls.append((rect, path))
+
+        stale = {"id": 1, "x": 0, "y": 0, "w": 10, "h": 10,
+                 "ts": time.time() - 60}
+        resp = TALON_SIDE.handle_capture_doc(stale, None, shoot,
+                                             "/tmp/fixed.png")
+        self.assertFalse(resp["ok"])
+        for bad in ({"id": 2, "x": 0, "y": 0, "w": 99999,
+                     "h": 10, "ts": time.time()},
+                    {"id": 3, "ts": time.time()},
+                    "junk"):
+            resp = TALON_SIDE.handle_capture_doc(bad, None, shoot,
+                                                 "/tmp/fixed.png")
+            self.assertFalse(resp["ok"])
+        self.assertEqual(calls, [])
 
     def test_no_blocking_rpc_import(self):
         # The Talon side must not use the command_client blocking

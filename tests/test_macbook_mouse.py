@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
 
 import displayd
 import macbook_map
+import macbook_zoom
 import macos_state
 
 DISPLAYS = [{"bounds": {"x": 0, "y": 0, "w": 1728, "h": 1117},
@@ -143,8 +144,11 @@ class DaemonMouseTest(unittest.TestCase):
         self.daemon.feed("macbook", "state", feed_payload())
 
     def _panel_of(self, qx, qy):
+        # The live map is shrunk above the zoom pane: project through
+        # the same bottom the daemon tap-maps with, or taps drift.
         box = macbook_map.union(DISPLAYS)
-        scale, ox, oy = macbook_map.frame(box, PANEL_W, PANEL_H)
+        scale, ox, oy = macbook_map.frame(
+            box, PANEL_W, PANEL_H, bottom=macbook_zoom.MAP_BOTTOM)
         px, py = macbook_map.project(qx, qy, scale, ox, oy)
         return int(round(px)), int(round(py))
 
