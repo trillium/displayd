@@ -115,6 +115,22 @@ from `GET /renderers` (never a probe), and `touch.py --check-views`
 cross-checks a config file against the live set before it ships to the host.
 See "View-selection tiles" below.
 
+The fourth is `macbook_mouse`: a tap moves the MacBook cursor --
+`{"name": "macbook_mouse"}` on a region posts the TAP's panel pixels
+`{"x", "y"}` to `POST /macbook/mouse`, where the daemon maps them
+through the drawn map geometry and queues one Quartz point for the
+Mac-side poller to warp to directly. Coordinates are tap-supplied at
+dispatch (stamped by `TouchService.handle_frame`), never stored in
+config, so a config entry carries no `x`/`y`; both touch (`panel`
+bounds) and the daemon (panel bounds, macbook view showing, fresh feed,
+point inside the display map) validate, and an out-of-range or malformed
+point is refused rather than clamped into something plausible. The warp
+itself is a direct Quartz call, not Talon: Talon follows the OS cursor
+(verified 2026-09-28), so there is no desync and no Talon dependency.
+Wire it to a region covering the map area (below the 250px header -- see
+`touch.json.example`); taps in the header or letterbox are refused
+harmlessly by the daemon. See "MacBook cursor" below.
+
 ## Device discovery
 
 On the target host (the default `/dev/input/event8` is the lnx-server local
@@ -443,6 +459,45 @@ plain view name and `params` a plain object; the fallback dispatches
 through the closed `options` action, so it inherits the fixed-shape body
 and the loopback/tailnet caller rule -- a bad config fails fast in
 `load_config()` before the device is opened.
+
+## MacBook cursor (panel tap moves the Mac cursor)
+
+While the `macbook` view (the two-screen map) is showing, a tap in the
+map area moves the MacBook cursor to the tapped point. Chain:
+`touch.py` `macbook_mouse` region tap posts panel pixels to
+`POST /macbook/mouse`; the daemon maps them through the same pure
+geometry the renderer draws (`macbook_map.frame`/`locate`) and holds one
+pending Quartz point; the Mac-side poller (`bridges/macos_state.py`)
+fetches it each tick and warps directly (`CGWarpMouseCursorPosition`).
+Direct, not Talon: Talon follows the OS cursor (verified 2026-09-28 --
+a bare warp reads back identically through the Talon REPL), so there is
+no desync to avoid and no Talon-running dependency. When Talon is not
+running nothing changes: the warp does not touch Talon at all.
+
+Refusals, never mis-moves: the daemon answers 409 (nothing queued, cursor
+untouched) unless the macbook view is showing single-fullscreen, the
+macbook feed is fresh (<5s), and the tap lands on a display rect --
+header/letterbox taps miss harmlessly. Coordinates are validated twice
+(touch panel bounds, daemon panel bounds) and refused, never clamped.
+When displayd is unreachable the poller logs and retries; the queued
+command TTL-expires after 10s instead of firing late. The warp is one
+atomic OS call, so a failure lands the full point or nothing.
+
+Reference wiring (1920x1080; rect is display pixels below the 250px
+header -- the map area; list it AFTER narrower regions so they win
+their taps, and note the fullscreen `reload_confirm` entry stays last):
+
+    {"id": "mac-map", "rect": [0, 250, 1920, 830],
+     "action": {"name": "macbook_mouse"}}
+
+Host procedure (host-local `~/displayd/touch.json` survives redeploys):
+back the file up, insert the region, validate with
+`touch.load_config()` + a dry-run tap, restart only the existing
+`displayd-touch` unit. Revert: restore the backup and restart the unit
+again. Residual exposure (accepted by the captain 2026-09-28): the
+panel API is tailnet-bound without authentication, so anything that can
+reach it could move the cursor -- same trust boundary as before, now
+driving input as well as display.
 
 
 ## Service supervision (lnx-server)

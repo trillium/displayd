@@ -348,7 +348,7 @@ class ServiceHandleFrameTest(unittest.TestCase):
         dispatched = []
 
         class FakeClient:
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 dispatched.append((action, dry_run))
                 return {"action": action["name"], "dry_run": dry_run}
 
@@ -405,7 +405,7 @@ class ServiceHandleFrameTest(unittest.TestCase):
                     "debounce_seconds": 0})
 
         class Boom:
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 raise RuntimeError("connection refused")
 
         svc = TouchService(cfg, client=Boom())
@@ -422,7 +422,7 @@ class ServiceHandleFrameTest(unittest.TestCase):
                     "debounce_seconds": 0})
 
         class Boom:
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 raise RuntimeError("connection refused")
 
         svc = TouchService(cfg, client=Boom())
@@ -472,7 +472,7 @@ class TapDismissServiceTest(unittest.TestCase):
                     raise RuntimeError("connection refused")
                 return {"action": "tap_dismiss", "dry_run": dry_run}
 
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 calls.append(("dispatch", action["name"], dry_run))
                 return {"action": action["name"], "dry_run": dry_run}
 
@@ -763,7 +763,7 @@ class ConfidenceFeedbackTest(unittest.TestCase):
                 events.append(("dismiss", dry_run))
                 return {"action": "tap_dismiss", "dry_run": dry_run}
 
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 events.append(("dispatch", action.get("name"), dry_run))
                 return {"action": action.get("name"), "status": 200,
                         "dry_run": dry_run}
@@ -850,7 +850,7 @@ class ConfidenceFeedbackTest(unittest.TestCase):
             def __init__(self):
                 self.dispatched = []
 
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 self.dispatched.append(action.get("name"))
                 return {"action": action.get("name"), "status": 200}
 
@@ -882,7 +882,7 @@ class ConfidenceFeedbackTest(unittest.TestCase):
             def tap_dismiss(self, dry_run=False):
                 return {"action": "tap_dismiss", "dry_run": dry_run}
 
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 raise RuntimeError("connection refused")
 
             def post(self, path, body):
@@ -920,7 +920,7 @@ class ConfidenceFeedbackTest(unittest.TestCase):
         dispatched = []
 
         class NoPostClient:
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 dispatched.append(action.get("name"))
                 return {"action": action.get("name")}
 
@@ -1007,6 +1007,7 @@ class GuardShapeTest(unittest.TestCase):
             "playlist_next", "playlist_pause", "playlist_resume",
             "screen_on", "screen_off", "clear", "show", "options",
             "select_view", "notify", "feedback", "reload_confirm",
+            "macbook_mouse",
         })
         # Every entry classifies by handler effect: a daemon endpoint the
         # tap drives, never just a name.
@@ -1210,7 +1211,7 @@ class FeedbackActionTest(unittest.TestCase):
         posted = []
 
         class FakeClient:
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 method, path, body = action_request(action)
                 posted.append((path, body))
                 return {"action": action["name"], "method": method,
@@ -1287,7 +1288,7 @@ class OptionsActionTest(unittest.TestCase):
         posted = []
 
         class FakeClient:
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 method, path, body = action_request(action)
                 posted.append((path, body))
                 return {"action": action["name"], "method": method,
@@ -1430,7 +1431,7 @@ class SelectViewTest(unittest.TestCase):
         dispatched = []
 
         class FakeClient:
-            def dispatch(self, action, dry_run=False):
+            def dispatch(self, action, dry_run=False, panel=None):
                 dispatched.append((action, dry_run))
                 return {"action": action["name"], "dry_run": dry_run}
 
@@ -1489,6 +1490,150 @@ class CheckViewsTest(unittest.TestCase):
             raise RuntimeError("unreachable")
         with self.assertRaises(RuntimeError):
             check_views(self._config(), fetch=boom)
+
+
+class MacbookMouseTest(unittest.TestCase):
+    """Closed `macbook_mouse` action: tap point -> POST /macbook/mouse.
+
+    Coordinates are tap-supplied at dispatch (stamped by
+    TouchService.handle_frame), never stored in config: a config entry
+    carries no x/y and validates with allow_missing_coords, while every
+    dispatch requires bounded integers. Out-of-range or malformed
+    points are refused, never clamped into something plausible."""
+
+    PANEL = (1920, 1080)
+
+    def test_valid_dispatch(self):
+        action = {"name": "macbook_mouse", "x": 834, "y": 536}
+        self.assertEqual(action_request(action, panel=self.PANEL),
+                         ("POST", "/macbook/mouse",
+                          {"x": 834, "y": 536}))
+        self.assertEqual(resolve_action(action, panel=self.PANEL),
+                         ("POST", "/macbook/mouse",
+                          {"x": 834, "y": 536}))
+        # Origin and far corner are in-range.
+        for action in ({"name": "macbook_mouse", "x": 0, "y": 0},
+                       {"name": "macbook_mouse", "x": 1919,
+                        "y": 1079}):
+            self.assertEqual(resolve_action(action, panel=self.PANEL)[1],
+                             "/macbook/mouse")
+
+    def test_config_entry_needs_no_coords(self):
+        # load_config shape: the region names the action, the tap
+        # positions it. Missing coordinates pass config validation...
+        self.assertEqual(
+            action_request({"name": "macbook_mouse"},
+                           allow_missing_coords=True),
+            ("POST", "/macbook/mouse", {}))
+        # ...but dispatch without them is denied by both variants.
+        with self.assertRaises(ValueError):
+            action_request({"name": "macbook_mouse"},
+                           panel=self.PANEL)
+        self.assertIsNone(resolve_action({"name": "macbook_mouse"},
+                                         panel=self.PANEL))
+        with self.assertRaises(ValueError):
+            action_request({"name": "macbook_mouse"})
+        self.assertIsNone(resolve_action({"name": "macbook_mouse"}))
+
+    def test_malformed_denied_by_both_variants(self):
+        bad = [
+            {"name": "macbook_mouse", "x": 1.5, "y": 2},
+            {"name": "macbook_mouse", "x": "834", "y": 536},
+            {"name": "macbook_mouse", "x": True, "y": 536},
+            {"name": "macbook_mouse", "x": None, "y": 536},
+            {"name": "macbook_mouse", "x": 834},  # missing y
+            {"name": "macbook_mouse", "x": -1, "y": 536},
+            {"name": "macbook_mouse", "x": 834, "y": -40},
+            {"name": "macbook_mouse", "x": 1920, "y": 536},
+            {"name": "macbook_mouse", "x": 834, "y": 1080},
+            {"name": "macbook_mouse", "x": 99999, "y": 99999},
+        ]
+        for action in bad:
+            with self.assertRaises(ValueError, msg=repr(action)):
+                action_request(action, panel=self.PANEL)
+            self.assertIsNone(resolve_action(action, panel=self.PANEL),
+                              msg=repr(action))
+
+    def test_no_clamp_no_smuggle(self):
+        # Extras are ignored and the body is pinned to {x, y}: the
+        # action can never become an arbitrary-path primitive.
+        method, path, body = action_request(
+            {"name": "macbook_mouse", "x": 10, "y": 20,
+             "renderer": "evil", "params": {"a": 1}},
+            panel=self.PANEL)
+        self.assertEqual((method, path), ("POST", "/macbook/mouse"))
+        self.assertEqual(body, {"x": 10, "y": 20})
+
+    def test_dispatch_denies_off_panel_without_http(self):
+        posted = []
+
+        class RecordingClient(DisplaydClient):
+            def post(self, path, body):
+                posted.append((path, body))
+                return 200, {"ok": True}
+
+        client = RecordingClient("http://127.0.0.1:9")
+        summary = client.dispatch({"name": "macbook_mouse",
+                                   "x": 5000, "y": 536},
+                                  panel=self.PANEL)
+        self.assertIn("error", summary)
+        self.assertEqual(posted, [])  # not a byte on the wire
+
+    def test_region_tap_stamps_coordinates(self):
+        # End to end: a tap in a macbook_mouse region dispatches the
+        # tap's own panel pixels, bounded by the service's dimensions.
+        cfg = default_config()
+        cfg.update({"width": 1920, "height": 1080,
+                    "calibration": dict(CAL),
+                    "tap_max_seconds": 60,
+                    "debounce_seconds": 0,
+                    "tap_options": {"enabled": False},
+                    "regions": [
+                        {"id": "mac-map",
+                         "rect": [0, 250, 1920, 830],
+                         "action": {"name": "macbook_mouse"}},
+                    ]})
+        seen = []
+
+        class FakeClient:
+            def tap_dismiss(self, dry_run=False):
+                return {"action": "tap_dismiss", "dry_run": dry_run}
+
+            def dispatch(self, action, dry_run=False, panel=None):
+                seen.append((dict(action), dry_run, panel))
+                method, path, body = action_request(action, panel=panel)
+                return {"action": "macbook_mouse", "method": method,
+                        "path": path, "body": body,
+                        "dry_run": dry_run}
+
+        svc = TouchService(cfg, client=FakeClient())
+        # Raw (2047, 2500) -> display ~(959, 659): inside the map strip.
+        svc.handle_frame([TouchEvent("down", 0, 2047, 2500)],
+                         dry_run=True)
+        summary = svc.handle_frame([TouchEvent("up", 0, 2047, 2500)],
+                                   dry_run=True)
+        self.assertEqual(len(seen), 1)
+        action, _, panel = seen[0]
+        self.assertEqual(panel, (1920, 1080))
+        self.assertEqual((action["x"], action["y"]), (959, 659))
+        self.assertEqual(summary["path"], "/macbook/mouse")
+        self.assertEqual(summary["body"], {"x": 959, "y": 659})
+
+    def test_load_config_accepts_coordless_region(self):
+        cfg = default_config()
+        cfg["regions"].append(
+            {"id": "mac-map", "rect": [0, 250, 1920, 830],
+             "action": {"name": "macbook_mouse"}})
+        with tempfile.NamedTemporaryFile("w", suffix=".json",
+                                         delete=False) as fh:
+            json.dump(cfg, fh)
+            path = fh.name
+        try:
+            loaded = load_config(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(loaded["regions"][-1]["action"],
+                         {"name": "macbook_mouse"})
 
 
 if __name__ == "__main__":

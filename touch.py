@@ -198,6 +198,13 @@ ACTION_TABLE = {
                     "no-op unless the reload QR view is showing)",
         "method": "POST", "path": "/reload/confirm",
     },
+    "macbook_mouse": {
+        "effect": "move the MacBook cursor to the tapped map point "
+                    "(view-gated: refused unless the macbook map view "
+                    "is showing)",
+        "method": "POST", "path": "/macbook/mouse",
+        "params": ("x", "y"),
+    },
 }
 
 # Backwards-compatible name list (was the whole allowlist before the
@@ -489,10 +496,14 @@ def hit_test(x, y, regions):
     return None
 
 
-def _resolve(action):
+def _resolve(action, panel=None, allow_missing_coords=False):
     """Pure resolver: action dict -> ((method, path, body), None) on
     success, (None, reason) on denial. Both public variants below go
-    through here so the table has exactly one reader."""
+    through here so the table has exactly one reader.
+
+    `panel` is an optional (width, height) pair bounding coordinate
+    actions; `allow_missing_coords` is config-time only (load_config
+    validates the region shape before any tap supplies coordinates)."""
     name = action.get("name") if isinstance(action, dict) else None
     spec = ACTION_TABLE.get(name)
     if spec is None:
@@ -555,6 +566,38 @@ def _resolve(action):
             if key in action:
                 body[key] = action[key]
         return ("POST", "/notify", body), None
+    if name == "macbook_mouse":
+        # Panel-tap cursor move: {"name": "macbook_mouse"} on a
+        # region posts the TAP's panel pixels to POST /macbook/mouse,
+        # where the daemon maps them through the drawn map geometry
+        # and queues one Quartz point for the Mac-side poller. The
+        # coordinates are injected at dispatch (TouchService.handle_frame
+        # stamps the tap in), never stored in config -- so a config
+        # entry carries no x/y and load_config validates it with
+        # allow_missing_coords, while dispatch always requires them.
+        # Out-of-range or malformed points are REFUSED, never clamped:
+        # a clamp would silently land the cursor somewhere plausible
+        # but wrong. The daemon re-validates (authoritative) and
+        # additionally gates on the macbook view showing plus a fresh
+        # feed, so a stale tap can never mis-move the cursor.
+        x, y = action.get("x"), action.get("y")
+        if x is None or y is None:
+            if allow_missing_coords:
+                return ("POST", "/macbook/mouse", {}), None
+            return None, "macbook_mouse action needs tap coordinates"
+        for value in (x, y):
+            if isinstance(value, bool) or not isinstance(value, int):
+                return None, ("macbook_mouse coordinates must be "
+                               "integers, got %r,%r" % (x, y))
+        if panel is not None:
+            width, height = panel
+            if not (0 <= x < width and 0 <= y < height):
+                return None, ("macbook_mouse coordinates off-panel: "
+                               "%r,%r for %dx%d" % (x, y, width, height))
+        elif x < 0 or y < 0:
+            return None, ("macbook_mouse coordinates must be "
+                           "non-negative, got %r,%r" % (x, y))
+        return ("POST", "/macbook/mouse", {"x": x, "y": y}), None
     if name == "feedback":
         view = action.get("view")
         if not view or not isinstance(view, str):
@@ -577,11 +620,12 @@ def _resolve(action):
     return None, "refusing unknown action: %r" % (name,)  # pragma: no cover
 
 
-def resolve_action(action):
+def resolve_action(action, panel=None, allow_missing_coords=False):
     """Silent variant (index.ts shape): (method, path, body), or None
     when the action is denied. The denial is logged and nothing else
     happens -- no HTTP, no exception in the service loop."""
-    resolved, reason = _resolve(action)
+    resolved, reason = _resolve(action, panel=panel,
+                                allow_missing_coords=allow_missing_coords)
     if resolved is None:
         name = action.get("name") if isinstance(action, dict) else None
         LOG.warning("touch action denied (closed allowlist): %s", reason)
@@ -589,7 +633,7 @@ def resolve_action(action):
     return resolved
 
 
-def action_request(action):
+def action_request(action, panel=None, allow_missing_coords=False):
     """Strict variant: translate a validated action dict into
     (method, path, body).
 
@@ -599,7 +643,8 @@ def action_request(action):
     Returned bodies are fixed-shape; free-form renderer params are
     allowed only for the `show` target renderer named in config.
     """
-    resolved, reason = _resolve(action)
+    resolved, reason = _resolve(action, panel=panel,
+                                allow_missing_coords=allow_missing_coords)
     if resolved is None:
         raise ValueError(reason)
     return resolved
@@ -678,16 +723,18 @@ class DisplaydClient:
             raise RuntimeError("displayd %s unreachable at %s: %s"
                                % (path, self.base_url, exc.reason)) from exc
 
-    def dispatch(self, action, dry_run=False):
+    def dispatch(self, action, dry_run=False, panel=None):
         """Validate + (unless dry_run) POST an action dict. Returns a
         summary dict describing what was (or would be) done.
 
         Policy application point (index.ts shape): unknown actions and
         disallowed endpoints are denied silently -- an error summary, no
         exception, no byte on the wire -- so a bad config can neither
-        crash the service loop nor reach an unexpected caller."""
+        crash the service loop nor reach an unexpected caller. `panel`
+        is the (width, height) pair bounding coordinate actions (the
+        macbook_mouse tap point); other actions ignore it."""
         name = action.get("name") if isinstance(action, dict) else None
-        resolved = resolve_action(action)
+        resolved = resolve_action(action, panel=panel)
         if resolved is None:
             return {"action": name, "dry_run": bool(dry_run),
                     "error": "refusing unknown action: %r" % (name,)}
@@ -825,7 +872,11 @@ def load_config(path=None):
         if (not isinstance(rect, (list, tuple)) or len(rect) != 4
                 or any(not isinstance(v, (int, float)) for v in rect)):
             raise ValueError("region %r needs rect [x, y, w, h]" % (rid,))
-        action_request(region.get("action") or {})  # fail fast on bad actions
+        # Config-time shape check: coordinate actions (macbook_mouse)
+        # carry no x/y yet -- the tap supplies them at dispatch -- so
+        # missing coordinates are allowed here and required at dispatch.
+        action_request(region.get("action") or {},
+                       allow_missing_coords=True)  # fail fast on bad actions
     cfg["confidence_feedback"] = normalize_confidence_feedback(
         cfg.get("confidence_feedback"))
     cfg["tap_options"] = normalize_tap_options(cfg.get("tap_options"))
@@ -1184,12 +1235,22 @@ class TouchService:
                     return summary
             region = next(r for r in self.config["regions"]
                           if r["id"] == region_id)
+            action = region["action"]
+            if isinstance(action, dict) \
+                    and action.get("name") == "macbook_mouse":
+                # Tap-supplied coordinates: the region names the action,
+                # the tap positions it. Stamped here so _resolve (and the
+                # daemon after it) validates the real point; an invalid
+                # point is refused below with no byte on the wire.
+                action = dict(action, x=tap[0], y=tap[1])
             LOG.info("tap at %d,%d -> region %r -> action %r",
                      tap[0], tap[1], region_id,
                      region["action"].get("name"))
             try:
-                summary = self.client.dispatch(region["action"],
-                                               dry_run=dry_run)
+                summary = self.client.dispatch(
+                    action, dry_run=dry_run,
+                    panel=(self.config["width"],
+                           self.config["height"]))
                 # Action first, feedback second: a feedback failure below
                 # can never suppress or alter what was just dispatched.
                 err = (summary.get("error")

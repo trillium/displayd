@@ -50,6 +50,12 @@
       "action": {"name": "feedback", "view": "clock", "rating": 5}
     },
     {
+      "id": "mac-map",
+      "_comment": "panel tap moves the MacBook cursor while the macbook map view shows (view-gated + fresh-feed-gated on the daemon; header/letterbox taps refused, never clamped). Coordinates are tap-supplied at dispatch, never stored here. Covers the map area below the 250px header; narrower regions above win their own taps first (hit_test takes the first match)",
+      "rect": [0, 250, 1920, 830],
+      "action": {"name": "macbook_mouse"}
+    },
+    {
       "id": "reload-confirm",
       "_comment": "tap anywhere while the RELOADED view shows to confirm it (view-gated: no-op otherwise); last so narrower regions win their own taps first (hit_test takes the first match)",
       "rect": [0, 0, 1920, 1080],
