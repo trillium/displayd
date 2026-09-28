@@ -27,7 +27,7 @@ import displayd
 from displayd import FeedStore, HeadlessFramebuffer, Screen, validate_value
 
 import macos_state
-from macos_state import build_payload, containing, pick_window, redact
+from macos_state import build_payload, containing, redact, window_bounds
 import macbook_map
 
 
@@ -93,36 +93,40 @@ class TestContaining(unittest.TestCase):
         self.assertEqual(containing(100, 100, displays), 0)
 
 
-class TestPickWindow(unittest.TestCase):
+class TestWindowBounds(unittest.TestCase):
     def test_ax_title_match_wins(self):
         windows = [cg_window(7, "other", 0, 0, 100, 100),
                    cg_window(7, "want", 10, 10, 200, 200)]
-        self.assertEqual(pick_window(windows, 7, "want"),
+        self.assertEqual(window_bounds(windows, 7, "want"),
                          {"x": 10, "y": 10, "w": 200, "h": 200})
 
-    def test_talon_canvas_and_chrome_ignored(self):
-        windows = [cg_window(7, "canvas", 0, 0, 1920, 1080, layer=1500),
-                   cg_window(7, "want", 10, 10, 200, 200)]
-        self.assertEqual(pick_window(windows, 7)["w"], 200)
-
     def test_other_pid_ignored(self):
-        self.assertIsNone(pick_window([cg_window(9, "x", 0, 0, 5, 5)], 7))
+        windows = [cg_window(7, "top", 0, 0, 10, 10),
+                   cg_window(9, "x", 0, 0, 500, 500)]
+        self.assertEqual(window_bounds(windows, 9),
+                         {"x": 0, "y": 0, "w": 500, "h": 500})
+
+    def test_windowless_pid_is_none(self):
+        # Frontmost app with no windows (Safari, no open windows): honest
+        # None even though another app's windows top the Z-order.
+        windows = [cg_window(7, "top", 0, 0, 10, 10)]
+        self.assertIsNone(window_bounds(windows, 999, ""))
 
     def test_string_xy_coerced(self):
-        windows = [cg_window(7, "x", "-355", "-1049", 1920, 1049)]
-        self.assertEqual(pick_window(windows, 7),
+        self.assertEqual(window_bounds([cg_window(7, "x", "-355", "-1049",
+                                                 1920, 1049)], 7),
                          {"x": -355, "y": -1049, "w": 1920, "h": 1049})
 
     def test_nothing_usable_is_none(self):
-        self.assertIsNone(pick_window([], 7))
-        self.assertIsNone(pick_window(None, 7))
+        self.assertIsNone(window_bounds([], 7))
+        self.assertIsNone(window_bounds(None, 7))
 
     def test_ns_dictionary_like_entries(self):
         # Live CGWindowList entries are NSDictionary: .get works but
         # isinstance(dict) is False. UserDict doubles for that shape.
         from collections import UserDict
         windows = [UserDict(cg_window(7, "x", 1, 2, 30, 40))]
-        self.assertEqual(pick_window(windows, 7),
+        self.assertEqual(window_bounds(windows, 7),
                          {"x": 1, "y": 2, "w": 30, "h": 40})
 
 
