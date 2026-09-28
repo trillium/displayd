@@ -94,8 +94,11 @@ class DaemonClickTest(unittest.TestCase):
         return px, py
 
     def test_second_tap_clicks_reviewed_point(self):
-        px, py = self._armed()
-        result = self.daemon.request_click_move(px, py)
+        # The tap lands on the review PANE (below the map): the click
+        # target is the capture's own crosshair point, never a
+        # re-mapping of the tap, so the pane tap cannot drift off it.
+        self._armed()
+        result = self.daemon.request_click_move(960, 900)
         self.assertTrue(result["ok"], result)
         cmd = result["command"]
         self.assertAlmostEqual(cmd["x"], QX, delta=5)
@@ -124,12 +127,15 @@ class DaemonClickTest(unittest.TestCase):
         self.assertIn("review",
                       self.daemon.request_click_move(px, py)["reason"])
 
-    def test_tap_off_reviewed_point_refused(self):
+    def test_tap_outside_pane_refused(self):
+        # Map-area taps are moves, never clicks: only the review image
+        # commits, and only the reviewed point.
         self._armed()
-        other = panel_of(100, 100)
-        result = self.daemon.request_click_move(*other)
+        px, py = panel_of(QX, QY)  # on the map, above the pane
+        self.assertLess(py, macbook_zoom.ZOOM_TOP)
+        result = self.daemon.request_click_move(px, py)
         self.assertFalse(result["ok"])
-        self.assertIn("reviewed point", result["reason"])
+        self.assertIn("review image", result["reason"])
 
     def test_moved_cursor_refused(self):
         # First tap, then the cursor wanders: the delayed second tap
@@ -141,7 +147,7 @@ class DaemonClickTest(unittest.TestCase):
         self.daemon.feed("macbook", "zoom", zoom_payload())
         self.daemon.feed("macbook", "state",
                          state_payload(mouse=(900.0, 900.0)))
-        result = self.daemon.request_click_move(px, py)
+        result = self.daemon.request_click_move(960, 900)
         self.assertFalse(result["ok"])
         self.assertIn("moved", result["reason"])
 
@@ -152,7 +158,7 @@ class DaemonClickTest(unittest.TestCase):
                          zoom_payload(ts=time.time() - 5))
         px, py = panel_of(QX, QY)
         self.assertTrue(self.daemon.request_mouse_move(px, py)["ok"])
-        result = self.daemon.request_click_move(px, py)
+        result = self.daemon.request_click_move(960, 900)
         self.assertFalse(result["ok"])
         self.assertIn("predates", result["reason"])
 
@@ -164,8 +170,8 @@ class DaemonClickTest(unittest.TestCase):
                 self.daemon.request_click_move(*bad)
 
     def test_ttl_expires_and_bad_since_is_zero(self):
-        px, py = self._armed()
-        cmd = self.daemon.request_click_move(px, py)["command"]
+        self._armed()
+        cmd = self.daemon.request_click_move(960, 900)["command"]
         self.assertEqual(
             self.daemon.take_click_move(since="junk")["id"], cmd["id"])
         self.daemon.click_pending["ts"] -= 60

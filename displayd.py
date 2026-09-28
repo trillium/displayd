@@ -2411,21 +2411,23 @@ class DisplayDaemon:
     # ---- MacBook second-tap click slot -----------------------------------
     # Stage 2 of the two-stage tap (stage 1 = POST /macbook/mouse moves
     # the cursor ONLY, then the Mac posts a magnified /feed/macbook/zoom
-    # capture around it). POST /macbook/click queues ONE TTL click at a
-    # panel point; the Mac-side poller fetches it via GET
-    # /macbook/click?since= and posts one CG down+up pair. The body
-    # carries panel pixels only -- the Quartz point comes from the map,
-    # same as the mouse path. Commit gates (every miss is a 409 refusal,
-    # never a click): fresh state feed, fresh zoom capture of THIS point
-    # (proves the review surface is current), the capture post-dates the
+    # capture around it). POST /macbook/click queues ONE TTL click at
+    # the REVIEWED point; the Mac-side poller fetches it via GET
+    # /macbook/click?since= and posts one CG down+up pair. The tap
+    # point only proves the tap landed on the review image (pane
+    # membership) -- the click target is the capture's own crosshair
+    # point, never a re-mapping of the tap, so a tap cannot drift off
+    # the reviewed pixel. Commit gates (every miss is a 409 refusal,
+    # never a click): fresh state feed, fresh zoom capture (proves the
+    # review surface is current), the capture post-dates the
     # positioning tap, and the live cursor still sits on the point (a
     # first tap plus a later second tap never clicks where the mouse
-    # has since moved). Single re-verification per tap: no arming, no
-    # double-click -- each POST queues at most one command and the
-    # poller acts once per ts (take_* stays read-only, like the rest).
+    # has since moved). No arming, no double-click -- each POST queues
+    # at most one command and the poller acts once per ts (take_*
+    # stays read-only, like the rest).
     CLICK_TTL = 15.0  # pending clicks older than this never run
     CLICK_FRESH = 30.0  # zoom capture must be this fresh to click against
-    CLICK_EPS = 8.0  # Quartz-px tolerance: capture vs cursor vs tap
+    CLICK_EPS = 8.0  # Quartz-px tolerance: capture vs cursor
 
     def _macbook_zoom_state(self):
         """Latest macbook zoom capture, or None when absent/stale."""
@@ -2471,16 +2473,18 @@ class DisplayDaemon:
             return {"ok": False,
                     "reason": "macbook view not showing "
                     "(showing %r)" % (self.current,)}
-        try:
-            macbook_map = macbook_map_module
-            if macbook_map is None:
-                raise ImportError("macbook_map helper failed to load")
-            bottom = None
-            if macbook_zoom_module is not None:
-                bottom = macbook_zoom_module.MAP_BOTTOM
-        except Exception as exc:
+        if macbook_zoom_module is None:
             return {"ok": False,
-                    "reason": "map geometry unavailable: %s" % (exc,)}
+                    "reason": "review-pane geometry unavailable"}
+        try:
+            pane_top = macbook_zoom_module.ZOOM_TOP
+        except Exception:
+            pane_top = None
+        if pane_top is None or not (0 <= px < width and
+                                    pane_top <= py < height):
+            return {"ok": False,
+                    "reason": "tap outside the review image "
+                    "(tap the magnified image to click it)"}
         state = self._macbook_map_state()
         if state is None:
             return {"ok": False,
@@ -2491,18 +2495,14 @@ class DisplayDaemon:
             return {"ok": False,
                     "reason": "no fresh review capture "
                     "(position first, then tap the image)"}
-        hit = macbook_map.locate(px, py, state.get("displays") or [],
-                                 width, height, bottom=bottom)
-        if hit is None:
+        try:
+            qx, qy = float(zoom["x"]), float(zoom["y"])
+        except (KeyError, TypeError, ValueError):
             return {"ok": False,
-                    "reason": "tap outside the display map"}
-        if not self._near(hit["x"], hit["y"], zoom.get("x"),
-                           zoom.get("y"), self.CLICK_EPS):
-            return {"ok": False,
-                    "reason": "tap is not on the reviewed point "
-                    "(map moved? position again)"}
+                    "reason": "review capture has no point "
+                    "(position again)"}
         mouse = state.get("mouse") or {}
-        if not self._near(hit["x"], hit["y"], mouse.get("x"),
+        if not self._near(qx, qy, mouse.get("x"),
                            mouse.get("y"), self.CLICK_EPS):
             return {"ok": False,
                     "reason": "cursor moved since positioning "
@@ -2518,8 +2518,12 @@ class DisplayDaemon:
                             "last positioning (wait for the new image)"}
             except (TypeError, ValueError):
                 pass
-        command = {"x": float(hit["x"]), "y": float(hit["y"]),
-                   "display_index": int(hit["display_index"]),
+        try:
+            display_index = int((mouse or {}).get("display_index", 0))
+        except (TypeError, ValueError):
+            display_index = 0
+        command = {"x": qx, "y": qy,
+                   "display_index": display_index,
                    "ts": time.time()}
         with self.lock:
             self.click_seq = getattr(self, "click_seq", 0) + 1
