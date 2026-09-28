@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.displayd.macos-state-bridge — always-on macOS state -> displayd poller.
+
+  The poller reads frontmost app / focused window / pointer / Talon mode on
+  this Mac (Accessibility grant already held by this python3 chain) and POSTs
+  bounded JSON to the panel over the tailnet, so it runs here next to the
+  screen it observes, not on lnx-server.
+
+  Install: replace __DISPLAYD_DIR__ with the displayd checkout path, copy to
+  ~/Library/LaunchAgents/, then `launchctl bootstrap gui/$UID <file>`.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.displayd.macos-state-bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__DISPLAYD_DIR__/bridges/macos_state.py</string>
+    <string>--displayd</string>
+    <string>http://100.81.88.113:8980</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/trilliumsmith/Library/Logs/macos-state-bridge.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/trilliumsmith/Library/Logs/macos-state-bridge.log</string>
+</dict>
+</plist>
