@@ -132,13 +132,12 @@ def _key(state):
 def _draw_header(draw, screen, title, state, stale, fonts):
     app_font, title_font, meta_font = fonts
     plain = app_font or title_font or meta_font
-    draw.text((PAD, 26), title, font=plain, fill=(255, 255, 255))
-    if state is None:
-        return HEADER_H
     focus, talon = state.get("focus") or {}, state.get("talon") or {}
+    draw.text((PAD, 26), title, font=meta_font or plain, fill=C_DIM)
     app_name = str(focus.get("app_name") or "unknown")
     draw.text((PAD, 70), app_name, font=app_font or plain,
               fill=(255, 255, 255))
+    y = 70 + APP_SIZE + 8
     mode = str(talon.get("mode") or "other")
     color = MODE_COLORS.get(mode, MODE_COLORS["other"])
     chip = mode.upper() + (" + MUTED" if talon.get("muted") else "")
@@ -151,7 +150,6 @@ def _draw_header(draw, screen, title, state, stale, fonts):
                            radius=10, fill=tuple(color))
     draw.text((screen.W - PAD - w - 18, 78), chip,
               font=meta_font or plain, fill=(10, 10, 14))
-    y = 70 + APP_SIZE + 10
     window_title = focus.get("window_title")
     if window_title:
         for row in _wrap(draw, window_title, title_font or plain,
