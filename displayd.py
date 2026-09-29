@@ -77,7 +77,7 @@ BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
 # a [project] table. Bump per CHANGELOG.md's convention on every change;
 # the daemon reports it via GET /version, GET /state's "version" key,
 # and the startup log line in main().
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 # Optional shared secret for the HTTP API. When set, every request (except
 # the unauthenticated health probes below) must carry
 #   Authorization: Bearer <token>
@@ -2501,12 +2501,12 @@ class DisplayDaemon:
             return None
         return pending
 
-    # ---- Merged-feature navigation (GLANCE/AIM + tab step) --------------
+    # ---- Merged-feature navigation (GLANCE/AIM + tab page) --------------
     # The header controls are closed touch actions with static bodies
-    # (macbook_mode pins the mode, talon_tab pins the step direction);
+    # (macbook_mode pins the mode, talon_tab pins the page direction);
     # the daemon applies them to the showing macbook view, preserving the
-    # other param, so a mode switch never loses the tab highlight and a
-    # tab step never leaves the mode. Both re-show through show() (manual
+    # other param, so a mode switch never loses the window start and a
+    # tab page never leaves the mode. Both re-show through show() (manual
     # navigation: holds rotation, cancels transients), and both refuse
     # unless the merged feature is showing -- misses are 409, never a
     # view change.
@@ -2550,15 +2550,22 @@ class DisplayDaemon:
             raise ValueError("macbook mode must be glance or aim")
         params = dict(self.current_params or {})
         params["mode"] = want
+        # A mode switch is not a page turn: drop any stale slide hint
+        # so the fresh thread draws steady instead of replaying it.
+        params.pop("tab_from", None)
         self.show("macbook", params)
         return {"ok": True, "mode": want,
                 "tab": params.get("tab", 0)}
 
     def request_tab_step(self, direction):
-        """Step the header highlight with wraparound, keeping the mode.
+        """Page the header app strip one window, clamped at both ends.
 
-        Returns {"ok": True, "tab"} or {"ok": False, "reason"}.
-        Raises ValueError only for a bad direction."""
+        One press moves the visible window by PAGE_STRIDE (VISIBLE - 1,
+        so the new window overlaps the old by one chip) with a rapid
+        slide; a press at either end is refused (ok False) and that
+        stepper draws dim. Returns {"ok": True, "tab", "tab_from"}
+        or {"ok": False, "reason"}. Raises ValueError only for a
+        bad direction."""
         if self.current != "macbook":
             return {"ok": False,
                     "reason": "macbook view not showing "
@@ -2586,10 +2593,22 @@ class DisplayDaemon:
         if not isinstance(apps, list) or not apps:
             return {"ok": False, "reason": "no running apps in feed"}
         params = dict(self.current_params or {})
-        params["tab"] = macbook_layout_module.step(
-            params.get("tab", 0), direction, len(apps))
+        old = macbook_layout_module.page_start(
+            params.get("tab", 0), len(apps))
+        new, moved = macbook_layout_module.page(
+            old, direction, len(apps))
+        if not moved:
+            edge = "first" if direction < 0 else "last"
+            return {"ok": False,
+                    "reason": "already at %s page (%d app%s)" %
+                    (edge, len(apps),
+                     "" if len(apps) == 1 else "s")}
+        params["tab"] = new
+        # Slide hint for the fresh renderer thread: it restarts on the
+        # new window, so it needs the old one to animate old-to-new.
+        params["tab_from"] = old
         self.show("macbook", params)
-        return {"ok": True, "tab": params["tab"]}
+        return {"ok": True, "tab": new, "tab_from": old}
 
     # ---- MacBook second-tap click slot -----------------------------------
     # Stage 2 of the two-stage tap (stage 1 = POST /macbook/mouse moves
@@ -3189,7 +3208,7 @@ CONTROL_PAGE = """<!DOCTYPE html>
     <li><code>macbook_click</code> <span class="eff">&mdash; click the reviewed point on the magnified image (POST /macbook/click)</span></li>
     <li><code>talon_focus</code> <span class="eff">&mdash; focus the tapped header app chip (POST /talon/focus)</span></li>
     <li><code>macbook_mode</code> <span class="eff">&mdash; pin the merged macbook view to GLANCE or AIM (POST /macbook/mode)</span></li>
-    <li><code>talon_tab</code> <span class="eff">&mdash; step the header app highlight back/forward (POST /talon/tab)</span></li>
+    <li><code>talon_tab</code> <span class="eff">&mdash; page the header app strip one window back/forward (POST /talon/tab)</span></li>
   </ul>
   <div class="meta">What a tap on the panel can do (touch bridge allowlist).</div>
 </div>
@@ -3916,8 +3935,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, result)
             return self._send(409, result)
         if path == "/talon/tab":
-            # Header stepper: step the highlight with wraparound, keeping
-            # the mode. 400 on a bad direction, 409 on any refusal.
+            # Header stepper: page the app-strip window with a slide,
+            # clamped at both ends. 400 on a bad direction, 409 on
+            # any refusal (including a press at the first/last page).
             body = self._body()
             try:
                 result = DAEMON.request_tab_step(

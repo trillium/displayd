@@ -24,9 +24,15 @@ no focused window). In AIM a missing capture degrades visibly rather
 than showing a blank screen.
 
 Tab-through, mechanically: the header shows a scrolling window of the
-live apps (``tab`` param, default 0); ``POST /talon/tab`` steps the
-highlight with wraparound; tapping a chip focuses that app
-(coordinate-only, like every touch action here).
+live apps (``tab`` param, default 0, is the FIRST VISIBLE app index --
+the window start, not a highlight). ``POST /talon/tab {"dir": +1|-1}``
+pages the window by ``PAGE_STRIDE`` (VISIBLE - 1, so the new window
+overlaps the old by one chip) with a rapid slide, clamped at both ends
+-- no wraparound. Tapping a chip focuses that app (coordinate-only,
+like every touch action here). There is no movable highlight: the only
+emphasis is the Mac's live focused app from the feed, which is real
+state. A press carries the old window in ``tab_from`` so the fresh
+renderer thread can slide old-to-new instead of jumping.
 """
 
 import time
@@ -47,7 +53,13 @@ PARAMS = {
     "mode": {"type": "string",
              "help": "glance (default) or aim (fullscreen review)"},
     "tab": {"type": "integer",
-            "help": "highlighted app index, default 0 (wraps)"},
+            "help": "first visible app-chip index (window start), "
+                    "default 0; steppers page it by %d, clamped" %
+                    (lay.PAGE_STRIDE,)},
+    "tab_from": {"type": "integer",
+                 "help": "previous window start: set by POST "
+                         "/talon/tab so the fresh draw slides "
+                         "old-to-new instead of jumping"},
     "title": {"type": "string", "help": "header text, default MACBOOK"},
     "background": {"type": "string", "help": "background colour"},
 }
@@ -107,6 +119,11 @@ INPUTS = {
 
 POLL = 0.25
 STALE_AFTER = 3.0
+# Page-turn slide: 6 frames at 40ms ~= 240ms. The frames present
+# directly (bypassing the change-identity dedup), so each one swaps to
+# the panel -- a rapid slide, not a collapsed single-frame jump.
+SLIDE_FRAMES = 6
+SLIDE_DT = 0.04
 
 
 def coerce_mode(params):
@@ -119,12 +136,30 @@ def coerce_mode(params):
 
 
 def coerce_tab(params):
-    """Tab index from params: int >= 0, default 0. Never raises."""
+    """Window start from params: int >= 0, default 0. Never raises.
+
+    This is the FIRST VISIBLE chip, not a highlight -- the daemon
+    clamps it to the page range once the live app count is known."""
     try:
         tab = int((params or {}).get("tab", 0))
     except (TypeError, ValueError):
         return 0
     return max(0, tab)
+
+
+def coerce_tab_from(params):
+    """Previous window start for the slide animation: int >= 0, or
+    None when this draw is not a page turn. Never raises."""
+    try:
+        raw = (params or {}).get("tab_from", None)
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return None
 
 
 def _font(screen, name, size):
@@ -164,7 +199,7 @@ def _key(state, apps_state, zoom, mode, tab):
 
 
 def _draw(screen, title, mode, tab, state, stale, apps, apps_stale, bg,
-          zoom):
+          zoom, slide=None):
     img = screen.new_image(bg)
     draw = ImageDraw.Draw(img)
     meta = _font(screen, "DejaVuSans", macbook_glance.META_SIZE)
@@ -181,16 +216,64 @@ def _draw(screen, title, mode, tab, state, stale, apps, apps_stale, bg,
     fonts = (_font(screen, "DejaVuSans", macbook_glance.TITLE_SIZE),
              _font(screen, "DejaVuSans-Bold", macbook_glance.APP_SIZE),
              _font(screen, "DejaVuSans", macbook_glance.ROW_SIZE), meta)
-    macbook_glance.header(draw, screen, title, state, stale, apps,
-                          apps_stale, tab, fonts)
+    macbook_glance.header(draw, screen, img, title, state, stale, apps,
+                          apps_stale, tab, fonts, slide=slide)
     macbook_glance.draw_map(img, draw, screen, state, meta or plain)
     return img
+
+
+def _play_slide(screen, title, old_start, new_start, bg, stop):
+    """Page-turn animation: SLIDE_FRAMES presents over ~240ms.
+
+    A tab press re-shows the view, which restarts this thread on the
+    NEW window -- without help that is an instant jump (and the daemon
+    helpfully pre-presents the cached OLD frame underneath). Each
+    frame draws the old window sliding out as the new slides in, so
+    the eye follows the page. Best-effort: any failure (or a stop)
+    falls through to the steady loop, which draws the new window.
+    Never raises."""
+    try:
+        state = _latest(screen, "macbook", "state")
+        apps_state = _latest(screen, "talon_apps", "state")
+        zoom = _latest(screen, "macbook", "zoom")
+        if state is None:
+            return
+        apps = _apps(apps_state)
+        if not apps:
+            return
+        old_c = lay.page_start(old_start, len(apps))
+        new_c = lay.page_start(new_start, len(apps))
+        if old_c == new_c:
+            return
+        stale = time.time() - state.get("ts", 0) > STALE_AFTER
+        apps_stale = bool(apps_state) and \
+            time.time() - apps_state.get("ts", 0) > ta.STALE_AFTER
+        direction = 1 if new_c > old_c else -1
+        for frame in range(1, SLIDE_FRAMES + 1):
+            if stop.is_set():
+                return
+            progress = frame / float(SLIDE_FRAMES)
+            try:
+                screen.present(_draw(screen, title, "glance", new_c,
+                                     state, stale, apps, apps_stale, bg,
+                                     zoom,
+                                     slide=(old_c, progress, direction)))
+            except Exception:
+                return
+            stop.wait(SLIDE_DT)
+    except Exception:
+        return
 
 
 def run(screen, params, stop):
     title = str((params or {}).get("title") or "MACBOOK")
     bg = screen.color((params or {}).get("background"), (10, 10, 14))
     mode, tab = coerce_mode(params), coerce_tab(params)
+    tab_from = coerce_tab_from(params)
+    if tab_from is not None and tab_from != tab and mode == "glance":
+        _play_slide(screen, title, tab_from, tab, bg, stop)
+        if stop.is_set():
+            return
     last_key = None
     while not stop.is_set():
         state = _latest(screen, "macbook", "state")

@@ -91,21 +91,41 @@ class LayoutTest(unittest.TestCase):
         self.assertLess(lay.header_bottom(), 210)
         self.assertLess(lay.header_bottom(), 250)
 
-    def test_step_wraps_and_zeros_when_empty(self):
-        self.assertEqual(lay.step(0, 1, 3), 1)
-        self.assertEqual(lay.step(2, 1, 3), 0)
-        self.assertEqual(lay.step(0, -1, 3), 2)
-        self.assertEqual(lay.step(0, 1, 0), 0)
-        self.assertEqual(lay.step(0, 1, None), 0)
-        self.assertEqual(lay.step("junk", 1, 3), 1)
+    def test_page_strides_and_clamps(self):
+        # One press moves VISIBLE-1 chips (overlap of one), stops dead
+        # at either end -- no wraparound. Returns (start, moved).
+        self.assertEqual(lay.PAGE_STRIDE, lay.VISIBLE - 1)
+        self.assertEqual(lay.page(0, 1, 13), (5, True))
+        self.assertEqual(lay.page(5, 1, 13), (7, True))
+        self.assertEqual(lay.page(7, 1, 13), (7, False))
+        self.assertEqual(lay.page(7, -1, 13), (2, True))
+        self.assertEqual(lay.page(2, -1, 13), (0, True))
+        self.assertEqual(lay.page(0, -1, 13), (0, False))
+        # A strip that fits on one page never moves.
+        self.assertEqual(lay.page(0, 1, 3), (0, False))
+        self.assertEqual(lay.page(0, -1, 6), (0, False))
+        self.assertEqual(lay.page(0, 1, 0), (0, False))
+        self.assertEqual(lay.page(0, 1, None), (0, False))
+        self.assertEqual(lay.page("junk", 1, 13), (5, True))
+        self.assertEqual(lay.page(0, "junk", 13), (0, False))
+        self.assertEqual(lay.page(0, 0, 13), (0, False))
 
-    def test_window_keeps_highlight_visible(self):
-        self.assertEqual(lay.window_start(0, 3), 0)
-        self.assertEqual(lay.window_start(2, 3), 0)
-        start, slots = lay.visible_slots(7, 8)
-        self.assertEqual(start, 2)
-        self.assertEqual(slots, [2, 3, 4, 5, 6, 7])
-        self.assertEqual(lay.visible_slots(0, 3)[1], [0, 1, 2])
+    def test_page_bounds_report_dead_steppers(self):
+        self.assertEqual(lay.page_bounds(0, 13), (True, False))
+        self.assertEqual(lay.page_bounds(5, 13), (False, False))
+        self.assertEqual(lay.page_bounds(7, 13), (False, True))
+        self.assertEqual(lay.page_bounds(0, 3), (True, True))
+        self.assertEqual(lay.page_bounds(0, 0), (True, True))
+
+    def test_page_slots_follow_window_start(self):
+        # `tab` IS the window start now: slots run start..start+5,
+        # clamped to the last page.
+        self.assertEqual(lay.page_slots(0, 3), (0, [0, 1, 2]))
+        self.assertEqual(lay.page_slots(0, 8), (0, [0, 1, 2, 3, 4, 5]))
+        self.assertEqual(lay.page_slots(2, 8), (2, [2, 3, 4, 5, 6, 7]))
+        self.assertEqual(lay.page_slots(7, 8), (2, [2, 3, 4, 5, 6, 7]))
+        self.assertEqual(lay.page_slots(99, 8)[0], 2)
+        self.assertEqual(lay.page_slots("junk", 8)[0], 0)
 
     def test_touch_regions_generated_order(self):
         entries = lay.touch_regions(1920, 1080)
@@ -184,25 +204,29 @@ class ParamsTest(unittest.TestCase):
 
 
 class ModeSlotTest(DaemonCase):
-    def _ready(self):
+    def _ready(self, apps=("Safari", "Terminal", "Mail")):
         daemon = self.make_daemon()
         daemon.show("macbook", {})
         daemon.feed("macbook", "state", state_payload())
-        daemon.feed("talon_apps", "state", apps_payload())
+        daemon.feed("talon_apps", "state", apps_payload(apps=apps))
         return daemon
 
     def test_mode_switch_preserves_tab(self):
-        daemon = self._ready()
+        apps = tuple("App%d" % i for i in range(13))
+        daemon = self._ready(apps=apps)
         daemon.request_tab_step(1)
         result = daemon.request_mode_move("aim")
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["mode"], "aim")
-        self.assertEqual(result["tab"], 1)
+        self.assertEqual(result["tab"], 5)
         self.assertEqual(daemon.current_params["mode"], "aim")
-        self.assertEqual(daemon.current_params["tab"], 1)
+        self.assertEqual(daemon.current_params["tab"], 5)
+        # A mode switch is not a page turn: the slide hint is dropped
+        # so the fresh thread draws steady instead of replaying it.
+        self.assertNotIn("tab_from", daemon.current_params)
         back = daemon.request_mode_move("glance")
         self.assertTrue(back["ok"])
-        self.assertEqual(back["tab"], 1)
+        self.assertEqual(back["tab"], 5)
 
     def test_bad_mode_raises(self):
         daemon = self._ready()
@@ -218,13 +242,42 @@ class ModeSlotTest(DaemonCase):
         self.assertFalse(result["ok"])
         self.assertIn("not showing", result["reason"])
 
-    def test_tab_steps_and_wraps(self):
-        daemon = self._ready()
-        self.assertEqual(daemon.request_tab_step(1)["tab"], 1)
-        self.assertEqual(daemon.request_tab_step(1)["tab"], 2)
-        self.assertEqual(daemon.request_tab_step(1)["tab"], 0)
-        self.assertEqual(daemon.request_tab_step(-1)["tab"], 2)
+    def test_tab_pages_by_stride_and_clamps(self):
+        # One press moves VISIBLE-1 chips (overlap of one); presses at
+        # either end are refused and leave the window alone.
+        apps = tuple("App%d" % i for i in range(13))
+        daemon = self._ready(apps=apps)
+        first = daemon.request_tab_step(1)
+        self.assertTrue(first["ok"], first)
+        self.assertEqual(first["tab"], 5)
+        self.assertEqual(first["tab_from"], 0)
+        self.assertEqual(daemon.current_params["tab_from"], 0)
+        second = daemon.request_tab_step(1)
+        self.assertTrue(second["ok"], second)
+        self.assertEqual(second["tab"], 7)
+        stuck = daemon.request_tab_step(1)
+        self.assertFalse(stuck["ok"])
+        self.assertIn("last page", stuck["reason"])
+        self.assertEqual(daemon._macbook_tab(), 7)
+        back = daemon.request_tab_step(-1)
+        self.assertTrue(back["ok"], back)
+        self.assertEqual(back["tab"], 2)
+        back2 = daemon.request_tab_step(-1)
+        self.assertTrue(back2["ok"], back2)
+        self.assertEqual(back2["tab"], 0)
+        stuck0 = daemon.request_tab_step(-1)
+        self.assertFalse(stuck0["ok"])
+        self.assertIn("first page", stuck0["reason"])
         self.assertEqual(daemon._macbook_mode(), "glance")
+
+    def test_tab_single_page_refused_both_ends(self):
+        # Three apps fit on one page: both steppers are dead.
+        daemon = self._ready()
+        for direction in (1, -1):
+            result = daemon.request_tab_step(direction)
+            self.assertFalse(result["ok"], direction)
+            self.assertIn("page", result["reason"])
+        self.assertEqual(daemon._macbook_tab(), 0)
 
     def test_tab_bad_direction_raises(self):
         daemon = self._ready()
@@ -371,6 +424,79 @@ class DrawSmokeTest(unittest.TestCase):
         self.assertNotEqual(glance, aim)
         tabbed = macbook_renderer._key(state, apps, zoom, "glance", 1)
         self.assertNotEqual(glance, tabbed)
+
+
+class AppBarPagingTest(unittest.TestCase):
+    """The steppers page the bar: highlight gone, focus real, ends dim."""
+    Scr = DrawSmokeTest.Scr
+
+    def _frame(self, apps, tab, focus_app="Terminal", slide=None):
+        import macbook_glance as glance
+        _ = glance
+        state = state_payload()
+        state["focus"]["app_name"] = focus_app
+        return macbook_renderer._draw(
+            self.Scr(), "MACBOOK", "glance", tab, state, False,
+            list(apps), False, (10, 10, 14), None, slide=slide)
+
+    def test_highlight_gone_only_focus_filled(self):
+        import macbook_glance as glance
+        # The meaningless highlight is gone from the code entirely.
+        self.assertFalse(hasattr(glance, "C_TAB_BG"))
+        apps = ["Safari", "Terminal", "Mail"]
+        img = self._frame(apps, 0)
+        for pos, name in enumerate(apps):
+            x, y, cw, ch = lay.chip_rect(pos, PANEL_W)
+            px = img.getpixel((int(x + cw / 2), int(y + ch / 2)))
+            if name == "Terminal":
+                self.assertEqual(px, glance.C_FOCUS_BG,
+                                 "focused app must be identifiable")
+            else:
+                self.assertEqual(px, (10, 10, 14),
+                                 "unfocused chip %r must carry no fill"
+                                 % name)
+
+    def test_dead_stepper_draws_dim(self):
+        # Pillow's default font is antialiased, so glyph pixels are
+        # blends -- compare brightness: a live stepper carries full
+        # white pixels, a dead one peaks far below white.
+        apps = ["App%d" % i for i in range(8)]
+        lx, _, _, _ = lay.stepper_rect("left", PANEL_W)
+        rx, _, _, _ = lay.stepper_rect("right", PANEL_W)
+
+        def brightest(img, x0):
+            peak = 0
+            for dx in range(30):
+                for dy in range(20):
+                    px = img.getpixel((x0 + 24 + dx,
+                                       lay.STRIP_Y + 10 + dy))
+                    peak = max(peak, sum(px[:3]))
+            return peak
+
+        first = self._frame(apps, 0, focus_app="Nobody")
+        self.assertLess(brightest(first, lx), 400)
+        self.assertGreater(brightest(first, rx), 450)
+        last = self._frame(apps, 2, focus_app="Nobody")
+        self.assertGreater(brightest(last, lx), 450)
+        self.assertLess(brightest(last, rx), 400)
+
+    def test_slide_frames_are_motion_not_a_jump(self):
+        # Consecutive slide frames differ from each other (visible
+        # motion across ~240ms) and the finished slide lands exactly
+        # on the steady new window.
+        apps = ["App%d" % i for i in range(10)]
+        frames = [self._frame(apps, 5, focus_app="Nobody",
+                              slide=(0, p, 1))
+                  for p in (0.25, 0.5, 0.75)]
+        blobs = [f.tobytes() for f in frames]
+        self.assertNotEqual(blobs[0], blobs[1])
+        self.assertNotEqual(blobs[1], blobs[2])
+        steady = self._frame(apps, 5, focus_app="Nobody").tobytes()
+        for blob in blobs:
+            self.assertNotEqual(blob, steady)
+        landed = self._frame(apps, 5, focus_app="Nobody",
+                             slide=(0, 1.0, 1)).tobytes()
+        self.assertEqual(landed, steady)
 
 
 if __name__ == "__main__":

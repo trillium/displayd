@@ -42,6 +42,10 @@ MODE_H = 56
 BACK_W = 180
 BACK_H = 56
 VISIBLE = 6
+# One stepper press pages the strip by all-but-one of the visible
+# chips: the new window overlaps the old by exactly one chip, which
+# keeps the user oriented while every press visibly changes the bar.
+PAGE_STRIDE = VISIBLE - 1
 GAP = 12
 
 
@@ -88,59 +92,101 @@ def chip_rect(slot, w):
     return (ax + slot * (cw + GAP), ay, cw, ah)
 
 
-def step(tab, direction, count):
-    """Stepped tab index: wraps over [0, count), stays 0 when empty."""
+def page_start(start, count, visible=VISIBLE):
+    """First visible slot for a window start: clamped to the page range.
+
+    Valid starts are [0, max(0, count - visible)]; anything outside
+    (including a stale start after the app list shrank) pins to the
+    nearest valid page. Never raises."""
     try:
         count = int(count)
     except (TypeError, ValueError):
         return 0
-    if count <= 0:
-        return 0
     try:
-        tab = int(tab)
+        visible = int(visible)
     except (TypeError, ValueError):
-        tab = 0
-    try:
-        direction = int(direction)
-    except (TypeError, ValueError):
-        return tab % count
-    direction = 1 if direction >= 0 else -1
-    return (tab + direction) % count
-
-
-def window_start(tab, count, visible=VISIBLE):
-    """First visible slot for `tab`: keeps the highlight on screen."""
-    try:
-        count = int(count)
-    except (TypeError, ValueError):
+        visible = VISIBLE
+    if count <= 0 or visible <= 0:
         return 0
     if count <= visible:
         return 0
     try:
-        tab = int(tab)
+        start = int(start)
     except (TypeError, ValueError):
-        tab = 0
-    tab = max(0, min(count - 1, tab))
-    start = max(0, tab - visible + 1)
-    return min(start, count - visible)
+        start = 0
+    return max(0, min(count - visible, start))
 
 
-def visible_slots(tab, count, visible=VISIBLE):
-    """Slot indices on screen for `tab`: (start, [slot, ...])."""
-    start = window_start(tab, count, visible)
+def page(start, direction, count, visible=VISIBLE):
+    """Page the strip one window in `direction` (+1/-1), clamped.
+
+    Returns (new_start, moved): each press moves PAGE_STRIDE chips
+    (VISIBLE - 1, so the windows overlap by one chip) and stops dead
+    at either end -- no wraparound, so a press never jumps the user
+    from the last page back to the first. `moved` is False when the
+    strip is already at that end (or fits on one page); the caller
+    should refuse the press and the renderer dims that stepper.
+    Never raises."""
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        return (0, False)
+    try:
+        visible = int(visible)
+    except (TypeError, ValueError):
+        visible = VISIBLE
+    if count <= visible:
+        return (0, False)
+    cur = page_start(start, count, visible)
+    try:
+        direction = int(direction)
+    except (TypeError, ValueError):
+        return (cur, False)
+    if direction == 0:
+        return (cur, False)
+    stride = max(1, visible - 1)
+    if direction > 0:
+        new = min(cur + stride, count - visible)
+    else:
+        new = max(cur - stride, 0)
+    return (new, new != cur)
+
+
+def page_bounds(start, count, visible=VISIBLE):
+    """Stepper state for a window start: (at_first, at_last).
+
+    True means that end's stepper is dead (a press would be refused)
+    and must be drawn dim. A single-page strip reports both. Never
+    raises."""
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        return (True, True)
+    if count <= visible:
+        return (True, True)
+    cur = page_start(start, count, visible)
+    return (cur <= 0, cur + visible >= count)
+
+
+def page_slots(start, count, visible=VISIBLE):
+    """Slot indices on screen for a window start: (start, [slot, ...])."""
+    cur = page_start(start, count, visible)
     try:
         count = int(count)
     except (TypeError, ValueError):
         count = 0
-    return (start, list(range(start, min(count, start + visible))))
+    try:
+        visible = int(visible)
+    except (TypeError, ValueError):
+        visible = VISIBLE
+    return (cur, list(range(cur, min(count, cur + visible))))
 
 
-def chip_hit(px, py, w, apps, tab):
+def chip_hit(px, py, w, apps, start):
     """App index for a strip tap, or None on a miss. Never raises."""
     try:
         count = len(apps) if isinstance(apps, (list, tuple)) else 0
-        start, slots = visible_slots(tab, count)
-        _ = start
+        _, slots = page_slots(start, count)
         for pos, index in enumerate(slots):
             x, y, cw, ch = chip_rect(pos, float(w))
             if x <= float(px) < x + cw and y <= float(py) < y + ch:
@@ -186,14 +232,16 @@ def touch_regions(w=1920, h=1080):
          "rect": [int(v) for v in mode_rect(bw)],
          "action": {"name": "macbook_mode", "mode": "aim"}},
         {"id": "mac-tab-prev",
-         "_comment": "step the header highlight one app back (wraps). "
-                     "Rect is macbook_layout.stepper_rect('left') -- never "
+         "_comment": "page the app strip one window back (clamps at "
+                     "the first page). Rect is "
+                     "macbook_layout.stepper_rect('left') -- never "
                      "hand-edit",
          "rect": [int(v) for v in stepper_rect("left", bw)],
          "action": {"name": "talon_tab", "dir": -1}},
         {"id": "mac-tab-next",
-         "_comment": "step the header highlight one app forward (wraps). "
-                     "Rect is macbook_layout.stepper_rect('right') -- never "
+         "_comment": "page the app strip one window forward (clamps "
+                     "at the last page). Rect is "
+                     "macbook_layout.stepper_rect('right') -- never "
                      "hand-edit",
          "rect": [int(v) for v in stepper_rect("right", bw)],
          "action": {"name": "talon_tab", "dir": 1}},

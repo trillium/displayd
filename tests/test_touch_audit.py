@@ -317,7 +317,7 @@ class AcceptancePairTest(unittest.TestCase):
 
     def test_talon_tap_focuses_chip_on_merged_view(self):
         # A chip-centre tap on the merged view focuses; a stepper tap
-        # steps the highlight; neither fires on another view.
+        # pages the strip; neither fires on another view.
         svc = self._service("macbook")
         x, y, cw, ch = lay.chip_rect(0, W)
         summary = self._tap(svc, int(x + cw / 2), int(y + ch / 2))

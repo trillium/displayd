@@ -108,11 +108,12 @@ and the action can never become a generic run-anything path.
 
 Two closed header controls round out the merged feature (static bodies
 from config, no coordinates at all): `macbook_mode` pins GLANCE or AIM
-(`POST /macbook/mode`, daemon keeps the tab highlight), and `talon_tab`
-steps the app highlight with wraparound (`POST /talon/tab` with
-`dir` +1/-1 only, daemon keeps the mode). Both refuse unless the
+(`POST /macbook/mode`, daemon keeps the window start), and `talon_tab`
+pages the app strip one window with a slide (`POST /talon/tab` with
+`dir` +1/-1 only, daemon keeps the mode, clamped at both ends). Both
+refuse unless the
 merged view shows (tab additionally needs GLANCE + a fresh apps feed),
-so a tap can only ever re-pin this view's mode or step its highlight.
+so a tap can only ever re-pin this view's mode or page its app strip.
 
 The second is `reload_confirm`: a tap confirms the showing reload view --
 `{"name": "reload_confirm"}` posts the pinned body `{"via": "tap"}`
