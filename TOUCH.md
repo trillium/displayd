@@ -678,7 +678,15 @@ The touch service learns the showing view fresh on EVERY tap (`GET
 /state`, 1s timeout): a cached view goes stale across playlist
 rotations, phone-driven shows, and transient returns -- exactly the
 drift this closes. Unknown view (unreachable daemon, blank panel,
-layout mode) means global regions only, never a guess. There is no
+layout mode) means global regions only, never a guess. The same fetch
+also carries the macbook mode (`params.mode`): in AIM the GLANCE-only
+regions (map, app strip) are not live, so the second tap falls through
+to the fullscreen `mac-zoom` click catcher and dispatches
+`macbook_click` -- first-hit-wins alone cannot express modes (the
+catcher must sit last so header controls win in GLANCE, which buries
+it under the map in AIM), so the dispatcher skips regions whose action
+the showing mode would refuse (`touch_audit.candidates_for_mode`, the
+same predicate the daemon's `POST /touch/resolve` answers with). There is no
 config reload in the input loop (a reload path there risks mid-tap
 partial state): region freshness comes from restarting the touch
 unit, while heartbeat freshness is automatic (see below).

@@ -76,6 +76,45 @@ def candidates(regions, view_regions, view):
     return [dict(r) for r in list(scoped) + list(regions or [])]
 
 
+# Mode-gated touch actions (mirror of DisplayDaemon._resolve_refusal in
+# displayd.py): the macbook scope mixes GLANCE-only regions (map, app
+# strip) with the AIM-only fullscreen click catcher, so first-hit-wins
+# alone cannot tell them apart -- in AIM every tap re-hits the earlier
+# map region and re-fires (then refuses) the warp instead of clicking.
+# Both the touch dispatcher and the read-only resolver skip regions
+# whose action the showing mode would refuse, so the second tap falls
+# through to the click catcher. Off-view and reload gates are NOT
+# skipped (those regions stay live and report refused); only the
+# macbook mode gates filter, because an undrawn mode's regions are not
+# live -- AIM draws the fullscreen capture, never the map or the strip.
+MODE_GLANCE_ACTIONS = ("macbook_mouse", "talon_focus", "talon_tab")
+MODE_AIM_ACTIONS = ("macbook_click",)
+
+
+def mode_live(action_name, view, mode):
+    """True when a region naming `action_name` is live under (view,
+    mode). Only the macbook mode gates filter; every other action is
+    live wherever its scope is. Unknown mode defaults to glance, exactly
+    like DisplayDaemon._macbook_mode."""
+    if view != "macbook":
+        return True
+    if mode == "aim":
+        return action_name not in MODE_GLANCE_ACTIONS
+    return action_name not in MODE_AIM_ACTIONS
+
+
+def candidates_for_mode(regions, view_regions, view, mode):
+    """Mode-aware candidates: candidates() minus regions whose action
+    the showing mode refuses. Same order, same shapes."""
+    out = []
+    for region in candidates(regions, view_regions, view):
+        action = region.get("action")
+        name = action.get("name") if isinstance(action, dict) else None
+        if mode_live(name, view, mode):
+            out.append(region)
+    return out
+
+
 def expected_for_view(view, params=None, w=1920, h=1080,
                       picker_views=None):
     """Drawn geometry for one view (rects asserted; actions when set)."""

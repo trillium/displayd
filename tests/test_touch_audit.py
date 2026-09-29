@@ -81,6 +81,48 @@ class CandidatesTest(unittest.TestCase):
                                      None)
         self.assertEqual([r["id"] for r in out], ["g"])
 
+    def test_mode_filter_preserves_order(self):
+        scoped = {"macbook": [dict(MAP), dict(ZOOM), dict(FOCUS)]}
+        glance = touch_audit.candidates_for_mode(
+            [], scoped, "macbook", "glance")
+        self.assertEqual([r["id"] for r in glance],
+                         ["mac-map", "mac-focus"])
+        aim = touch_audit.candidates_for_mode(
+            [], scoped, "macbook", "aim")
+        self.assertEqual([r["id"] for r in aim], ["mac-zoom"])
+
+    def test_mode_filter_only_applies_on_macbook(self):
+        scoped = {"clock": [dict(MAP), dict(ZOOM)]}
+        out = touch_audit.candidates_for_mode(
+            [], scoped, "clock", "aim")
+        self.assertEqual([r["id"] for r in out],
+                         ["mac-map", "mac-zoom"])
+
+    def test_unknown_mode_defaults_to_glance(self):
+        scoped = {"macbook": [dict(MAP), dict(ZOOM)]}
+        out = touch_audit.candidates_for_mode(
+            [], scoped, "macbook", None)
+        self.assertEqual([r["id"] for r in out], ["mac-map"])
+
+    def test_mode_live_mirrors_daemon_gates(self):
+        # Every mode-gated name refuses off-mode daemon-side; the filter
+        # must skip exactly those.
+        for name in ("macbook_mouse", "talon_focus", "talon_tab"):
+            self.assertFalse(
+                touch_audit.mode_live(name, "macbook", "aim"))
+            self.assertTrue(
+                touch_audit.mode_live(name, "macbook", "glance"))
+        self.assertFalse(
+            touch_audit.mode_live("macbook_click", "macbook", "glance"))
+        self.assertTrue(
+            touch_audit.mode_live("macbook_click", "macbook", "aim"))
+        # Ungated actions (mode switch, tiles) stay live in both modes.
+        for name in ("macbook_mode", "select_view", "screen_on"):
+            self.assertTrue(
+                touch_audit.mode_live(name, "macbook", "aim"))
+            self.assertTrue(
+                touch_audit.mode_live(name, "macbook", "glance"))
+
 
 class CompareTest(unittest.TestCase):
     def test_identical_is_ok(self):

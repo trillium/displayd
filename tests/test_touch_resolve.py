@@ -137,29 +137,35 @@ class StaticGridTest(ResolveDaemonTestCase):
 
     def test_parity_with_touch_hit_test(self):
         # The daemon answer must match what the touch service resolves:
-        # same candidates, same first-hit order, over the same announce.
+        # same mode-aware candidates, same first-hit order, over the same
+        # announce. Macbook is checked in BOTH modes: in AIM the
+        # GLANCE-only map/strip regions are not live, so taps fall through
+        # to the click catcher; in GLANCE the click catcher is not live.
         self._announce_full()
         announced = self.daemon.touch_live["announced"]
-        for view in ("picker", "macbook", "clock", "sleep"):
-            candidates = touch_audit.candidates(
-                announced["regions"],
-                announced["view_regions"], view)
-            if view == "clock":
+        plans = [("picker", None), ("macbook", "glance"),
+                 ("macbook", "aim"), ("clock", None),
+                 ("sleep", None)]
+        for view, mode in plans:
+            if view == "macbook":
+                self.daemon.show("macbook", {"mode": mode})
+            elif view == "clock":
                 self.daemon.show("clock", {})
-            elif view == "macbook":
-                self.daemon.show("macbook", {"mode": "glance"})
             elif view == "picker":
                 self.daemon.show("picker", {})
             elif view == "sleep":
                 self.daemon.show("sleep", {})
+            candidates = touch_audit.candidates_for_mode(
+                announced["regions"],
+                announced["view_regions"], view, mode)
             for x, y in ((80, 80), (960, 540), (1800, 100),
                          (5, 200), (100, 1000), (1919, 1079), (0, 0)):
                 want = touch.hit_test(x, y, candidates)
                 got = self.daemon.resolve_touch(x, y)
                 self.assertEqual(
                     got["region"], want,
-                    "view=%r tap=%r: daemon=%r touch=%r"
-                    % (view, (x, y), got["region"], want))
+                    "view=%r mode=%r tap=%r: daemon=%r touch=%r"
+                    % (view, mode, (x, y), got["region"], want))
 
 
 class ViewModeGateTest(ResolveDaemonTestCase):
@@ -181,28 +187,49 @@ class ViewModeGateTest(ResolveDaemonTestCase):
                          (report["x"], report["y"]))
         self.assertIn("revalidation", report)
 
-    def test_mouse_refused_in_aim(self):
+    def test_second_tap_reaches_click_in_aim(self):
+        # The tap-tap fix: in AIM the GLANCE-only map/strip regions are
+        # not live, so a tap on the review image falls through to the
+        # fullscreen click catcher -- it dispatches the click instead of
+        # reporting the map refused.
         self._announce_full()
         self.daemon.show("macbook", {"mode": "aim"})
         report = self.daemon.resolve_touch(*self._map_point())
         self.assertTrue(report["hit"])
-        self.assertTrue(report["refused"])
-        self.assertIn("GLANCE", report["reason"])
+        self.assertEqual(report["region"], "mac-zoom")
+        self.assertFalse(report["refused"])
+        self.assertEqual(report["action"]["name"], "macbook_click")
+        # Tap-positioned: the point is stamped into the answer.
+        self.assertEqual((report["action"]["x"], report["action"]["y"]),
+                         (report["x"], report["y"]))
+        self.assertIn("revalidation", report)
 
-    def test_click_refused_in_glance(self):
+    def test_click_catcher_not_live_in_glance(self):
+        # In GLANCE the fullscreen click catcher is not live: a tap the
+        # map does not cover (header dead area) falls through to shared
+        # chrome instead of reporting a refused click.
+        self._announce_full()
+        self.daemon.show("macbook", {"mode": "glance"})
+        report = self.daemon.resolve_touch(80, 80)
+        self.assertTrue(report["hit"])
+        self.assertEqual(report["region"], "home")
+        self.assertFalse(report["refused"])
+
+    def test_click_gate_still_refuses_in_glance(self):
         self._announce_full()
         self.daemon.show("macbook", {"mode": "glance"})
         zoom = next(e for e in macbook_scope()
                     if e["action"].get("name") == "macbook_click")
-        # Fullscreen zoom rect overlaps header controls announced
-        # earlier; resolve whatever it hits, then assert the click
-        # gate directly: a click-region tap in GLANCE must refuse.
+        # The click catcher is not live in GLANCE, so a tap inside the
+        # map resolves to the map warp (never a refused click); the
+        # click gate itself still refuses GLANCE directly -- the daemon
+        # revalidates at dispatch, and the touch dispatcher never sends
+        # it there.
         report = self.daemon.resolve_touch(
             zoom["rect"][0] + 960, zoom["rect"][1] + 800)
-        if (report["hit"] and
-                report["action"].get("name") == "macbook_click"):
-            self.assertTrue(report["refused"])
-            self.assertIn("AIM", report["reason"])
+        self.assertTrue(report["hit"])
+        self.assertEqual(report["region"], "mac-map")
+        self.assertFalse(report["refused"])
         self.assertEqual(
             self.daemon._resolve_refusal("macbook_click", "macbook"),
             None if self.daemon._macbook_mode() == "aim"

@@ -1252,25 +1252,52 @@ class TouchService:
         shows, and transient returns -- exactly the drift this closes.
         Unknown (unreachable daemon, blank panel, layout mode) means
         global regions only, never a guess."""
+        view, _mode = self.current_scope()
+        return view
+
+    def current_scope(self):
+        """(view, mode) from one fresh GET /state, else (None, None).
+
+        Mode mirrors DisplayDaemon._macbook_mode exactly: "aim" only
+        while the macbook view shows with params mode aim, "glance" on
+        the macbook view otherwise, None off-view. The dispatcher needs
+        both: the macbook scope mixes GLANCE-only regions with the
+        AIM-only click catcher, so the mode decides which are live."""
         fetch = getattr(self.client, "state", None)
         if fetch is None:
-            return None
+            return None, None
         try:
             doc = fetch(timeout=1.0)
         except Exception as exc:
             LOG.warning("touch view fetch failed (global regions only): "
                         "%s", exc)
-            return None
-        view = doc.get("renderer") if isinstance(doc, dict) else None
-        return view if isinstance(view, str) and view else None
+            return None, None
+        if not isinstance(doc, dict):
+            return None, None
+        view = doc.get("renderer")
+        view = view if isinstance(view, str) and view else None
+        mode = None
+        if view == "macbook":
+            mode = "glance"
+            params = doc.get("params")
+            if isinstance(params, dict):
+                raw = params.get("mode")
+                if isinstance(raw, str) and raw.lower() == "aim":
+                    mode = "aim"
+        return view, mode
 
-    def candidate_regions(self, view):
-        """Live regions for one view: view-specific FIRST, then global
-        (touch_audit.candidates: a view's own area wins its screen space
-        while shared chrome still serves)."""
-        return touch_audit.candidates(
+    def candidate_regions(self, view, mode=None):
+        """Live regions for one (view, mode): view-specific FIRST, then
+        global (touch_audit.candidates: a view's own area wins its screen
+        space while shared chrome still serves), minus regions whose
+        action the showing macbook mode would refuse (touch_audit
+        .candidates_for_mode: in AIM the map/strip regions are not live,
+        so taps fall through to the click catcher; in GLANCE the
+        fullscreen click catcher is not live, so header-adjacent taps
+        fall through to shared chrome)."""
+        return touch_audit.candidates_for_mode(
             self.config.get("regions") or [],
-            self.config.get("view_regions") or {}, view)
+            self.config.get("view_regions") or {}, view, mode)
 
     def confidence_payload(self, tap, region_id, action_name,
                              result=None, error=None, view=None):
@@ -1386,8 +1413,8 @@ class TouchService:
             if tap is None:
                 continue
             dismissal = self.dismiss_reload(dry_run=dry_run)
-            view = self.current_view()
-            candidates = self.candidate_regions(view)
+            view, mode = self.current_scope()
+            candidates = self.candidate_regions(view, mode)
             region_id = hit_test(tap[0], tap[1], candidates)
             if region_id is None:
                 if self._dismissal_consumed(dismissal):
