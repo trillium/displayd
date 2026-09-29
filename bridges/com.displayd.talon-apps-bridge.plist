@@ -7,20 +7,20 @@
   Talon's event-driven apps_state.json on mtime change, POSTs it to the
   panel feed, and hands pending panel focus commands to Talon through
   the file protocol (the response wait runs in the bridge process, never
-  on Talon's main thread -- see bridges/talon_apps.py).
+  on Talon's main thread — see bridges/talon_apps.py).
 
   The poller needs no Accessibility grant (plain file + HTTP I/O), but
   like its sibling it runs here next to Talon, not on lnx-server.
 
   The per-app screen placement (bridges/talon_windows.py) needs PyObjC:
-  on this machine that means the pyenv python3 -- /usr/bin/python3
+  on this machine that means the pyenv python3 — /usr/bin/python3
   (Xcode stub) lacks Quartz, and the feed silently degrades to a flat
   list with every app split across both columns. If the interpreter
   moves, update ProgramArguments AND reload (unload + load: kickstart
   alone reuses the loaded config and ignores the edit).
 
   Install: replace __DISPLAYD_DIR__ with the deployed displayd path
-  (~/displayd after deploy.sh -- never a task worktree), copy to
+  (~/displayd after deploy.sh — never a task worktree), copy to
   ~/Library/LaunchAgents/, then `launchctl bootstrap gui/$UID <file>`.
 -->
 <plist version="1.0">
