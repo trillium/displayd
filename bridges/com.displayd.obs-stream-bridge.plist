@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.displayd.obs-stream-bridge — OBS screenshots -> displayd bridge.
+
+  The bridge connects to OBS's local WebSocket on this Mac (the snapshot
+  source lives next to OBS, not on lnx-server) and POSTs each frame across
+  the tailnet to /feed/stream/frame. Stdlib only; the password travels via
+  the OBS_PASSWORD environment variable only (no password flag exists,
+  so it never leaks through ps) — set it with
+  `launchctl setenv OBS_PASSWORD <pw>` before bootstrapping, or the bridge
+  logs auth-failed and retries with backoff. The source name is likewise
+  required: `launchctl setenv OBS_SOURCE <name>` (the bridge exits nonzero
+  without it, so a misconfigured bootstrap fails loudly, never silent).
+
+  This job never ran under launchd before (bridges/obs_poll.py had no
+  plist); install-mac.sh renders it dormant unless with-obs is given.
+
+  Install: replace __DISPLAYD_DIR__ with the displayd checkout path, copy to
+  ~/Library/LaunchAgents/, then `launchctl bootstrap gui/$UID <file>`.
+  (install-mac.sh maps the bridges/ path onto the flat deployed dir.)
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.displayd.obs-stream-bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__DISPLAYD_DIR__/bridges/obs_poll.py</string>
+    <string>--obs-host</string>
+    <string>127.0.0.1</string>
+    <string>--displayd</string>
+    <string>http://100.81.88.113:8980</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/trilliumsmith/Library/Logs/obs-stream-bridge.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/trilliumsmith/Library/Logs/obs-stream-bridge.log</string>
+</dict>
+</plist>

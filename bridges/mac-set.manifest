@@ -1,0 +1,42 @@
+# Mac-side bridge set — the files that run on the MacBook.
+#
+# Every file listed here deploys TOGETHER via bridges/install-mac.sh, and
+# bridges/verify-mac-install.sh checksums the deployed copies against this
+# repo. A change to one file can never be installed without the others:
+# that partial install is the incident this exists to prevent (task-va5wb:
+# mac_preview.py shipped without its macos_state.py importer, the preview
+# thread never started, and the forgiving import guard hid it).
+#
+# Columns: <filename> <role>. Role is either
+#   job:<launchd-label>   the file a LaunchAgent executes directly, or
+#   lib:<label>[,<label>] a sibling imported by that job's file(s).
+# Shared libs name every job that imports them.
+#
+# Launchd coverage (see the plists next to this file):
+#   macos-state-bridge  runs macos_state.py; mac_preview + mac_zoom ride
+#                       INSIDE it (daemon thread / tap hooks) — no plist.
+#   talon-apps-bridge   runs talon_apps.py (talon_windows rides inside).
+#   firebot-chat-bridge runs firebot_chat.py.
+#   beads-activity-bridge runs beads_activity.py (via its __main__ guard;
+#                       beads_activity_cli is the argparse entry module).
+#   obs-stream-bridge   runs obs_poll.py (new plist; was missing entirely).
+#
+# Panel-host only (deliberately NOT listed — never deployed to the Mac):
+#   firebot-chat-bridge.service (systemd unit for lnx-server; retired —
+#     the Mac LaunchAgent is the durable home, see AGENTS.md).
+macos_state.py            job:com.displayd.macos-state-bridge
+macos_state_format.py     lib:com.displayd.macos-state-bridge
+mac_preview.py            lib:com.displayd.macos-state-bridge
+mac_zoom.py               lib:com.displayd.macos-state-bridge
+talon_channel.py          lib:com.displayd.macos-state-bridge,com.displayd.talon-apps-bridge
+talon_apps.py             job:com.displayd.talon-apps-bridge
+talon_windows.py          lib:com.displayd.talon-apps-bridge
+firebot_chat.py           job:com.displayd.firebot-chat-bridge
+firebot_wire.py           lib:com.displayd.firebot-chat-bridge
+beads_activity.py         job:com.displayd.beads-activity-bridge
+beads_activity_events.py  lib:com.displayd.beads-activity-bridge
+beads_activity_cli.py     lib:com.displayd.beads-activity-bridge
+obs_poll.py               job:com.displayd.obs-stream-bridge
+obs_protocol.py           lib:com.displayd.obs-stream-bridge
+obs_ws.py                 lib:com.displayd.obs-stream-bridge
+obs_poll_cli.py           lib:com.displayd.obs-stream-bridge
