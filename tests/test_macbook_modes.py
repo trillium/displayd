@@ -381,51 +381,51 @@ class DrawSmokeTest(unittest.TestCase):
     def test_glance_draws_full_canvas(self):
         img = macbook_renderer._draw(
             self.Scr(), "MACBOOK", "glance", 0, state_payload(), False,
-            ["Safari", "Terminal", "Mail"], False, (10, 10, 14), None)
+            ["Safari", "Terminal", "Mail"], False, (10, 10, 14), None, None)
         self.assertEqual(img.size, (PANEL_W, PANEL_H))
 
     def test_aim_draws_full_canvas(self):
         img = macbook_renderer._draw(
             self.Scr(), "MACBOOK", "aim", 0, state_payload(), False,
-            ["Safari"], False, (10, 10, 14), self._zoom())
+            ["Safari"], False, (10, 10, 14), self._zoom(), None)
         self.assertEqual(img.size, (PANEL_W, PANEL_H))
 
     def test_waiting_both_modes(self):
         for mode in ("glance", "aim"):
             img = macbook_renderer._draw(
                 self.Scr(), "MACBOOK", mode, 0, None, False, [], False,
-                (10, 10, 14), None)
+                (10, 10, 14), None, None)
             self.assertEqual(img.size, (PANEL_W, PANEL_H))
 
     def test_stale_and_app_only_glance(self):
         stale_state = state_payload(ts=time.time() - 100)
         img = macbook_renderer._draw(
             self.Scr(), "MACBOOK", "glance", 0, stale_state, True,
-            ["Safari"], True, (10, 10, 14), None)
+            ["Safari"], True, (10, 10, 14), None, None)
         self.assertEqual(img.size, (PANEL_W, PANEL_H))
         app_only = state_payload()
         app_only["focus"] = {"app_name": "NoWindows"}
         app_only["accessibility_trusted"] = False
         img = macbook_renderer._draw(
             self.Scr(), "MACBOOK", "glance", 0, app_only, False,
-            [], False, (10, 10, 14), None)
+            [], False, (10, 10, 14), None, None)
         self.assertEqual(img.size, (PANEL_W, PANEL_H))
 
     def test_stale_aim_keeps_image_with_tag(self):
         stale_state = state_payload(ts=time.time() - 100)
         img = macbook_renderer._draw(
             self.Scr(), "MACBOOK", "aim", 0, stale_state, True,
-            [], False, (10, 10, 14), self._zoom())
+            [], False, (10, 10, 14), self._zoom(), None)
         self.assertEqual(img.size, (PANEL_W, PANEL_H))
 
     def test_key_separates_modes(self):
         apps = apps_payload()
         zoom = self._zoom()
         state = state_payload()
-        glance = macbook_renderer._key(state, apps, zoom, "glance", 0)
-        aim = macbook_renderer._key(state, apps, zoom, "aim", 0)
+        glance = macbook_renderer._key(state, apps, zoom, None, "glance", 0)
+        aim = macbook_renderer._key(state, apps, zoom, None, "aim", 0)
         self.assertNotEqual(glance, aim)
-        tabbed = macbook_renderer._key(state, apps, zoom, "glance", 1)
+        tabbed = macbook_renderer._key(state, apps, zoom, None, "glance", 1)
         self.assertNotEqual(glance, tabbed)
 
 
@@ -440,7 +440,7 @@ class AppBarPagingTest(unittest.TestCase):
         state["focus"]["app_name"] = focus_app
         return macbook_renderer._draw(
             self.Scr(), "MACBOOK", "glance", tab, state, False,
-            list(apps), False, (10, 10, 14), None, slide=slide)
+            list(apps), False, (10, 10, 14), None, None, slide=slide)
 
     def test_highlight_gone_only_focus_filled(self):
         import macbook_glance as glance
