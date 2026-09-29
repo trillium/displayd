@@ -11,6 +11,7 @@ import os
 import struct
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
@@ -138,6 +139,72 @@ class EventRecordSizeTest(unittest.TestCase):
         self.assertEqual(len(rec), 24)
         self.assertEqual(parse_event(rec),
                          (EV_ABS, ABS_MT_TRACKING_ID, -1))
+
+
+class ReadPollStopTest(unittest.TestCase):
+    """Regression: the evdev read loop used to block in a bare read()
+    with no timeout, so request_stop() (SIGTERM/SIGINT) was never
+    observed while the panel sat untouched and the unit wedged in
+    `deactivating` until systemd timed out the stop ('Failed with result
+    \'timeout\''). The loop must exit promptly when asked, on a live
+    selectable fd, and still deliver events on the polling path."""
+
+    @staticmethod
+    def _close_quietly(fd):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+    def _pipe_stream(self):
+        # Blocking fd, exactly like the device open in run(): the old
+        # code blocked in read() on precisely this shape of stream.
+        r, w = os.pipe()
+        self.addCleanup(self._close_quietly, w)
+        stream = os.fdopen(r, "rb", buffering=0)
+        self.addCleanup(stream.close)
+        return stream, w
+
+    def test_stop_requested_while_idle_exits_promptly(self):
+        stream, _w = self._pipe_stream()
+        svc = TouchService(default_config())
+        threading.Timer(0.2, svc.request_stop).start()
+        start = time.monotonic()
+        self.assertEqual(list(svc.iter_device_events(stream)), [])
+        self.assertLess(time.monotonic() - start, 10)
+
+    def test_polling_path_still_delivers_events(self):
+        stream, w = self._pipe_stream()
+        blob = pack_event(EV_ABS, ABS_X, 1000) + pack_event(EV_SYN, SYN_REPORT, 0)
+        os.write(w, blob)
+        os.close(w)  # EOF after the bytes: reader drains, then returns
+        svc = TouchService(default_config())
+        start = time.monotonic()
+        self.assertEqual(
+            list(svc.iter_device_events(stream)), [(EV_ABS, ABS_X, 1000), (EV_SYN, SYN_REPORT, 0)]
+        )
+        self.assertLess(time.monotonic() - start, 10)
+
+
+    def test_none_read_is_repolled_not_eof(self):
+        # A nonblocking FileIO reports no-data-yet as None (not b""):
+        # the reader must re-poll, never mistake it for EOF.
+        reads = iter(
+            [None, pack_event(EV_ABS, ABS_X, 1000), pack_event(EV_SYN, SYN_REPORT, 0), b""]
+        )
+
+        class NoneThenBytes(io.RawIOBase):
+            def readable(self):
+                return True
+
+            def read(self, n=-1):
+                return next(reads)
+
+        svc = TouchService(default_config())
+        self.assertEqual(
+            list(svc.iter_device_events(NoneThenBytes())),
+            [(EV_ABS, ABS_X, 1000), (EV_SYN, SYN_REPORT, 0)],
+        )
 
 
 class _ChunkedStream(io.RawIOBase):

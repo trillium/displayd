@@ -15,6 +15,11 @@ WorkingDirectory=/home/trillium/displayd
 ExecStart=/usr/bin/python3 /home/trillium/displayd/touch.py --config /home/trillium/displayd/touch.json
 Restart=on-failure
 RestartSec=5
+# The evdev read loop polls (select, 0.5s), so a stop is honored in ~a
+# second. Bound the stop explicitly anyway: a future regression must
+# fail fast and loud, never wedge in `deactivating` (dead touch input
+# that still reads as "restarting" to is-active pollers).
+TimeoutStopSec=10
 # Missing device / permission errors exit 2: do not spin on a config problem.
 SuccessExitStatus=0
 StandardOutput=journal

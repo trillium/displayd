@@ -29,6 +29,7 @@ import ipaddress
 import json
 import logging
 import os
+import select
 import signal
 import struct
 import sys
@@ -81,6 +82,14 @@ ABS_MT_TRACKING_ID = 0x39   # 57
 EVENT_FORMAT = "<qqHHi"
 EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
 assert EVENT_SIZE == 24, "64-bit input_event must be 24 bytes"
+
+# Upper bound on stop latency while the device is idle: the evdev read
+# loop waits in select() for at most this long before re-checking the
+# stop flag, so SIGTERM/SIGINT is honored within ~a second even when no
+# touch event ever arrives. (The hang this prevents: a bare blocking
+# read() never returns while idle, so request_stop() was never observed
+# and the unit wedged in `deactivating` until systemd timed out the stop.)
+READ_POLL_SECONDS = 0.5
 
 # Documented local-machine default: on lnx-server the attached panel was
 # previously identified as `G2Touch Multi-Touch`. This is NOT universal --
@@ -1437,10 +1446,26 @@ class TouchService:
         input_event record. The kernel validates the count against its
         native record size, so requesting anything other than a full
         record (e.g. the old 16-byte size) fails with EINVAL -- hence
-        the pinned EVENT_SIZE above."""
+        the pinned EVENT_SIZE above.
+
+        The wait for the next bytes is a bounded select() poll, not a
+        bare blocking read: on timeout the loop re-checks the stop flag,
+        so a SIGTERM/SIGINT while the panel sits untouched exits within
+        ~READ_POLL_SECONDS instead of wedging the unit in `deactivating`
+        until systemd times out the stop. Streams without a selectable
+        fd (BytesIO, test fakes) fall through to the plain blocking
+        read, exactly as before."""
         buf = b""
         while not self._stop:
-            chunk = stream.read(EVENT_SIZE - len(buf))
+            if not self._wait_readable(stream):
+                continue  # poll timeout: re-check the stop flag
+            try:
+                chunk = stream.read(EVENT_SIZE - len(buf))
+            except BlockingIOError:
+                continue  # nonblocking fd, nothing yet: re-poll
+            if chunk is None:
+                continue  # nonblocking FileIO reports no-data-yet as
+                # None (not b""): re-poll, do NOT mistake it for EOF
             if not chunk:
                 if buf:
                     raise ValueError("truncated input_event at EOF")
@@ -1450,6 +1475,24 @@ class TouchService:
                 continue
             yield parse_event(buf)
             buf = b""
+
+    @staticmethod
+    def _wait_readable(stream):
+        """Block (bounded) until stream is readable; False on timeout.
+
+        True (readable, or unselectable) means the caller proceeds to
+        read(); False means the poll timed out and the caller re-checks
+        the stop flag. Any stream that cannot take part in select()
+        returns True immediately -- the blocking read path, unchanged."""
+        try:
+            fd = stream.fileno()
+        except Exception:
+            return True
+        try:
+            ready, _, _ = select.select([fd], [], [], READ_POLL_SECONDS)
+        except Exception:
+            return True  # unselectable fd: blocking read, as before
+        return bool(ready)
 
     def run(self, dry_run=False):
         device = self.config["device"]
@@ -1467,6 +1510,14 @@ class TouchService:
                       "(input group / udev rule)", device)
             raise SystemExit(2)
         with stream:
+            # Nonblocking device fd: a spurious select()-ready followed
+            # by a blocking read() could stall past the stop flag, so
+            # the fd itself must not block either (short reads still
+            # reassemble in iter_device_events; BlockingIOError re-polls).
+            try:
+                os.set_blocking(stream.fileno(), False)
+            except Exception:
+                pass  # best-effort: the select poll still bounds the wait
             for ev_type, code, value in self.iter_device_events(stream):
                 for event in self.parser.feed(ev_type, code, value):
                     LOG.debug("touch %s", event)

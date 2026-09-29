@@ -159,9 +159,16 @@ BL=$(printf '%s' "$NOW" | python3 -c \
 echo "panel: renderer=$RENDERER backlight=$BL stamp=$SHA"
 
 # 7. Touch freshness: restart the touch unit so it re-announces its
-#    effective regions, then require the drawn-vs-live check to agree.
+#    effective regions, then require proof it is genuinely up AND
+#    announcing -- ActiveState=active first (a wedged `deactivating` reads
+#    as "restarting" to is-active pollers), then a /touch/check whose
+#    announced_at is NEWER than the pre-restart heartbeat (the new process
+#    announced, not a stale heartbeat). Anything else fails the deploy
+#    loudly: a silent wedge means dead panel input.
 #    The panel is already re-showed above, so a failing gate never leaves
 #    it black -- it fails the deploy loudly instead of shipping drift.
+TOUCH_BEFORE=$(curl -s -m 5 "http://$PANEL/touch/check" | python3 -c \
+    "import json,sys; print(json.load(sys.stdin).get('announced_at') or '')" 2>/dev/null || true)
 if $SSH "$HOST" 'sudo -n systemctl restart displayd-touch'; then
     TOUCH_RESTARTED=1
     echo "touch service restarted"
@@ -169,26 +176,54 @@ else
     TOUCH_RESTARTED=0
     echo "warning: displayd-touch restart failed (unit not installed?)" >&2
 fi
+if [ "$TOUCH_RESTARTED" = "1" ]; then
+    i=0
+    TOUCH_STATE=""
+    until [ "$TOUCH_STATE" = "active" ] || [ "$i" -ge 15 ]; do
+        i=$((i + 1)); sleep 1
+        TOUCH_STATE=$($SSH "$HOST" 'systemctl is-active displayd-touch' 2>/dev/null || true)
+    done
+    if [ "$TOUCH_STATE" != "active" ]; then
+        echo "deploy.sh: displayd-touch never reached active after restart (state: ${TOUCH_STATE:-unknown}); touch input may be dead" >&2
+        exit 1
+    fi
+    echo "touch service active"
+fi
 # Top-level "ok" only: per-view entries carry their own "ok", so a
 # grep would match a nested agreement while the matrix disagrees.
-CHECK_OK=""; CHECK_STATUS=""
+CHECK_OK=""; CHECK_STATUS=""; CHECK_FRESH=""
 check_probe() {
     CHECK=$(curl -s -m 5 "http://$PANEL/touch/check" || true)
-    PROBE=$(printf '%s' "$CHECK" | python3 -c \
-        "import json,sys; r=json.load(sys.stdin); print(r.get('ok'), r.get('status'))" 2>/dev/null || echo "PARSE_FAIL")
+    PROBE=$(printf '%s' "$CHECK" | TOUCH_BEFORE="$TOUCH_BEFORE" python3 -c \
+        "import json,os,sys
+try:
+    r = json.load(sys.stdin)
+except Exception:
+    print('PARSE_FAIL PARSE_FAIL PARSE_FAIL'); raise SystemExit
+before = os.environ.get('TOUCH_BEFORE') or ''
+try:
+    fresh = (not before) or float(r.get('announced_at') or 0) > float(before)
+except (TypeError, ValueError):
+    fresh = False
+print(r.get('ok'), r.get('status'), fresh)" 2>/dev/null || echo "PARSE_FAIL")
     CHECK_OK=$(printf '%s' "$PROBE" | cut -d' ' -f1)
     CHECK_STATUS=$(printf '%s' "$PROBE" | cut -d' ' -f2)
-    [ "$CHECK_OK" = "True" ]
+    CHECK_FRESH=$(printf '%s' "$PROBE" | cut -d' ' -f3)
+    [ "$CHECK_OK" = "True" ] && [ "$CHECK_FRESH" = "True" ]
 }
 i=0
 until check_probe || [ "$i" -ge 15 ]; do
     i=$((i + 1)); sleep 1
 done
-if [ "$CHECK_OK" = "True" ]; then
-    echo "touch regions agree: $(printf '%s' "$CHECK" | python3 -c \
+if [ "$CHECK_OK" = "True" ] && [ "$CHECK_FRESH" = "True" ]; then
+    echo "touch regions agree (fresh heartbeat): $(printf '%s' "$CHECK" | python3 -c \
         "import json,sys; r=json.load(sys.stdin); print(r.get('current_view'), '-', r.get('status'))")"
 elif [ "$TOUCH_RESTARTED" = "0" ] && [ "$CHECK_STATUS" = "unknown" ]; then
     echo "warning: no touch heartbeat and no unit to restart; continuing without the touch check" >&2
+elif [ "$CHECK_OK" = "True" ]; then
+    echo "touch region check failed: $CHECK" >&2
+    echo "deploy.sh: /touch/check agrees but the heartbeat is stale (no re-announce after restart); touch input may be dead" >&2
+    exit 1
 else
     echo "touch region check failed: $CHECK" >&2
     echo "deploy.sh: drawn UI and live touch regions disagree (GET /touch/check); fix touch.json and re-run" >&2
