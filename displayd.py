@@ -77,7 +77,7 @@ BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
 # a [project] table. Bump per CHANGELOG.md's convention on every change;
 # the daemon reports it via GET /version, GET /state's "version" key,
 # and the startup log line in main().
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 # Optional shared secret for the HTTP API. When set, every request (except
 # the unauthenticated health probes below) must carry
 #   Authorization: Bearer <token>
@@ -124,14 +124,13 @@ try:
     talon_apps_module = _load_shared_helper("talon_apps")
 except Exception:
     talon_apps_module = None
+# (The old side-column geometry, talon_layout, is still used by
+# talon_apps.groups for the unified dock summary; the merged macbook
+# header maps taps through macbook_layout instead.)
 try:
-    talon_layout_module = _load_shared_helper("talon_layout")
+    macbook_layout_module = _load_shared_helper("macbook_layout")
 except Exception:
-    talon_layout_module = None
-try:
-    macbook_zoom_module = _load_shared_helper("macbook_zoom")
-except Exception:
-    macbook_zoom_module = None
+    macbook_layout_module = None
 try:
     import touch_audit
 except Exception:
@@ -1127,6 +1126,15 @@ class DisplayDaemon:
                 continue
             for input_name, spec in (entry.get("inputs") or {}).items():
                 self.feeds.declare(name, input_name, spec)
+        # Retired-view feed namespace (see feed() compat): declared cold
+        # so /feed/talon_apps/state health reads cold before the first
+        # bridge push, exactly like a real input.
+        if talon_apps_module is not None:
+            try:
+                self.feeds.declare("talon_apps", "state",
+                                   talon_apps_module.STATE_SCHEMA)
+            except Exception:
+                pass
         self.frame_cache = {}   # renderer name -> last composed PIL image
         self.switch_pending = None  # start time of the in-flight switch
         self.last_switch_at = None
@@ -1647,6 +1655,28 @@ class DisplayDaemon:
         Pure cache write first -- never disturbs what is on screen.
         Raises KeyError (unknown renderer/input) or ValueError (schema
         mismatch); both map to HTTP errors without side effects."""
+        # Feed compat for the retired talon_apps view: the Mac-side poller
+        # still posts /feed/talon_apps/state, and that namespace is owned
+        # by the merged macbook feature now (the app list lives in its
+        # header). Validated against the helper's schema and stored under
+        # the same key every reader already uses -- no Mac-side change.
+        if renderer == "talon_apps" and input_name == "state":
+            if talon_apps_module is None:
+                raise KeyError("unknown renderer: %s" % renderer)
+            try:
+                pushed = self.feeds.push(renderer, input_name, payload,
+                                         talon_apps_module.STATE_SCHEMA)
+            except ValueError as exc:
+                self.feeds.note_error(renderer, input_name, exc)
+                raise
+            self.policy.note_feed()
+            with self.lock:
+                woke = self._wake_if_idle()
+            if woke:
+                self._exit_sleep_view()
+            return {"feed": pushed,
+                    "attention": self._maybe_attention(renderer,
+                                                       input_name)}
         entry = self.renderers.get(renderer)
         if not entry or "module" not in entry:
             raise KeyError("unknown renderer: %s" % renderer)
@@ -2313,10 +2343,17 @@ class DisplayDaemon:
             return {"ok": False,
                     "reason": "macbook view not showing "
                     "(showing %r)" % (self.current,)}
+        if self._macbook_mode() != "glance":
+            return {"ok": False,
+                    "reason": "map lives in GLANCE mode "
+                    "(open AIM to review, not to position)"}
         try:
             macbook_map = macbook_map_module
             if macbook_map is None:
                 raise ImportError("macbook_map helper failed to load")
+            layout = macbook_layout_module
+            if layout is None:
+                raise ImportError("macbook_layout helper failed to load")
         except Exception as exc:
             return {"ok": False,
                     "reason": "map geometry unavailable: %s" % (exc,)}
@@ -2325,14 +2362,10 @@ class DisplayDaemon:
             return {"ok": False,
                     "reason": "no fresh macbook feed "
                     "(poller quiet >%ds?)" % (self.MOUSE_FRESH,)}
-        bottom = None
-        try:
-            if macbook_zoom_module is not None:
-                bottom = macbook_zoom_module.MAP_BOTTOM
-        except Exception:
-            bottom = None
         hit = macbook_map.locate(px, py, state.get("displays") or [],
-                                 width, height, bottom=bottom)
+                                 width, height,
+                                 top=layout.header_bottom(),
+                                 bottom=height)
         if hit is None:
             return {"ok": False,
                     "reason": "tap outside the display map"}
@@ -2400,8 +2433,8 @@ class DisplayDaemon:
         """Queue a focus change for panel pixel (px, py).
 
         Returns {"ok": True, "command": {...}} on success, or
-        {"ok": False, "reason": ...} on any refusal (wrong view,
-        stale feed, tap outside the app rows). Raises ValueError
+        {"ok": False, "reason": ...} on any refusal (wrong view or
+        mode, stale feed, tap outside the app chips). Raises ValueError
         only for malformed coordinates (non-int or off-panel)."""
         for value in (px, py):
             if isinstance(value, bool) or not isinstance(value, int):
@@ -2412,11 +2445,14 @@ class DisplayDaemon:
             raise ValueError(
                 "talon focus coordinates off-panel: %r,%r "
                 "for %dx%d" % (px, py, width, height))
-        if self.current != "talon_apps":
+        if self.current != "macbook":
             return {"ok": False,
-                    "reason": "talon_apps view not showing "
+                    "reason": "macbook view not showing "
                     "(showing %r)" % (self.current,)}
-        if talon_apps_module is None or talon_layout_module is None:
+        if self._macbook_mode() != "glance":
+            return {"ok": False,
+                    "reason": "app strip lives in GLANCE mode"}
+        if talon_apps_module is None or macbook_layout_module is None:
             return {"ok": False,
                     "reason": "app-list geometry unavailable"}
         state = self._talon_apps_state()
@@ -2427,16 +2463,15 @@ class DisplayDaemon:
         apps = state.get("apps")
         if not isinstance(apps, list) or not apps:
             return {"ok": False, "reason": "no running apps in feed"}
-        grouped = talon_layout_module.group(
-            apps, state.get("windows"), state.get("displays"))
-        index = talon_layout_module.hit(px, py, width, height, grouped)
+        tab = self._macbook_tab()
+        index = macbook_layout_module.chip_hit(px, py, width, apps, tab)
         if index is None:
             return {"ok": False,
-                    "reason": "tap outside the app buttons"}
+                    "reason": "tap outside the app chips"}
         name = talon_apps_module.clean(apps[index])
         if not name:
             return {"ok": False,
-                    "reason": "tap outside the app rows"}
+                    "reason": "tap outside the app chips"}
         command = {"app": name, "index": index, "ts": time.time()}
         with self.lock:
             self.focus_seq = getattr(self, "focus_seq", 0) + 1
@@ -2465,6 +2500,96 @@ class DisplayDaemon:
         if time.time() - pending["ts"] > self.FOCUS_TTL:
             return None
         return pending
+
+    # ---- Merged-feature navigation (GLANCE/AIM + tab step) --------------
+    # The header controls are closed touch actions with static bodies
+    # (macbook_mode pins the mode, talon_tab pins the step direction);
+    # the daemon applies them to the showing macbook view, preserving the
+    # other param, so a mode switch never loses the tab highlight and a
+    # tab step never leaves the mode. Both re-show through show() (manual
+    # navigation: holds rotation, cancels transients), and both refuse
+    # unless the merged feature is showing -- misses are 409, never a
+    # view change.
+
+    def _macbook_mode(self):
+        """Showing mode: 'aim' or 'glance' (default). Never raises."""
+        try:
+            if self.current != "macbook":
+                return "glance"
+            params = self.current_params or {}
+            return "aim" if str(params.get("mode") or "").lower() \
+                == "aim" else "glance"
+        except Exception:
+            return "glance"
+
+    def _macbook_tab(self):
+        """Showing tab index: int >= 0, default 0. Never raises."""
+        try:
+            if self.current != "macbook":
+                return 0
+            return max(0, int((self.current_params or {}).get("tab", 0)))
+        except (TypeError, ValueError):
+            return 0
+        except Exception:
+            return 0
+
+    def request_mode_move(self, mode):
+        """Re-show the merged feature in `mode`, keeping the tab.
+
+        Returns {"ok": True, "mode", "tab"} or {"ok": False,
+        "reason"}. Raises ValueError only for a bad mode name."""
+        if self.current != "macbook":
+            return {"ok": False,
+                    "reason": "macbook view not showing "
+                    "(showing %r)" % (self.current,)}
+        try:
+            want = str(mode or "").lower()
+        except Exception:
+            want = ""
+        if want not in ("glance", "aim"):
+            raise ValueError("macbook mode must be glance or aim")
+        params = dict(self.current_params or {})
+        params["mode"] = want
+        self.show("macbook", params)
+        return {"ok": True, "mode": want,
+                "tab": params.get("tab", 0)}
+
+    def request_tab_step(self, direction):
+        """Step the header highlight with wraparound, keeping the mode.
+
+        Returns {"ok": True, "tab"} or {"ok": False, "reason"}.
+        Raises ValueError only for a bad direction."""
+        if self.current != "macbook":
+            return {"ok": False,
+                    "reason": "macbook view not showing "
+                    "(showing %r)" % (self.current,)}
+        if self._macbook_mode() != "glance":
+            return {"ok": False,
+                    "reason": "app strip lives in GLANCE mode"}
+        if isinstance(direction, bool):
+            raise ValueError("tab direction must be +1 or -1")
+        try:
+            direction = int(direction)
+        except (TypeError, ValueError):
+            raise ValueError("tab direction must be an integer")
+        if abs(direction) != 1:
+            raise ValueError("tab direction must be +1 or -1")
+        if macbook_layout_module is None:
+            return {"ok": False,
+                    "reason": "app-list geometry unavailable"}
+        state = self._talon_apps_state()
+        if state is None:
+            return {"ok": False,
+                    "reason": "no fresh talon_apps feed "
+                    "(poller quiet >%ds?)" % (self.FOCUS_FRESH,)}
+        apps = state.get("apps")
+        if not isinstance(apps, list) or not apps:
+            return {"ok": False, "reason": "no running apps in feed"}
+        params = dict(self.current_params or {})
+        params["tab"] = macbook_layout_module.step(
+            params.get("tab", 0), direction, len(apps))
+        self.show("macbook", params)
+        return {"ok": True, "tab": params["tab"]}
 
     # ---- MacBook second-tap click slot -----------------------------------
     # Stage 2 of the two-stage tap (stage 1 = POST /macbook/mouse moves
@@ -2531,18 +2656,14 @@ class DisplayDaemon:
             return {"ok": False,
                     "reason": "macbook view not showing "
                     "(showing %r)" % (self.current,)}
-        if macbook_zoom_module is None:
+        if self._macbook_mode() != "aim":
             return {"ok": False,
-                    "reason": "review-pane geometry unavailable"}
-        try:
-            pane_top = macbook_zoom_module.ZOOM_TOP
-        except Exception:
-            pane_top = None
-        if pane_top is None or not (0 <= px < width and
-                                    pane_top <= py < height):
-            return {"ok": False,
-                    "reason": "tap outside the review image "
-                    "(tap the magnified image to click it)"}
+                    "reason": "review image lives in AIM mode "
+                    "(position in GLANCE first)"}
+        # AIM claims the full canvas: every on-panel tap is on the review
+        # image (the header controls route first via touch order, and
+        # direct POSTs already passed the bounds check above), so no
+        # sub-pane check remains.
         state = self._macbook_map_state()
         if state is None:
             return {"ok": False,
@@ -3066,7 +3187,9 @@ CONTROL_PAGE = """<!DOCTYPE html>
     <li><code>reload_confirm</code> <span class="eff">&mdash; confirm the showing reload view via tap (POST /reload/confirm)</span></li>
     <li><code>macbook_mouse</code> <span class="eff">&mdash; move the MacBook cursor to the tapped map point (POST /macbook/mouse)</span></li>
     <li><code>macbook_click</code> <span class="eff">&mdash; click the reviewed point on the magnified image (POST /macbook/click)</span></li>
-    <li><code>talon_focus</code> <span class="eff">&mdash; focus the tapped app row (POST /talon/focus)</span></li>
+    <li><code>talon_focus</code> <span class="eff">&mdash; focus the tapped header app chip (POST /talon/focus)</span></li>
+    <li><code>macbook_mode</code> <span class="eff">&mdash; pin the merged macbook view to GLANCE or AIM (POST /macbook/mode)</span></li>
+    <li><code>talon_tab</code> <span class="eff">&mdash; step the header app highlight back/forward (POST /talon/tab)</span></li>
   </ul>
   <div class="meta">What a tap on the panel can do (touch bridge allowlist).</div>
 </div>
@@ -3776,6 +3899,32 @@ class Handler(BaseHTTPRequestHandler):
                                                    body.get("y"))
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
+            if result.get("ok"):
+                return self._send(200, result)
+            return self._send(409, result)
+        if path == "/macbook/mode":
+            # Header control: pin GLANCE/AIM on the showing merged
+            # feature, keeping the tab. 400 on a bad mode, 409 unless
+            # macbook shows -- never a view change on a miss.
+            body = self._body()
+            try:
+                result = DAEMON.request_mode_move(body.get("mode"))
+            except ValueError as exc:
+                return self._send(400, {"ok": False,
+                                         "error": str(exc)})
+            if result.get("ok"):
+                return self._send(200, result)
+            return self._send(409, result)
+        if path == "/talon/tab":
+            # Header stepper: step the highlight with wraparound, keeping
+            # the mode. 400 on a bad direction, 409 on any refusal.
+            body = self._body()
+            try:
+                result = DAEMON.request_tab_step(
+                    body.get("dir", body.get("direction")))
+            except ValueError as exc:
+                return self._send(400, {"ok": False,
+                                         "error": str(exc)})
             if result.get("ok"):
                 return self._send(200, result)
             return self._send(409, result)

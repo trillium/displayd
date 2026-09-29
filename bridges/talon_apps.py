@@ -4,7 +4,9 @@
 Sibling of ``macos_state.py`` (same poller shape, same launchd
 supervision, stdlib only): each tick it (a) reads Talon's event-driven
 ``apps_state.json`` on mtime change and POSTs it to
-``/feed/talon_apps/state`` for ``renderers/talon_apps.py``, and (b)
+``/feed/talon_apps/state`` for the merged macbook feature (the app list
+lives in its GLANCE header; the namespace is owned there now, so this
+endpoint is unchanged), and (b)
 fetches one pending panel focus command (``GET /talon/focus?since=``),
 hands it to Talon through the file protocol in
 ``core/displayd_apps/displayd_apps.py``, and waits for the response.

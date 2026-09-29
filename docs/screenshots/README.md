@@ -47,6 +47,6 @@ the waiting dock (no talon feed -- the tiles above still render). Those
 are the views' real no-data screens, documented as such -- not
 placeholders.
 
-No view was omitted: the set covers all 25 renderers the daemon
+No view was omitted: the set covers all 24 renderers the daemon
 advertised at capture time. If a future `GET /renderers` lists more,
 re-run the script and commit the new files.

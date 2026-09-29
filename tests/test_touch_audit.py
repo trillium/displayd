@@ -22,20 +22,33 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 import displayd
 import touch
 import touch_audit
+from renderers import macbook_layout as lay
 from renderers import picker as pk
 
 W, H = 1920, 1080
-MAP = {"id": "mac-map", "rect": [0, 250, 1920, 490],
+# Fixtures straight from the single source of truth: rects here are the
+# generated geometry, never hand-computed (a drift breaks the tests).
+_GEN = {e["id"]: e for e in lay.touch_regions(W, H)}
+MAP = {"id": "mac-map", "rect": list(_GEN["mac-map"]["rect"]),
        "action": {"name": "macbook_mouse"}}
-ZOOM = {"id": "mac-zoom", "rect": [0, 740, 1920, 340],
+ZOOM = {"id": "mac-zoom", "rect": list(_GEN["mac-zoom"]["rect"]),
         "action": {"name": "macbook_click"}}
 TILE = {"id": "view-clock", "rect": [179, 59, 508, 401],
         "action": {"name": "select_view", "view": "clock"}}
-FOCUS = {"id": "talon-focus-left", "rect": [48, 250, 560, 782],
+FOCUS = {"id": "mac-focus", "rect": list(_GEN["mac-focus"]["rect"]),
          "action": {"name": "talon_focus"}}
-FOCUS_RIGHT = {"id": "talon-focus-right",
-               "rect": [1312, 250, 560, 782],
-               "action": {"name": "talon_focus"}}
+
+
+def macbook_scope():
+    """Full announced macbook scope, generated (mode/tab/focus/map/click)."""
+    return [{"id": e["id"], "rect": list(e["rect"]),
+             "action": dict(e["action"])} for e in
+            lay.touch_regions(W, H)]
+
+
+MACBOOK_PRESENCE = [{"action": name} for name in
+                    ("macbook_mouse", "macbook_click", "talon_focus",
+                     "macbook_mode", "talon_tab")]
 HOME = {"id": "home", "rect": [0, 0, 160, 160],
         "action": {"name": "select_view", "view": "picker"}}
 SLEEP = {"id": "screen-off", "rect": [1760, 0, 160, 160],
@@ -182,14 +195,16 @@ class ExpectedTest(unittest.TestCase):
         self.assertIn({"action": "screen_on"}, expected["presence"])
         self.assertEqual(expected["exact"], [])
 
-    def test_macbook_requires_mouse_presence(self):
+    def test_macbook_requires_header_presence(self):
         expected = touch_audit.expected_for_view("macbook", {}, W, H)
-        self.assertIn({"action": "macbook_mouse"}, expected["presence"])
+        for want in MACBOOK_PRESENCE:
+            self.assertIn(want, expected["presence"])
 
-    def test_talon_apps_requires_focus_presence(self):
+    def test_retired_view_requires_no_scope(self):
+        # talon_apps is no longer a view: nothing gates on it, so no
+        # scope is required for it -- the header actions gate on macbook.
         expected = touch_audit.expected_for_view("talon_apps", {}, W, H)
-        self.assertIn({"action": "talon_focus"}, expected["presence"])
-        self.assertIn("home", [e["id"] for e in expected["exact"]])
+        self.assertEqual(expected["presence"], [])
 
     def test_retro_cells_plus_badge(self):
         expected = touch_audit.expected_for_view("retro_grid", {}, W, H)
@@ -275,8 +290,7 @@ class AcceptancePairTest(unittest.TestCase):
                     "tap_max_seconds": 60, "debounce_seconds": 0,
                     "regions": [dict(HOME)],
                     "view_regions": {"picker": [dict(TILE)],
-                                     "macbook": [dict(MAP)],
-                                     "talon_apps": [dict(FOCUS)]}})
+                                     "macbook": macbook_scope()}})
         return touch.TouchService(cfg, client=ViewClient(view))
 
     def _tap(self, svc, x, y):
@@ -301,16 +315,21 @@ class AcceptancePairTest(unittest.TestCase):
         self.assertNotIn("select_view",
                          [a.get("name") for a in svc.client.dispatched])
 
-    def test_talon_tap_focuses_row_on_its_view(self):
-        # (200, 500) sits on a left-column side button; the centre gap
-        # (960, 500) dispatches nothing by design.
-        svc = self._service("talon_apps")
-        summary = self._tap(svc, 200, 500)
+    def test_talon_tap_focuses_chip_on_merged_view(self):
+        # A chip-centre tap on the merged view focuses; a stepper tap
+        # steps the highlight; neither fires on another view.
+        svc = self._service("macbook")
+        x, y, cw, ch = lay.chip_rect(0, W)
+        summary = self._tap(svc, int(x + cw / 2), int(y + ch / 2))
         self.assertEqual(summary["action"], "talon_focus")
         sent = svc.client.dispatched[0]
-        self.assertEqual((sent["x"], sent["y"]), (200, 500))
+        self.assertEqual((sent["x"], sent["y"]),
+                         (int(x + cw / 2), int(y + ch / 2)))
+        sx, sy, sw, sh = lay.stepper_rect("right", W)
+        stepped = self._tap(svc, int(sx + sw / 2), int(sy + sh / 2))
+        self.assertEqual(stepped["action"], "talon_tab")
         other = self._service("picker")
-        self._tap(other, 200, 500)
+        self._tap(other, int(x + cw / 2), int(y + ch / 2))
         self.assertNotIn("talon_focus",
                          [a.get("name")
                           for a in other.client.dispatched])
@@ -388,13 +407,12 @@ class DaemonDriftTest(unittest.TestCase):
         mac = failed["views"]["macbook"]
         self.assertFalse(mac["ok"])
         self.assertEqual(mac["presence_missing"],
-                         [{"action": "macbook_mouse"}])
-        # FIX: tiles scoped to picker, map scoped to macbook.
+                         list(MACBOOK_PRESENCE))
+        # FIX: the full generated scope scoped to macbook.
         self._announce([dict(HOME), dict(SLEEP)],
                          {"picker": tiles,
                           "unified": self._live_unified(),
-                          "macbook": [dict(MAP)],
-                          "talon_apps": [dict(FOCUS)],
+                          "macbook": macbook_scope(),
                           "sleep": [dict(WAKE)]})
         passed = self.daemon.touch_check()
         self.assertTrue(passed["ok"], json.dumps(passed, indent=2))
@@ -408,8 +426,7 @@ class DaemonDriftTest(unittest.TestCase):
         self._announce([dict(HOME), dict(SLEEP)],
                          {"picker": self._live_tiles(),
                           "unified": self._live_unified(),
-                          "macbook": [dict(MAP)],
-                          "talon_apps": [dict(FOCUS)],
+                          "macbook": macbook_scope(),
                           "sleep": [dict(WAKE)]})
         report = self.daemon.touch_check()
         self.assertTrue(report["ok"])

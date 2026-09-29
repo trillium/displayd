@@ -78,7 +78,7 @@ def _draw(d, screen, dock, state, stale):
     d.text((dx + dw - pad, dy + int(14 * s)), summ["mode"],
            font=f_sub, fill=dim, anchor="rt")
     d.text((dx + pad, dy + int(58 * s)),
-           "live summary -- tap: open full apps screen",
+           "live summary -- tap: open macbook screen",
            font=f_sub, fill=dim)
     if state is None:
         d.text((dx + pad, dy + int(104 * s)),
@@ -112,5 +112,5 @@ def _draw(d, screen, dock, state, stale):
         d.text((dx + pad, dy + int(168 * s)),
                tail + "%d left / %d right" % (summ["left"], summ["right"]),
                font=f_sub, fill=dim)
-    d.text((dx + dw - pad, dy + int(168 * s)), "tap dock: full list",
+    d.text((dx + dw - pad, dy + int(168 * s)), "tap dock: macbook",
            font=f_sub, fill=green, anchor="rt")

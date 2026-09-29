@@ -20,8 +20,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
                                 "renderers"))
 
 import displayd
+import macbook_aim
+import macbook_layout
 import macbook_map
-import macbook_zoom
 import touch
 from touch import action_request, resolve_action
 
@@ -59,7 +60,8 @@ def zoom_payload(ts=None, x=QX, y=QY):
 def panel_of(qx, qy):
     box = macbook_map.union(DISPLAYS)
     scale, ox, oy = macbook_map.frame(
-        box, PANEL_W, PANEL_H, bottom=macbook_zoom.MAP_BOTTOM)
+        box, PANEL_W, PANEL_H, top=macbook_layout.header_bottom(),
+        bottom=PANEL_H)
     px, py = macbook_map.project(qx, qy, scale, ox, oy)
     return int(round(px)), int(round(py))
 
@@ -83,20 +85,22 @@ class DaemonClickTest(unittest.TestCase):
             os.environ["DISPLAYD_FAKE_FB"] = self._env
 
     def _armed(self, mouse=None):
-        # Stage 1 first: position the cursor, then post the review
-        # capture of that point (capture ts post-dates the tap).
+        # Stage 1 first (GLANCE map warp), then post the review
+        # capture of that point (capture ts post-dates the tap), then
+        # enter AIM: the click slot only fires on the fullscreen review.
         self.daemon.show("macbook", {})
         self.daemon.feed("macbook", "state", state_payload(mouse=mouse))
         px, py = panel_of(QX, QY)
         moved = self.daemon.request_mouse_move(px, py)
         self.assertTrue(moved["ok"], moved)
         self.daemon.feed("macbook", "zoom", zoom_payload())
+        self.daemon.show("macbook", {"mode": "aim"})
         return px, py
 
     def test_second_tap_clicks_reviewed_point(self):
-        # The tap lands on the review PANE (below the map): the click
+        # The AIM tap lands anywhere on the fullscreen review: the click
         # target is the capture's own crosshair point, never a
-        # re-mapping of the tap, so the pane tap cannot drift off it.
+        # re-mapping of the tap, so the tap cannot drift off it.
         self._armed()
         result = self.daemon.request_click_move(960, 900)
         self.assertTrue(result["ok"], result)
@@ -127,15 +131,17 @@ class DaemonClickTest(unittest.TestCase):
         self.assertIn("review",
                       self.daemon.request_click_move(px, py)["reason"])
 
-    def test_tap_outside_pane_refused(self):
-        # Map-area taps are moves, never clicks: only the review image
-        # commits, and only the reviewed point.
-        self._armed()
-        px, py = panel_of(QX, QY)  # on the map, above the pane
-        self.assertLess(py, macbook_zoom.ZOOM_TOP)
-        result = self.daemon.request_click_move(px, py)
+    def test_glance_mode_refused(self):
+        # Clicks belong to AIM: in GLANCE the same pixel is a map warp,
+        # never a click -- refuse, never blind-click.
+        self.daemon.show("macbook", {})
+        self.daemon.feed("macbook", "state", state_payload())
+        px, py = panel_of(QX, QY)
+        self.assertTrue(self.daemon.request_mouse_move(px, py)["ok"])
+        self.daemon.feed("macbook", "zoom", zoom_payload())
+        result = self.daemon.request_click_move(960, 900)
         self.assertFalse(result["ok"])
-        self.assertIn("review image", result["reason"])
+        self.assertIn("AIM", result["reason"])
 
     def test_moved_cursor_refused(self):
         # First tap, then the cursor wanders: the delayed second tap
@@ -147,6 +153,7 @@ class DaemonClickTest(unittest.TestCase):
         self.daemon.feed("macbook", "zoom", zoom_payload())
         self.daemon.feed("macbook", "state",
                          state_payload(mouse=(900.0, 900.0)))
+        self.daemon.show("macbook", {"mode": "aim"})
         result = self.daemon.request_click_move(960, 900)
         self.assertFalse(result["ok"])
         self.assertIn("moved", result["reason"])
@@ -158,6 +165,7 @@ class DaemonClickTest(unittest.TestCase):
                          zoom_payload(ts=time.time() - 5))
         px, py = panel_of(QX, QY)
         self.assertTrue(self.daemon.request_mouse_move(px, py)["ok"])
+        self.daemon.show("macbook", {"mode": "aim"})
         result = self.daemon.request_click_move(960, 900)
         self.assertFalse(result["ok"])
         self.assertIn("predates", result["reason"])
@@ -194,7 +202,7 @@ class DaemonClickTest(unittest.TestCase):
                                   jpeg="A" * 140001))
 
 
-class ZoomPaneTest(unittest.TestCase):
+class AimDrawTest(unittest.TestCase):
     def _zoom(self, ts=None, color=(40, 90, 140)):
         from PIL import Image
         import io
@@ -206,32 +214,32 @@ class ZoomPaneTest(unittest.TestCase):
                 "x": QX, "y": QY,
                 "jpeg": base64.b64encode(buf.getvalue()).decode()}
 
-    def test_fresh_capture_paints_the_pane(self):
-        # Regression: the crop must land on the PANEL image (a shadowed
-        # local once pasted it into itself, leaving black + crosshair).
+    def test_fresh_capture_fills_the_screen(self):
+        # Regression: the crop must land on the PANEL image edge-to-edge
+        # (cover-fit, centre-cropped so the capture centre lands on the
+        # crosshair). A 480x360 shot at cover x4 fills 1920x1080 fully.
         from PIL import Image, ImageDraw
-        import macbook_zoom as mz
 
         class Scr:
             W, H = PANEL_W, PANEL_H
         img = Image.new("RGB", (PANEL_W, PANEL_H), (10, 10, 14))
-        mz.draw(img, ImageDraw.Draw(img), Scr(), self._zoom(), None)
-        # 2x of a 480-wide shot is 960 wide, centred: content at
-        # (600, 900), background margins outside it, crosshair dead
-        # centre on the shot centre (the positioned cursor).
-        self.assertNotEqual(img.getpixel((600, 900)), (10, 10, 14))
-        self.assertEqual(img.getpixel((200, 900)), (10, 10, 14))
-        self.assertEqual(img.getpixel((960, 900)), mz.C_ZOOM)
+        live = macbook_aim.draw(img, ImageDraw.Draw(img), Scr(),
+                                self._zoom(), False, None)
+        self.assertTrue(live)
+        self.assertNotEqual(img.getpixel((100, 900)), (10, 10, 14))
+        self.assertNotEqual(img.getpixel((100, 100)), (10, 10, 14))
+        self.assertEqual(img.getpixel((960, 540)), macbook_aim.C_ZOOM)
 
     def test_stale_capture_paints_no_image(self):
         from PIL import Image, ImageDraw
-        import macbook_zoom as mz
 
         class Scr:
             W, H = PANEL_W, PANEL_H
         img = Image.new("RGB", (PANEL_W, PANEL_H), (10, 10, 14))
-        mz.draw(img, ImageDraw.Draw(img), Scr(),
-                self._zoom(ts=time.time() - 999), None)
+        live = macbook_aim.draw(img, ImageDraw.Draw(img), Scr(),
+                                self._zoom(ts=time.time() - 999), False,
+                                None)
+        self.assertFalse(live)
         self.assertEqual(img.getpixel((200, 900)), (10, 10, 14))
 
 

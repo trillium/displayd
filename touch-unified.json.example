@@ -1,5 +1,5 @@
 {
-  "_comment": "Unified home-screen taps for lnx-server (1920x1080): 19 tiles at real picker geometry plus the apps-dock (one tap opens the full grouped apps screen). Tile rects + dock are GENERATED -- never hand-edit them; recompute with: python3 renderers/unified.py --width <W> --height <H> --views <csv> (csv from the live set: same rule the daemon uses, see TOUCH.md; paste entries [1:] under \"view_regions\" -> \"unified\" -- entry [0] is the global screen-off badge, already live via \"regions\", and repeating its id would fail the announce uniqueness check). Tile ids carry a uview- prefix so the picker scope (view-*) and this scope never share an id. Validate with `python3 touch.py --config touch.json --check-views` before restarting displayd-touch. Revert: restore the backup (see TOUCH.md).",
+  "_comment": "Unified home-screen taps for lnx-server (1920x1080): 18 tiles at real picker geometry plus the apps-dock (one tap opens the merged macbook screen). Tile rects + dock are GENERATED -- never hand-edit them; recompute with: python3 renderers/unified.py --width <W> --height <H> --views <csv> (csv from the live set: same rule the daemon uses, see TOUCH.md; paste entries [1:] under \"view_regions\" -> \"unified\" -- entry [0] is the global screen-off badge, already live via \"regions\", and repeating its id would fail the announce uniqueness check). Tile ids carry a uview- prefix so the picker scope (view-*) and this scope never share an id. Validate with `python3 touch.py --config touch.json --check-views` before restarting displayd-touch. Revert: restore the backup (see TOUCH.md).",
   "device": "/dev/input/event8",
   "endpoint": "http://100.81.88.113:8980",
   "width": 1920,
@@ -68,7 +68,7 @@
           175,
           55,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -81,7 +81,7 @@
           703,
           55,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -94,7 +94,7 @@
           1231,
           55,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -105,9 +105,9 @@
         "id": "uview-chat",
         "rect": [
           175,
-          152,
+          169,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -118,9 +118,9 @@
         "id": "uview-clock",
         "rect": [
           703,
-          152,
+          169,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -131,9 +131,9 @@
         "id": "uview-feed_health",
         "rect": [
           1231,
-          152,
+          169,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -144,9 +144,9 @@
         "id": "uview-life",
         "rect": [
           175,
-          249,
+          283,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -157,9 +157,9 @@
         "id": "uview-macbook",
         "rect": [
           703,
-          249,
+          283,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -170,9 +170,9 @@
         "id": "uview-options",
         "rect": [
           1231,
-          249,
+          283,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -183,9 +183,9 @@
         "id": "uview-picker",
         "rect": [
           175,
-          346,
+          397,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -196,9 +196,9 @@
         "id": "uview-resources",
         "rect": [
           703,
-          346,
+          397,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -209,9 +209,9 @@
         "id": "uview-retro_grid",
         "rect": [
           1231,
-          346,
+          397,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -222,9 +222,9 @@
         "id": "uview-row",
         "rect": [
           175,
-          443,
+          511,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -235,9 +235,9 @@
         "id": "uview-services",
         "rect": [
           703,
-          443,
+          511,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -248,9 +248,9 @@
         "id": "uview-sleep",
         "rect": [
           1231,
-          443,
+          511,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -261,9 +261,9 @@
         "id": "uview-solid",
         "rect": [
           175,
-          540,
+          625,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -274,9 +274,9 @@
         "id": "uview-stream",
         "rect": [
           703,
-          540,
+          625,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -284,25 +284,12 @@
         }
       },
       {
-        "id": "uview-talon_apps",
-        "rect": [
-          1231,
-          540,
-          513,
-          82
-        ],
-        "action": {
-          "name": "select_view",
-          "view": "talon_apps"
-        }
-      },
-      {
         "id": "uview-touch_confidence",
         "rect": [
-          175,
-          637,
+          1231,
+          625,
           513,
-          82
+          99
         ],
         "action": {
           "name": "select_view",
@@ -319,7 +306,7 @@
         ],
         "action": {
           "name": "select_view",
-          "view": "talon_apps"
+          "view": "macbook"
         }
       }
     ]

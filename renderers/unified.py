@@ -1,7 +1,7 @@
 """Merged home screen: picker tiles plus a live apps dock (E layout).
 
 Tiles at real picker geometry, dock below (count + focused app +
-LEFT/RIGHT split + mode line, one tap to the full apps screen). Home
+LEFT/RIGHT split + mode line, one tap to the merged macbook screen). Home
 suppressed here (this screen IS home); moon via the shared overlay.
 The dock reads the talon_apps feed in place -- empty means no payload
 yet, stale means quiet past ``STALE_AFTER``, neither ever moves a
@@ -27,7 +27,7 @@ coerce_views = pk.coerce_views  # audit contract: explicit list, else
 
 NAME = "unified"
 DESCRIPTION = ("Merged home: view tiles plus a live apps dock; "
-               "one dock tap opens the full apps screen")
+               "one dock tap opens the merged macbook screen")
 STATIC = False
 ACCENT = "#7BDFF2"
 PARAMS = {
@@ -117,7 +117,7 @@ def unified_regions(w=1920, h=1080, views=None, rect=None, dock=None,
                                                      gutter=gutter))]
     return ([sleep_chrome.sleep_region(w, h)] + tiles +
             [{"id": "apps-dock", "rect": [int(v) for v in box],
-              "action": {"name": "select_view", "view": "talon_apps"}}])
+              "action": {"name": "select_view", "view": "macbook"}}])
 
 
 def audit_exact(w=1920, h=1080, views=None, params=None):

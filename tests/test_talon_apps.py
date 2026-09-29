@@ -86,12 +86,38 @@ class DaemonCase(unittest.TestCase):
 
 
 class RendererTest(unittest.TestCase):
-    def test_renderer_loads_with_inputs(self):
+    def test_view_retired_not_advertised(self):
+        # One feature only: the standalone app-list view is gone from
+        # GET /renderers, and the helper module has no run() so the
+        # loader would skip it even by file name.
         found = displayd.load_renderers(displayd.RENDERER_DIR)
-        self.assertIn("talon_apps", found)
-        entry = found["talon_apps"]
-        self.assertIn("module", entry)
-        self.assertIn("state", entry["inputs"])
+        self.assertNotIn("talon_apps", found)
+        self.assertIn("macbook", found)
+        self.assertFalse(hasattr(RENDERER, "run"))
+
+    def test_feed_namespace_survives_retirement(self):
+        # The Mac-side poller still posts /feed/talon_apps/state: the
+        # merged feature owns that namespace (feed compat), so no
+        # Mac-side change was needed. Validated, stored, served.
+        _real = displayd.Framebuffer
+        displayd.Framebuffer = FakeFramebuffer
+        self.addCleanup(setattr, displayd, "Framebuffer", _real)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        owner = displayd.DisplayDaemon(
+            policy_path=os.path.join(tmp.name, "policy.json"))
+        self.addCleanup(owner.clear)
+        doc = {"ts": time.time(), "apps": ["Safari"],
+               "focused": "Safari"}
+        pushed = owner.feed("talon_apps", "state", doc)
+        self.assertTrue(pushed["feed"]["count"] >= 1)
+        self.assertEqual(owner.feeds.get("talon_apps", "state")[-1],
+                         doc)
+        status = owner.feeds.status("talon_apps", "state")
+        self.assertEqual(status["health"], "warm")
+        self.assertEqual(status["latest"], doc)
+        with self.assertRaises(ValueError):
+            owner.feed("talon_apps", "state", {"apps": []})
 
     def test_clean_bounds_untrusted_names(self):
         self.assertEqual(RENDERER.clean("Safari"), "Safari")
@@ -105,104 +131,96 @@ class RendererTest(unittest.TestCase):
     def _state(self, apps=("Safari", "Terminal", "Mail")):
         return {"ts": 1.0, "apps": list(apps), "focused": "Safari"}
 
-    def test_hit_side_buttons_and_misses(self):
-        # Flat feed (no windows): split mode, Safari/Terminal left,
-        # Mail right. Left column x=48.., right column x=1312... .
-        w, h, state = 1920, 1080, self._state()
-        grouped = RENDERER.groups(state)
-        self.assertEqual(grouped["mode"], "split")
-        self.assertEqual(RENDERER.hit(100, RENDERER.LIST_TOP + 5,
-                                     w, h, state), 0)
-        self.assertEqual(RENDERER.hit(1400, RENDERER.LIST_TOP + 5,
-                                     w, h, state), 2)
-        self.assertIsNone(RENDERER.hit(100, RENDERER.LIST_TOP - 5,
-                                       w, h, state))  # header
-        self.assertIsNone(RENDERER.hit(700, RENDERER.LIST_TOP + 5,
-                                       w, h, state))  # centre gap
-        self.assertIsNone(RENDERER.hit(100, RENDERER.LIST_TOP + 5,
-                                       w, h, self._state(())))  # empty
-        self.assertIsNone(RENDERER.hit(100, RENDERER.LIST_TOP + 5,
-                                       w, h, None))  # no state
-        self.assertIsNone(RENDERER.hit(100, RENDERER.LIST_TOP + 5,
-                                       w, h, "junk"))  # garbage
-
-    def test_hit_follows_display_grouping(self):
-        # Two-display feed: leftmost-display app hits left, the rest
-        # hits right, wherever the columns are drawn.
-        w, h = 1920, 1080
-        state = {"ts": 1.0, "apps": ["Left", "Right"],
-                 "windows": {"Left": {"x": 100, "y": 100, "d": 1},
-                               "Right": {"x": 2000, "y": 500,
-                                           "d": 0}},
-                 "displays": [{"bounds": {"x": 0, "y": 0,
-                                              "w": 1728, "h": 1117}},
-                                {"bounds": {"x": -1692, "y": -135,
-                                              "w": 1692, "h": 945}}]}
-        grouped = RENDERER.groups(state)
-        self.assertEqual(grouped["mode"], "sides")
-        self.assertEqual(grouped["left"], [0])
-        self.assertEqual(grouped["right"], [1])
-        self.assertEqual(RENDERER.hit(100, RENDERER.LIST_TOP + 5,
-                                     w, h, state), 0)
-        self.assertEqual(RENDERER.hit(1400, RENDERER.LIST_TOP + 5,
-                                     w, h, state), 1)
+    def test_chip_hit_follows_tab_window(self):
+        # The header shows a scrolling window: with 8 apps and tab=0
+        # slots 0..5 hit and the strip's right overflow zone misses;
+        # stepping to tab 7 scrolls the tail on screen.
+        import macbook_layout as layout
+        w = 1920
+        apps = ["App%d" % i for i in range(8)]
+        x0, y0, _, _ = layout.chip_rect(0, w)
+        self.assertEqual(layout.chip_hit(x0 + 2, y0 + 2, w, apps, 0), 0)
+        x5, y5, _, _ = layout.chip_rect(5, w)
+        self.assertEqual(layout.chip_hit(x5 + 2, y5 + 2, w, apps, 0), 5)
+        ax, _, aw, _ = layout.chip_area(w)
+        self.assertIsNone(
+            layout.chip_hit(ax + aw + 30, y0 + 2, w, apps, 0))
+        start, slots = layout.visible_slots(7, 8)
+        self.assertIn(7, slots)
+        self.assertEqual(start, 2)
+        pos = slots.index(7)
+        xa, ya, _, _ = layout.chip_rect(pos, w)
+        self.assertEqual(layout.chip_hit(xa + 2, ya + 2, w, apps, 7), 7)
+        # Header misses and garbage never raise.
+        self.assertIsNone(layout.chip_hit(960, 10, w, apps, 0))
+        self.assertIsNone(layout.chip_hit(960, 500, w, apps, 0))
+        self.assertIsNone(layout.chip_hit(100, y0 + 2, w, [], 0))
+        self.assertIsNone(layout.chip_hit(100, y0 + 2, w, None, 0))
 
     def test_draw_and_hit_cannot_drift(self):
-        # Every drawable button hit-tests to itself on a real size.
-        from renderers import talon_layout as layout
-        w, h, state = 1920, 1080, self._state(
-            tuple("App%d" % i for i in range(18)))
-        grouped = RENDERER.groups(state)
-        for side in ("left", "right"):
-            for slot, index in enumerate(grouped[side]):
-                x, y, rw, rh = layout.button_rect(side, slot, w)
-                self.assertEqual(RENDERER.hit(x + 5, y + 5, w, h,
-                                              state), index)
+        # Every drawable chip hit-tests to itself on a real size: the
+        # renderer draws chip_rect, the daemon maps chip_hit, the touch
+        # regions cover focus_region -- all three from macbook_layout.
+        import macbook_layout as layout
+        w = 1920
+        apps = ["App%d" % i for i in range(10)]
+        for tab in (0, 4, 9):
+            _, slots = layout.visible_slots(tab, len(apps))
+            for pos, index in enumerate(slots):
+                x, y, rw, rh = layout.chip_rect(pos, w)
+                self.assertEqual(layout.chip_hit(x + 5, y + 5, w, apps,
+                                                 tab), index)
 
 
 class FocusSlotTest(DaemonCase):
+    def _chip(self, pos, w=1920):
+        import macbook_layout as layout
+        x, y, cw, ch = layout.chip_rect(pos, w)
+        return int(x + cw / 2), int(y + ch / 2)
+
     def test_tap_queues_feed_named_command(self):
-        # Split mode: Safari/Terminal left, Mail right slot 0.
+        # Header strip, tab 0: three apps all visible; chip taps queue
+        # the feed-listed name at the tapped index.
         daemon = self.make_daemon()
-        daemon.show("talon_apps", {})
+        daemon.show("macbook", {})
         self.feed_apps(daemon)
-        result = daemon.request_focus_move(
-            1400, RENDERER.LIST_TOP + 5)
-        self.assertTrue(result["ok"])
+        result = daemon.request_focus_move(*self._chip(2))
+        self.assertTrue(result["ok"], result)
         self.assertEqual(result["command"]["app"], "Mail")
         self.assertEqual(result["command"]["index"], 2)
-        left = daemon.request_focus_move(
-            100, RENDERER.LIST_TOP + 5)
-        self.assertTrue(left["ok"])
+        left = daemon.request_focus_move(*self._chip(0))
+        self.assertTrue(left["ok"], left)
         self.assertEqual(left["command"]["app"], "Safari")
 
-    def test_tap_follows_display_sides(self):
+    def test_tap_follows_tab_window(self):
+        # Stepping the highlight scrolls the window: the tail app is
+        # unreachable at tab 0 and tappable after stepping to it.
         daemon = self.make_daemon()
-        daemon.show("talon_apps", {})
-        daemon.feed("talon_apps", "state",
-                    {"ts": time.time(),
-                     "apps": ["Left", "Right"], "focused": "Left",
-                     "windows": {"Left": {"x": 100, "y": 100,
-                                             "d": 1}},
-                     "displays": [
-                         {"bounds": {"x": 0, "y": 0, "w": 1728,
-                                      "h": 1117}},
-                         {"bounds": {"x": -1692, "y": -135,
-                                      "w": 1692, "h": 945}}]})
-        left = daemon.request_focus_move(
-            100, RENDERER.LIST_TOP + 5)
-        self.assertTrue(left["ok"], left)
-        self.assertEqual(left["command"]["app"], "Left")
-        right = daemon.request_focus_move(
-            1400, RENDERER.LIST_TOP + 5)
-        self.assertTrue(right["ok"], right)
-        self.assertEqual(right["command"]["app"], "Right")
+        daemon.show("macbook", {})
+        apps = tuple("App%d" % i for i in range(8))
+        self.feed_apps(daemon, apps=apps, focused="App0")
+        import macbook_layout as layout
+        x, y, cw, ch = layout.chip_rect(0, 1920)
+        missed = daemon.request_focus_move(int(x + 2), int(y + 2))
+        # Chip 0 at tab 0 is App0, not the tail.
+        self.assertTrue(missed["ok"])
+        self.assertEqual(missed["command"]["app"], "App0")
+        stepped = daemon.request_tab_step(1)
+        self.assertTrue(stepped["ok"])
+        for _ in range(6):
+            stepped = daemon.request_tab_step(1)
+        self.assertEqual(stepped["tab"], 7)
+        _, slots = layout.visible_slots(7, len(apps))
+        pos = slots.index(7)
+        hit = daemon.request_focus_move(*self._chip(pos))
+        self.assertTrue(hit["ok"], hit)
+        self.assertEqual(hit["command"]["app"], "App7")
 
     def test_name_comes_from_feed_never_caller(self):
         # The body carries pixels only: there is no parameter that could
         # smuggle a name, so a tap can only select a listed app.
         daemon = self.make_daemon()
-        daemon.show("talon_apps", {})
+        daemon.show("macbook", {})
         self.feed_apps(daemon, apps=["Safari"])
         import inspect
         params = inspect.signature(
@@ -213,25 +231,44 @@ class FocusSlotTest(DaemonCase):
         daemon = self.make_daemon()
         daemon.show("clock", {})
         self.feed_apps(daemon)
-        result = daemon.request_focus_move(
-            200, RENDERER.LIST_TOP + 5)
+        result = daemon.request_focus_move(*self._chip(0))
         self.assertFalse(result["ok"])
         self.assertIn("not showing", result["reason"])
 
+    def test_aim_mode_gated(self):
+        # The strip lives in GLANCE: in AIM the same pixel is review,
+        # never focus -- refuse, never mis-focus.
+        daemon = self.make_daemon()
+        daemon.show("macbook", {})
+        self.feed_apps(daemon)
+        daemon.show("macbook", {"mode": "aim"})
+        result = daemon.request_focus_move(*self._chip(0))
+        self.assertFalse(result["ok"])
+        self.assertIn("GLANCE", result["reason"])
+
     def test_stale_feed_refused(self):
         daemon = self.make_daemon()
-        daemon.show("talon_apps", {})
+        daemon.show("macbook", {})
         daemon.feed("talon_apps", "state",
                     {"ts": time.time() - 60, "apps": ["Safari"],
                      "focused": "Safari"})
-        result = daemon.request_focus_move(
-            200, RENDERER.LIST_TOP + 5)
+        result = daemon.request_focus_move(*self._chip(0))
         self.assertFalse(result["ok"])
         self.assertIn("fresh", result["reason"])
 
+    def test_strip_miss_refused(self):
+        # Stepper pixels are tab actions, not focus taps: above the
+        # strip is a miss, refused rather than focused elsewhere.
+        daemon = self.make_daemon()
+        daemon.show("macbook", {})
+        self.feed_apps(daemon)
+        result = daemon.request_focus_move(960, 10)
+        self.assertFalse(result["ok"])
+        self.assertIn("chips", result["reason"])
+
     def test_malformed_coords_raise(self):
         daemon = self.make_daemon()
-        daemon.show("talon_apps", {})
+        daemon.show("macbook", {})
         self.feed_apps(daemon)
         for bad in (("200", 300), (200.5, 300), (True, 300),
                     (-1, 300), (99999, 300)):
@@ -240,10 +277,9 @@ class FocusSlotTest(DaemonCase):
 
     def test_take_focus_move_since_and_ttl(self):
         daemon = self.make_daemon()
-        daemon.show("talon_apps", {})
+        daemon.show("macbook", {})
         self.feed_apps(daemon)
-        result = daemon.request_focus_move(
-            200, RENDERER.LIST_TOP + 5)
+        result = daemon.request_focus_move(*self._chip(0))
         cmd = result["command"]
         self.assertEqual(daemon.take_focus_move(), cmd)
         self.assertEqual(daemon.take_focus_move(cmd["ts"]), None)

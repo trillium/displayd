@@ -5,6 +5,51 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.3.0
+
+Merged Talon feature (GLANCE + AIM modes, app list folded in).
+`renderers/macbook.py` is ONE feature with two modes, each claiming the
+full canvas -- the three fixed bands (210px header, map, bottom image)
+and the separate `talon_apps` view are gone:
+
+- GLANCE (default): slim full-width header (148px, not 210) --
+  tab-through app strip, focused app + window, mouse position, Talon
+  mode -- with the display map filling everything below it. No
+  screenshot.
+- AIM: the fresh review capture fills the screen edge-to-edge
+  (cover-fit, crosshair, scale + age caption) and the pointer position
+  is deliberately dropped. Tap the image to click the reviewed point.
+- "Tab through", mechanically: the header shows a scrolling window of
+  the live apps; `POST /talon/tab` steps the highlight with wraparound
+  (daemon keeps the mode); tapping a chip focuses that app
+  (coordinate-only, as before). `POST /macbook/mode` pins GLANCE/AIM
+  (daemon keeps the tab). Both are closed touch actions
+  (`macbook_mode`, `talon_tab`) with static bodies.
+- `renderers/macbook_layout.py` (new, pure): the single source of truth
+  the renderer draws from, the daemon hit-tests against, and the touch
+  regions generate from -- draw, tap, and region cannot drift (same
+  contract `talon_layout.py` held for the old view). Drawing split per
+  the 250-line budget: `macbook_glance.py` + `macbook_aim.py`.
+- The standalone `talon_apps` view is RETIRED (not aliased): one feature,
+  one name in `GET /renderers`, picker, and screenshots. Its feed
+  namespace survives -- the Mac-side poller still posts
+  `POST /feed/talon_apps/state` unchanged (daemon feed compat, validated
+  against the helper schema, stored under the same key), and the
+  unified dock still reads that feed in place (its tap now opens
+  `macbook`). `talon_apps.py` keeps the pure helpers
+  (`clean`/`label`/`groups`); `talon_layout.py` still serves the dock.
+- Click delivery untouched (warp-then-click, file channel, 150ms tick)
+  and every tap stays coordinate-only. All slots are mode-gated now:
+  map/focus/tab fire in GLANCE only, click in AIM only -- misses are
+  409, never mis-fires. Degraded states survive in BOTH modes (waiting
+  / STALE / app-only; AIM with no capture shows a hint, never blank).
+- Touch: `macbook` scope regenerated (mode corners, steppers, chip
+  strip, map, fullscreen click catcher last); `talon_apps` scope
+  removed; unified scope drops the `talon_apps` tile (18 tiles).
+- `docs/screenshots/macbook.png`: genuine waiting capture of the merged
+  view; `talon_apps.png` removed; `unified.png`/`picker.png` refreshed
+  (tile set changed).
+
 ## 0.2.0
 
 Merged home screen (E layout: picker tiles + live apps dock).
