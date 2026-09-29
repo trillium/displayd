@@ -1758,5 +1758,118 @@ class HeartbeatRenewalTest(unittest.TestCase):
         self.assertLessEqual(touch.ANNOUNCE_INTERVAL_SECONDS * 3, window)
 
 
+class MacbookTwoTapTest(unittest.TestCase):
+    """Tap-tap flow through the touch dispatcher: tap 1 (GLANCE map)
+    warps the cursor, tap 2 (AIM review) clicks the reviewed point.
+
+    Regression: the second tap used to re-hit the earlier map region
+    (overlapping rect, first-hit-wins) and re-dispatch macbook_mouse,
+    which AIM refuses -- the click never fired. Mode-aware candidates
+    skip GLANCE-only regions in AIM, so tap 2 falls through to the
+    fullscreen click catcher. Scope geometry is generated (never
+    hand-computed), matching the host touch.json contract."""
+
+    CAL_1TO1 = {"x_min": 0, "x_max": 1919, "y_min": 0,
+                "y_max": 1079}
+
+    class FakeDaemon:
+        """Emulates the daemon half of tap-tap: GLANCE --mouse--> AIM,
+        click fires only via the click slot."""
+        def __init__(self):
+            self.mode = "glance"
+            self.posts = []
+
+        def state(self, timeout=None):
+            return {"renderer": "macbook",
+                    "params": {"mode": self.mode}}
+
+        def dispatch(self, action, dry_run=False, panel=None):
+            name = action.get("name")
+            if name == "macbook_mouse":
+                if self.mode != "glance":
+                    return {"action": name,
+                            "error": "map lives in GLANCE mode"}
+                self.mode = "aim"
+                self.posts.append(("/macbook/mouse", dict(action)))
+                return {"action": name, "method": "POST",
+                        "path": "/macbook/mouse",
+                        "body": {"x": action.get("x"),
+                                 "y": action.get("y")},
+                        "status": 200}
+            if name == "macbook_click":
+                if self.mode != "aim":
+                    return {"action": name,
+                            "error": "review image lives in AIM mode"}
+                self.posts.append(("/macbook/click", dict(action)))
+                return {"action": name, "method": "POST",
+                        "path": "/macbook/click",
+                        "body": {"x": action.get("x"),
+                                 "y": action.get("y")},
+                        "status": 200}
+            return {"action": name, "status": 200}
+
+    def _service(self, client):
+        from renderers import macbook_layout as lay
+        cfg = default_config()
+        cfg.update({
+            "width": 1920, "height": 1080,
+            "calibration": dict(self.CAL_1TO1),
+            "tap_max_seconds": 60, "debounce_seconds": 0,
+            "regions": [],
+            "tap_options": {"enabled": False},
+            "view_regions": {
+                "macbook": [{"id": e["id"],
+                               "rect": list(e["rect"]),
+                               "action": dict(e["action"])}
+                              for e in lay.touch_regions(1920, 1080)]},
+        })
+        return TouchService(cfg, client=client)
+
+    def _tap(self, svc, x, y):
+        svc.handle_frame([TouchEvent("down", 0, x, y)])
+        return svc.handle_frame([TouchEvent("up", 0, x, y)])
+
+    def test_second_tap_dispatches_click(self):
+        client = self.FakeDaemon()
+        svc = self._service(client)
+        first = self._tap(svc, 960, 600)
+        self.assertEqual(first["path"], "/macbook/mouse")
+        self.assertEqual(client.mode, "aim")
+        second = self._tap(svc, 960, 600)
+        self.assertEqual(second["path"], "/macbook/click")
+        self.assertNotIn("error", second)
+        self.assertEqual([p for p, _ in client.posts],
+                         ["/macbook/mouse", "/macbook/click"])
+        # The click carries the tap point (daemon clicks the capture's
+        # own crosshair; the stamped point proves pane membership).
+        self.assertEqual((second["body"]["x"], second["body"]["y"]),
+                         (960, 600))
+
+    def test_scope_mode_defaults_to_glance(self):
+        # Params without a mode (older show call) behave like GLANCE:
+        # the click catcher stays out, the map warp stays live.
+        client = self.FakeDaemon()
+        client.state = lambda timeout=None: {"renderer": "macbook",
+                                             "params": {}}
+        svc = self._service(client)
+        self.assertEqual(svc.current_scope(), ("macbook", "glance"))
+        summary = self._tap(svc, 960, 600)
+        self.assertEqual(summary["path"], "/macbook/mouse")
+
+    def test_unknown_view_is_global_only(self):
+        # Unreachable daemon: no scope, no mode -- global regions only,
+        # never a mode guess.
+        class Down:
+            def state(self, timeout=None):
+                raise RuntimeError("daemon down")
+
+            def dispatch(self, action, dry_run=False, panel=None):
+                return {"action": action.get("name")}
+        svc = self._service(Down())
+        self.assertEqual(svc.current_scope(), (None, None))
+        self.assertEqual(
+            [r["id"] for r in svc.candidate_regions(None, None)], [])
+
+
 if __name__ == "__main__":
     unittest.main()

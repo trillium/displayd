@@ -2315,7 +2315,12 @@ class DisplayDaemon:
         macbook_click only in AIM, talon_focus/talon_tab only in GLANCE,
         macbook_mode only while macbook shows, reload_confirm only while
         a reload transient is active) report refused with the same reason
-        strings the dispatching handlers use; a dead-zone tap while a
+        strings the dispatching handlers use, EXCEPT the macbook mode
+        gates: a region whose action the showing mode refuses is not live
+        (AIM never draws the map or the strip), so the tap falls through
+        to the next region exactly like the touch dispatcher
+        (touch_audit.candidates_for_mode) -- the second tap reaches the
+        click catcher instead of reporting the map refused; a dead-zone tap while a
         reload transient is active reports consumed_by reload-dismiss
         (dismissal-consumes-tap precedence: the real tap would return
         the panel, never navigate). Raises ValueError on malformed or
@@ -2343,8 +2348,8 @@ class DisplayDaemon:
         scoped = announced.get("view_regions") or {}
         global_regions = announced.get("regions") or []
         found = None
-        for region in touch_audit.candidates(
-                global_regions, scoped, view):
+        for region in touch_audit.candidates_for_mode(
+                global_regions, scoped, view, self._macbook_mode()):
             rect = region.get("rect")
             if not rect or len(rect) != 4:
                 continue
