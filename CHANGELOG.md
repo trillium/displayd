@@ -5,7 +5,16 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
-## 0.4.2
+## 0.5.0
+
+New read-only POST /touch/resolve endpoint: it resolves a tap ({x,y}
+or {x_norm,y_norm}) against the current UI and returns the region and
+semantic action without dispatching anything -- no state change, no
+idle-clock touch. View/mode-gated like the live touch path (same
+refusals), so it is intended to be compared against the live touch
+path during migration. Version and changelog correction: the merge
+that introduced the endpoint left APP_VERSION at 0.4.2; a new public
+endpoint is a medium change, so a minor bump.
 
 The touch service exits promptly on SIGTERM now (the P1 restart wedge:
 the evdev read loop blocked in a bare read() while the panel sat
