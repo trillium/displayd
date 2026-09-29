@@ -1,5 +1,5 @@
 {
-  "_comment": "Home-button wiring for lnx-server (1920x1080): persistent top-left home badge opens the view grid; dead-zone taps do nothing. Copy to touch.json on the host and edit only device/endpoint: confirm device with `python3 touch.py --list-devices`. Home entry is generated -- never hand-edit it; recompute with: python3 renderers/home_chrome.py --width <W> --height <H> (it stays global: the badge draws on almost every view). Tile rects are generated with: python3 renderers/picker.py --width <W> --height <H> --views <csv> (paste under \"view_regions\" -> \"picker\": live only while the grid shows). tap_options is OFF: the badge replaces the tap-anywhere fallback. Revert: restore the backup (see TOUCH.md \"Home button\").",
+  "_comment": "Home-button wiring for lnx-server (1920x1080): persistent top-left home badge opens the merged home screen (select_view unified); dead-zone taps do nothing. Copy to touch.json on the host and edit only device/endpoint: confirm device with `python3 touch.py --list-devices`. Home entry is generated -- never hand-edit it; recompute with: python3 renderers/home_chrome.py --width <W> --height <H> (it stays global: the badge draws on almost every view). Tile rects are generated with: python3 renderers/picker.py --width <W> --height <H> --views <csv> (paste under \"view_regions\" -> \"picker\": live only while the grid shows). tap_options is OFF: the badge replaces the tap-anywhere fallback. Revert: restore the backup (see TOUCH.md \"Home button\").",
   "device": "/dev/input/event8",
   "endpoint": "http://100.81.88.113:8980",
   "width": 1920,
@@ -53,7 +53,7 @@
       ],
       "action": {
         "name": "select_view",
-        "view": "picker"
+        "view": "unified"
       }
     },
     {

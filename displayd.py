@@ -77,7 +77,7 @@ BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
 # a [project] table. Bump per CHANGELOG.md's convention on every change;
 # the daemon reports it via GET /version, GET /state's "version" key,
 # and the startup log line in main().
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 # Optional shared secret for the HTTP API. When set, every request (except
 # the unauthenticated health probes below) must carry
 #   Authorization: Bearer <token>
@@ -1240,14 +1240,19 @@ class DisplayDaemon:
     # ---- content -------------------------------------------------------
 
     def _picker_live_params(self, entry, params):
-        """Picker default views: no explicit list means the live
-        advertised set (picker.live_views), so a new view appears with
-        no config edit. Explicit lists win. Never raises."""
+        """Tile-grid default views: no explicit list means the live
+        advertised set, so a new view appears with no config edit.
+        Explicit lists win. The unified home screen draws every view
+        but itself (a self tile would just re-show home). Never raises."""
         params = dict(params or {})
         mod = (entry or {}).get("module")
-        if getattr(mod, "NAME", "") == "picker" and "views" not in params:
+        name = getattr(mod, "NAME", "")
+        if name in ("picker", "unified") and "views" not in params:
             try:
-                params["views"] = mod.live_views(self.renderers)
+                if name == "unified":
+                    params["views"] = mod.live_tile_views(self.renderers)
+                else:
+                    params["views"] = mod.live_views(self.renderers)
             except Exception:
                 pass
         return params
@@ -2106,19 +2111,23 @@ class DisplayDaemon:
                            cleaned["view_regions"].values()))
         return {"ok": True, "regions": count, "regions_sha": sha}
 
-    def _expected_picker_views(self, params):
+    def _expected_picker_views(self, params, name="picker"):
         """Mirror of _picker_live_params for the check path: explicit
-        views win, else the live advertised set. None only when the
-        picker module itself is unloadable (then not assertable)."""
-        mod = (self.renderers.get("picker") or {}).get("module")
+        views win, else the live advertised set (minus self for the
+        unified home screen). None only when the module itself is
+        unloadable (then not assertable)."""
+        mod = (self.renderers.get(name) or {}).get("module")
         if mod is None:
             return None
         params = params if isinstance(params, dict) else {}
         try:
             if "views" in params:
                 return mod.coerce_views(params)
-            if hasattr(mod, "live_views"):
-                return mod.live_views(self.renderers)
+            live = getattr(mod, "live_tile_views", None)
+            if live is None and hasattr(mod, "live_views"):
+                live = mod.live_views
+            if live is not None:
+                return live(self.renderers)
             return mod.coerce_views(params)
         except Exception:
             return None
@@ -2147,13 +2156,13 @@ class DisplayDaemon:
                        if isinstance(entry, dict) and "module" in entry)
         results = {}
         for name in views:
-            if name == "picker":
+            if name in ("picker", "unified"):
                 params = (self.current_params
                           if name == self.current else {})
-                picker_views = self._expected_picker_views(params)
+                picker_views = self._expected_picker_views(params, name)
                 if picker_views is None:
                     results[name] = {"ok": True, "checkable": False,
-                                     "reason": "picker unloadable"}
+                                     "reason": "%s unloadable" % name}
                     continue
             else:
                 params, picker_views = (self.current_params
@@ -2194,11 +2203,11 @@ class DisplayDaemon:
             current = {"view": self.current,
                        "params": self.current_params,
                        **results[self.current]}
-            if self.current == "picker":
+            if self.current in ("picker", "unified"):
                 current["expected"] = touch_audit.expected_for_view(
-                    "picker", self.current_params, w, h,
+                    self.current, self.current_params, w, h,
                     picker_views=self._expected_picker_views(
-                        self.current_params))["exact"]
+                        self.current_params, self.current))["exact"]
         ok = all(r.get("ok", True) for r in results.values())
         report = {"ok": ok, "status": "ok" if ok else "mismatch",
                   "current_view": self.current,

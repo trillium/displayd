@@ -377,6 +377,49 @@ tap best-effort AFTER the tile action dispatches, pointed wherever the host
 config says (during picker use the retro_grid target simply buffers -- feeds
 are global, so nothing errors and nothing changes on screen).
 
+## Merged home screen (unified wiring)
+
+`renderers/unified.py` is the merged home screen (E layout): the picker
+tile grid at real geometry plus a live apps dock below (count + focused
+app + LEFT/RIGHT split, one tap to the full grouped apps screen). It
+replaces `picker` as `HOME_VIEW` (see `renderers/home_chrome.py`); the
+`picker` renderer stays as a selectable view with its own scope.
+
+Reference wiring (`touch-unified.json.example`, 1920x1080):
+
+- Tile rects + dock rect are GENERATED, never hand-computed -- the same
+  functions the renderer draws from (`unified_regions()` over
+  `picker.grid_geometry()`):
+
+        python3 -c 'import json,urllib.request; doc=json.load(\
+          urllib.request.urlopen("http://100.81.88.113:8980/renderers")); \
+          print(",".join(sorted(r["name"] for r in doc["renderers"] \
+          if "params" in r and not any(\
+          isinstance(s,dict) and s.get("required") \
+          for s in (r.get("params") or {}).values()))))' > /tmp/views.csv
+        python3 renderers/unified.py --width 1920 --height 1080 \
+            --views "$(cat /tmp/views.csv)"
+
+  Paste entries `[1:]` scoped under `"view_regions" -> "unified"`:
+  entry `[0]` is the sleep badge, already global (repeating its id would
+  fail the announce uniqueness check). Tile ids carry a `uview-` prefix
+  (not the picker's `view-`): announce ids are unique across global AND
+  every scoped set, so the two tile grids cannot share ids. The
+  `apps-dock` entry fires the existing `select_view talon_apps` action
+  -- no new action. The dock rect never overlaps a tile (grid bottom is
+y=740, dock starts at y=770), but list the scope's tiles before the dock
+  anyway: earlier wins every overlap.
+- The daemon fills the tile list from the live set minus `unified` itself
+  (a self tile would just re-show home), so a newly shipped view appears
+  with no config edit; an explicit `views` list still wins. Regenerate
+  this scope whenever the renderer set changes, same rule as the picker.
+- Host procedure post-deploy (host-local `~/displayd/touch.json` survives
+  redeploys): back the file up, refresh the global `home` region (its
+  view follows `HOME_VIEW`, now `unified`), add the `unified` scope,
+  `load_config()` + `--check-views` against the live panel, restart only
+  the existing `displayd-touch` unit. Revert by restoring the backup and
+  restarting the unit again.
+
 ## Home button (persistent top-left badge)
 
 A home badge is composited top-left on every view through the shared
@@ -385,10 +428,11 @@ playlist progress bar so both draw at once -- see "chain, do not
 replace" below). No renderer draws it: per-renderer drawing would
 redesign every screen type, and the compositor already runs once per
 frame for all of them. The badge is a dark rounded tile with a white
-house glyph (no font needed), suppressed only on `picker` (meaningless
-there -- a tap re-shows the picker, a harmless no-op), `reload` (the
-deploy-proof QR stays fully scannable) and `notice` (short-lived
-transient, same precedent as the hidden progress bar).
+house glyph (no font needed), suppressed only on `unified` (this
+screen IS home -- a tap would just re-show it) and `picker`
+(meaningless there -- a tap re-shows the picker, a harmless no-op),
+`reload` (the deploy-proof QR stays fully scannable) and `notice`
+(short-lived transient, same precedent as the hidden progress bar).
 
 Reference wiring (`touch-home.json.example`, 1920x1080):
 
@@ -401,11 +445,13 @@ Reference wiring (`touch-home.json.example`, 1920x1080):
   entries every overlap, so `home` must precede the picker tiles and
   the full-height gesture strips. The badge lives inside the left
   strip's width (never covers picker tiles -- the grid starts at
-  x=160); the strip's top 160px now opens the picker while the rest
-  still fires `screen_on`.
+  x=160); the strip's top 160px now opens the merged home screen while
+  the rest still fires `screen_on`.
 - The region reuses the existing `select_view` action
-  (`{"name": "select_view", "view": "picker"}`) -- no second action
-  for the same effect.
+  (`{"name": "select_view", "view": "unified"}`) -- no second action
+  for the same effect. Regenerate after this change: the entry's view
+  follows `home_chrome.HOME_VIEW`, so the pre-merge `picker` target in
+  an older host file must be refreshed post-deploy.
 - The tap-anywhere fallback is OFF on the host (`"tap_options":
   {"enabled": false, ...}` -- renderer/params kept so re-enabling is
   one boolean). Dead-zone taps log + optionally feed confidence, and
@@ -413,7 +459,7 @@ Reference wiring (`touch-home.json.example`, 1920x1080):
   hosts that want it; see "Tap anywhere" below.
 - Reload dismissal is unchanged: every valid tap still `POST /touch/tap`
   first, including taps in the badge corner (a corner tap during reload
-  dismisses AND then navigates to the picker per normal region rules).
+  dismisses AND then navigates home per normal region rules).
   The rest of the screen dismisses exactly as before.
 - Chain, do not replace: `DisplayDaemon` composes
   `home_chrome.chain_overlays(playlist.overlay_image,

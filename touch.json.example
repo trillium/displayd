@@ -73,6 +73,20 @@
         "action": {"name": "select_view", "view": "clock"}
       }
     ],
+    "unified": [
+      {
+        "id": "example-uview-tile",
+        "_comment": "illustrative single unified tile, live ONLY while the merged home screen shows (the full 19-tile + dock scope lives in touch-unified.json.example with generated rects -- never hand-compute; tile ids carry a uview- prefix so this scope and the picker scope never share an id)",
+        "rect": [175, 55, 513, 82],
+        "action": {"name": "select_view", "view": "activity"}
+      },
+      {
+        "id": "example-apps-dock",
+        "_comment": "apps dock: one tap opens the full grouped apps screen, live ONLY while the merged home screen shows (generated rect -- see touch-unified.json.example)",
+        "rect": [80, 770, 1760, 230],
+        "action": {"name": "select_view", "view": "talon_apps"}
+      }
+    ],
     "macbook": [
       {
         "id": "mac-map",
