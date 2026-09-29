@@ -6,20 +6,27 @@ and POSTs to ``/feed/macbook/preview`` at ~1 Hz for the GLANCE map
 (renderers/macbook.py ``preview`` input). Runs on its own daemon
 thread so a slow capture can never stall the 2 Hz state loop.
 
-Cost (measured 2026-09-29, MacBookPro 3456x2234 + external 3840x2160):
-capture+downscale+JPEG ~350 ms per set, wire ~43 KB per set at
-480 px / q60 -- roughly half one zoom review frame per second. The
-panel decodes two small JPEGs per second; the rest of the feed is
-untouched (state stays 2 Hz JSON, zoom stays one-shot).
+Cost (measured 2026-09-29, MacBookPro 3456x2234): one ffmpeg per
+capture at ~1 Hz, capture+scale+JPEG ~1 s wall per set (subprocess
+startup dominates), wire ~12 KB per set at 480 px / q6 -- roughly
+half one zoom review frame per second. The panel decodes small JPEGs;
+the rest of the feed is untouched (state stays 2 Hz JSON, zoom stays
+one-shot).
 
-Permission: pixel capture needs the Screen Recording grant on THIS
-binary. Verified live 2026-09-29: CGDisplayCreateImage on the
-LaunchAgent python3 returns real pixels (3456x2234), so the grant is
-held -- no captain action needed. Without it every display is skipped
-and the panel renders boxes + PREVIEW OFF: never a 400, never blank.
+Capture runs OUT OF PROCESS: one ffmpeg per display per tick doing
+capture+scale+JPEG to stdout, piped back (never temp files). Python
+keeps enumeration, POST, and the wire format. This deletes the ObjC
+leak class outright (2026-09-29: in-process CGDisplayCreateImage
+leaked ~25 MB/s, ~600x the no-preview rate) instead of pool hygiene.
+Stdlib + ffmpeg + PIL (PIL only reads JPEG dimensions, never pixel
+buffers). No focus stealing.
 
-Stdlib + PyObjC + PIL (PIL only for the PNG->JPEG-style downscale,
-same as mac_zoom). No subprocesses, no focus stealing.
+Permission: pixel capture needs the Screen Recording grant on the
+ffmpeg binary. Verified live 2026-09-29: /opt/homebrew/bin/ffmpeg
+returns real pixels (480x310 JPEG, ~9 KB) from this machine, so the
+grant is held -- no captain action needed. Without it every display
+is skipped and the panel renders boxes + PREVIEW OFF: never a 400,
+never blank.
 """
 
 import argparse
@@ -27,6 +34,7 @@ import base64
 import io
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -42,6 +50,13 @@ PREVIEW_INTERVAL = 1.0  # seconds between preview sets (~1 Hz)
 # b64 of this many bytes is at most ~54 KB against maxLength 56000).
 FRAME_JPEG_CAP = 40000
 
+# Capture binary: Homebrew ffmpeg, override with DISPLAYD_FFMPEG.
+FFMPEG_BIN = os.environ.get("DISPLAYD_FFMPEG", "/opt/homebrew/bin/ffmpeg")
+# Per-display capture bound: a hung ffmpeg must never stall the tick.
+FFMPEG_TIMEOUT = 15.0
+# Floor for piped output: anything smaller is a partial/empty write.
+FFMPEG_MIN_BYTES = 128
+
 
 def active_displays():
     """[(display_id, x, y, w, h, main)] in Quartz points. Raises."""
@@ -56,19 +71,68 @@ def active_displays():
     return out
 
 
-def cg_to_pil(cg):
-    """CGImage -> PIL RGBA. Raises on any failure (caller skips)."""
-    import Quartz
-    from PIL import Image
-    w, h = Quartz.CGImageGetWidth(cg), Quartz.CGImageGetHeight(cg)
-    if not w or not h:
-        raise ValueError("empty capture")
-    bpr = Quartz.CGImageGetBytesPerRow(cg)
-    raw = bytes(Quartz.CGDataProviderCopyData(
-        Quartz.CGImageGetDataProvider(cg)))
-    shot = Image.frombytes("RGBA", (w, h), raw, "raw", ("BGRA", bpr, 1))
-    shot.load()
-    return shot
+def ffmpeg_quality(quality=PREVIEW_QUALITY):
+    """PIL-style quality (0-100, higher is better) -> ffmpeg -q:v (2-31,
+    lower is better). q60 maps to ~6, the live-verified operating point
+    (~9 KB at 480 px, well under FRAME_JPEG_CAP)."""
+    try:
+        q = int(quality)
+    except (TypeError, ValueError):
+        q = PREVIEW_QUALITY
+    return max(2, min(20, (100 - max(0, min(100, q))) // 10 + 2))
+
+
+def ffmpeg_cmd(display_index, max_w=PREVIEW_MAX_W, quality=PREVIEW_QUALITY):
+    """argv capturing + scaling + JPEG-encoding one display to stdout.
+    Pipe-only: ``-f mjpeg -`` writes the single frame to stdout, never
+a temp file. The display is addressed by AVFoundation screen name
+(``Capture screen N``), which tracks the enumeration order Python
+sees via CGGetActiveDisplayList."""
+    return [FFMPEG_BIN, "-hide_banner", "-nostdin", "-loglevel", "error",
+            "-f", "avfoundation", "-framerate", "2",
+            "-i", "Capture screen %d:none" % int(display_index),
+            "-frames:v", "1",
+            "-vf", "scale=%d:-1" % int(max_w),
+            "-q:v", str(ffmpeg_quality(quality)),
+            "-f", "mjpeg", "-"]
+
+
+def ffmpeg_frame(display_index, max_w=PREVIEW_MAX_W, quality=PREVIEW_QUALITY,
+                 timeout=FFMPEG_TIMEOUT, cap=FRAME_JPEG_CAP):
+    """One display -> (jpeg bytes, w, h) via a bounded ffmpeg subprocess.
+
+    None on any failure (grant revoked, display asleep, ffmpeg hung or
+    missing, over cap, undecodable): the caller SKIPS the display, so
+    the panel shows a box instead of killing the whole set. Never
+    raises; never touches ObjC pixel buffers in-process (that path
+    leaked ~25 MB/s, task-gjw6e). PIL only reads the JPEG header for
+dimensions -- pure refcounted objects, no Create-rule ownership."""
+    try:
+        proc = subprocess.run(ffmpeg_cmd(display_index, max_w, quality),
+                              stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, timeout=timeout)
+    except Exception as err:
+        LOG.debug("display %d ffmpeg failed: %s", display_index, err)
+        return None
+    data = bytes(proc.stdout or b"")
+    if proc.returncode != 0 or len(data) < FFMPEG_MIN_BYTES:
+        LOG.debug("display %d ffmpeg rc=%s bytes=%d: %s", display_index,
+                  proc.returncode, len(data),
+                  bytes(proc.stderr or b"")[:200])
+        return None
+    if len(data) > cap:
+        return None
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as im:
+            im.load()
+            w, h = im.size
+        if not w or not h:
+            return None
+    except Exception:
+        return None
+    return (data, int(w), int(h))
 
 
 def frame_jpeg(shot, max_w=PREVIEW_MAX_W, quality=PREVIEW_QUALITY,
@@ -109,28 +173,22 @@ def encode(data, cap=FRAME_JPEG_CAP):
 def capture_set(max_w=PREVIEW_MAX_W, quality=PREVIEW_QUALITY):
     """One preview set: [{display_index, w, h, jpeg}] (possibly partial).
 
-    Never raises: a display that refuses capture (grant revoked,
-    display asleep) is SKIPPED, so the panel shows that display as a
-    box instead of killing the whole set."""
-    try:
-        import Quartz
-    except Exception:
-        return []
+    One bounded ffmpeg per display per tick (capture+scale+JPEG to
+    stdout, pipe-only). Never raises: a display that refuses capture
+    (grant revoked, display asleep, ffmpeg error) is SKIPPED, so the
+    panel shows that display as a box instead of killing the whole set."""
     try:
         displays = active_displays()
     except Exception as err:
         LOG.debug("display list failed: %s", err)
         return []
     frames = []
-    for index, (did, _x, _y, _w, _h, _main) in enumerate(displays):
+    for index in range(len(displays or [])):
         try:
-            cg = Quartz.CGDisplayCreateImage(did)
-            if cg is None:
+            got = ffmpeg_frame(index, max_w, quality)
+            if got is None:
                 continue
-            enc = frame_jpeg(cg_to_pil(cg), max_w, quality)
-            if enc is None:
-                continue
-            data, w, h = enc
+            data, w, h = got
             text = encode(data)
             if text is None:
                 continue

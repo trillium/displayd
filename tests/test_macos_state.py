@@ -28,6 +28,7 @@ from displayd import FeedStore, HeadlessFramebuffer, Screen, validate_value
 
 import macos_state
 from macos_state import build_payload, containing, redact, window_bounds
+import mac_preview
 import macbook_map
 
 
@@ -192,6 +193,94 @@ class TestMap(unittest.TestCase):
     def test_labels(self):
         self.assertEqual(macbook_map.label(0, True), "D1(menu)")
         self.assertEqual(macbook_map.label(1, False), "D2")
+
+
+class TestPreviewFfmpeg(unittest.TestCase):
+    """Preview capture via bounded ffmpeg subprocess (bridges/mac_preview).
+
+    subprocess.run is mocked: these prove command shape, per-display
+    fan-out, cap enforcement, and skip-on-failure -- never a real
+    capture. No ObjC pixel path may remain in capture_set."""
+
+    DISPLAYS = [(1, 0.0, 0.0, 1728.0, 1117.0, True)]
+
+    @staticmethod
+    def _jpeg(w=480, h=310):
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (w, h), (10, 20, 30)).save(buf, "JPEG",
+                                                     quality=60)
+        return buf.getvalue()
+
+    def _run(self, stdout, returncode=0):
+        import subprocess
+        proc = subprocess.CompletedProcess(args=["ffmpeg"],
+                                           returncode=returncode,
+                                           stdout=stdout, stderr=b"")
+        return proc
+
+    def test_cmd_shape_pipe_only(self):
+        from unittest import mock
+        cmd = mac_preview.ffmpeg_cmd(0)
+        self.assertEqual(cmd[0], mac_preview.FFMPEG_BIN)
+        self.assertIn("Capture screen 0:none", cmd)
+        self.assertEqual(cmd[-3:], ["-f", "mjpeg", "-"])
+        self.assertNotIn("-y", cmd)  # never temp files
+        with mock.patch.object(mac_preview, "active_displays",
+                               return_value=list(self.DISPLAYS)):
+            with mock.patch("subprocess.run",
+                             return_value=self._run(self._jpeg())) as run:
+                frames = mac_preview.capture_set()
+        self.assertEqual(len(frames), 1)
+        argv = run.call_args[0][0]
+        self.assertEqual(argv, mac_preview.ffmpeg_cmd(0))
+        kw = run.call_args[1]
+        self.assertEqual(kw["stdout"], __import__("subprocess").PIPE)
+        self.assertIsNotNone(kw.get("timeout"))
+
+    def test_frame_dimensions_from_pipe(self):
+        from unittest import mock
+        with mock.patch.object(mac_preview, "active_displays",
+                               return_value=list(self.DISPLAYS)):
+            with mock.patch("subprocess.run",
+                             return_value=self._run(self._jpeg(480, 310))):
+                frames = mac_preview.capture_set()
+        self.assertEqual([(f["display_index"], f["w"], f["h"])
+                          for f in frames], [(0, 480, 310)])
+        for f in frames:
+            self.assertLessEqual(len(f["jpeg"]), 56000)
+
+    def test_failure_skips_display(self):
+        from unittest import mock
+        with mock.patch.object(mac_preview, "active_displays",
+                               return_value=list(self.DISPLAYS)):
+            with mock.patch("subprocess.run",
+                             return_value=self._run(b"", returncode=1)):
+                self.assertEqual(mac_preview.capture_set(), [])
+        with mock.patch.object(mac_preview, "active_displays",
+                               return_value=list(self.DISPLAYS)):
+            with mock.patch("subprocess.run",
+                             side_effect=TimeoutError("hung")):
+                self.assertEqual(mac_preview.capture_set(), [])
+        self.assertIsNone(mac_preview.preview_doc([]))
+
+    def test_over_cap_skipped(self):
+        from unittest import mock
+        big = b"x" * (mac_preview.FRAME_JPEG_CAP + 1)
+        with mock.patch.object(mac_preview, "active_displays",
+                               return_value=list(self.DISPLAYS)):
+            with mock.patch("subprocess.run",
+                             return_value=self._run(big)):
+                self.assertEqual(mac_preview.capture_set(), [])
+        self.assertIsNone(mac_preview.encode(big))
+
+    def test_no_objc_pixel_path(self):
+        import inspect
+        src = inspect.getsource(mac_preview.capture_set)
+        self.assertNotIn("CGDisplayCreateImage", src)
+        self.assertNotIn("cg_to_pil", src)
+        self.assertNotIn("CGDataProvider", src)
 
 
 class TestContract(unittest.TestCase):

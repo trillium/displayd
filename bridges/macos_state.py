@@ -18,8 +18,11 @@ Geometry is Quartz throughout (origin top-left of the menu-bar display, y
 down; screens above show negative y). Absent fields are OMITTED, never
 null. Without Accessibility trust, title/bounds vanish and the panel
 renders app-only degraded mode. Titles are PII-adjacent: truncated and
-redacted before leaving the machine. No credentials, no history, no
-subprocesses, no focus stealing (pure observer APIs). Stdlib + PyObjC;
+redacted before leaving the machine. No credentials, no history,
+no focus stealing (pure observer APIs). The preview thread shells one
+bounded ffmpeg per display per tick (capture+scale+JPEG piped to
+stdout, never temp files); the state poller itself spawns nothing.
+Stdlib + PyObjC;
 PyObjC imports live inside functions so pure helpers stay importable.
 """
 
@@ -91,12 +94,20 @@ def poll():
     import ApplicationServices
     AppKit.NSRunLoop.currentRunLoop().runUntilDate_(Foundation.NSDate.dateWithTimeIntervalSinceNow_(0.05))
     app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
-    pid = int(app.processIdentifier())
-    app_name, bundle = app_info(pid)
-    if not app_name: app_name, bundle = str(app.localizedName() or "unknown"), str(app.bundleIdentifier() or "")
+    if app is None:
+        # No GUI session (shell-run bridge, console without a login
+        # session): degrade to app-unknown instead of dying, so the tick
+        # still exercises enumeration + preview + wire format. pid 0 is
+        # omitted by build_payload; -1 matches no window (malformed
+        # entries coerce to owner 0, never -1).
+        pid, app_name, bundle = 0, "unknown", ""
+    else:
+        pid = int(app.processIdentifier())
+        app_name, bundle = app_info(pid)
+        if not app_name: app_name, bundle = str(app.localizedName() or "unknown"), str(app.bundleIdentifier() or "")
     info = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
     trusted = bool(ApplicationServices.AXIsProcessTrusted())
-    title, bounds = "", window_bounds(info, pid)
+    title, bounds = "", window_bounds(info, pid if pid else -1)
     if pid and trusted:
         try:
             ref = ApplicationServices.AXUIElementCreateApplication(pid)
