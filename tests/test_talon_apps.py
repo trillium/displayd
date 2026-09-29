@@ -132,9 +132,9 @@ class RendererTest(unittest.TestCase):
         return {"ts": 1.0, "apps": list(apps), "focused": "Safari"}
 
     def test_chip_hit_follows_tab_window(self):
-        # The header shows a scrolling window: with 8 apps and tab=0
+        # The header shows a scrolling window: with 8 apps and start=0
         # slots 0..5 hit and the strip's right overflow zone misses;
-        # stepping to tab 7 scrolls the tail on screen.
+        # paging to start 2 scrolls the tail on screen.
         import macbook_layout as layout
         w = 1920
         apps = ["App%d" % i for i in range(8)]
@@ -145,12 +145,12 @@ class RendererTest(unittest.TestCase):
         ax, _, aw, _ = layout.chip_area(w)
         self.assertIsNone(
             layout.chip_hit(ax + aw + 30, y0 + 2, w, apps, 0))
-        start, slots = layout.visible_slots(7, 8)
+        start, slots = layout.page_slots(2, 8)
         self.assertIn(7, slots)
         self.assertEqual(start, 2)
         pos = slots.index(7)
         xa, ya, _, _ = layout.chip_rect(pos, w)
-        self.assertEqual(layout.chip_hit(xa + 2, ya + 2, w, apps, 7), 7)
+        self.assertEqual(layout.chip_hit(xa + 2, ya + 2, w, apps, 2), 7)
         # Header misses and garbage never raise.
         self.assertIsNone(layout.chip_hit(960, 10, w, apps, 0))
         self.assertIsNone(layout.chip_hit(960, 500, w, apps, 0))
@@ -164,12 +164,12 @@ class RendererTest(unittest.TestCase):
         import macbook_layout as layout
         w = 1920
         apps = ["App%d" % i for i in range(10)]
-        for tab in (0, 4, 9):
-            _, slots = layout.visible_slots(tab, len(apps))
+        for start in (0, 2, 4):
+            _, slots = layout.page_slots(start, len(apps))
             for pos, index in enumerate(slots):
                 x, y, rw, rh = layout.chip_rect(pos, w)
                 self.assertEqual(layout.chip_hit(x + 5, y + 5, w, apps,
-                                                 tab), index)
+                                                 start), index)
 
 
 class FocusSlotTest(DaemonCase):
@@ -193,8 +193,8 @@ class FocusSlotTest(DaemonCase):
         self.assertEqual(left["command"]["app"], "Safari")
 
     def test_tap_follows_tab_window(self):
-        # Stepping the highlight scrolls the window: the tail app is
-        # unreachable at tab 0 and tappable after stepping to it.
+        # Paging the strip scrolls the window: the tail app is
+        # unreachable at start 0 and tappable after paging to it.
         daemon = self.make_daemon()
         daemon.show("macbook", {})
         apps = tuple("App%d" % i for i in range(8))
@@ -202,15 +202,13 @@ class FocusSlotTest(DaemonCase):
         import macbook_layout as layout
         x, y, cw, ch = layout.chip_rect(0, 1920)
         missed = daemon.request_focus_move(int(x + 2), int(y + 2))
-        # Chip 0 at tab 0 is App0, not the tail.
+        # Chip 0 at start 0 is App0, not the tail.
         self.assertTrue(missed["ok"])
         self.assertEqual(missed["command"]["app"], "App0")
         stepped = daemon.request_tab_step(1)
         self.assertTrue(stepped["ok"])
-        for _ in range(6):
-            stepped = daemon.request_tab_step(1)
-        self.assertEqual(stepped["tab"], 7)
-        _, slots = layout.visible_slots(7, len(apps))
+        self.assertEqual(stepped["tab"], 2)
+        _, slots = layout.page_slots(2, len(apps))
         pos = slots.index(7)
         hit = daemon.request_focus_move(*self._chip(pos))
         self.assertTrue(hit["ok"], hit)

@@ -9,6 +9,8 @@ region cannot drift.
 
 import textwrap
 
+from PIL import Image, ImageDraw
+
 import macbook_layout as lay
 import macbook_map
 import talon_apps as ta
@@ -30,7 +32,7 @@ C_STALE = (255, 180, 80)
 C_DIM = (140, 140, 150)
 C_LINE = (60, 60, 70)
 C_ROW = (255, 255, 255)
-C_TAB_BG = (38, 66, 44)
+C_FOCUS_BG = (38, 66, 44)
 C_FOCUS = (110, 220, 130)
 
 
@@ -49,6 +51,46 @@ def _chip_label(draw, name, font, max_w):
         return "\u2026"
     except Exception:
         return ta.label(name)
+
+
+def _chip(d, x, y, cw, ch, text, focused, font):
+    """One app chip at absolute x: filled when it is the Mac's live
+    focus (real feed state), outlined otherwise. No other emphasis --
+    a highlight that selects nothing is decoration, not a control."""
+    if focused:
+        d.rounded_rectangle([x, y, x + cw, y + ch],
+                            radius=10, fill=C_FOCUS_BG)
+    else:
+        d.rounded_rectangle([x, y, x + cw, y + ch],
+                            radius=10, outline=C_LINE, width=2)
+    mark = "*" if focused else " "
+    d.text((x + 14, y + 8), mark + text, font=font,
+           fill=C_FOCUS if focused else C_ROW)
+
+
+def _strip_layer(aw, ah, cw, old_slots, new_slots, labels, focused_set,
+                 font, offset_old, offset_new):
+    """Chip band for one slide frame: the old window sliding out and
+    the new window sliding in, composited on a transparent layer so no
+    chip can bleed over the steppers. Offsets are in layer px. The
+    layer is 2px wider than the band: chip_rect floats can round a
+    rightmost outline 1px past the band edge, and clipping it would
+    leave the landed frame 1px off the steady one."""
+    layer = Image.new("RGBA", (int(aw) + 2, int(ah) + 2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for pos, index in enumerate(old_slots):
+        x = pos * (cw + lay.GAP) + offset_old
+        if x + cw < 0 or x > aw:
+            continue
+        _chip(d, x, 0, cw, ah, labels.get(index, ""),
+              index in focused_set, font)
+    for pos, index in enumerate(new_slots):
+        x = pos * (cw + lay.GAP) + offset_new
+        if x + cw < 0 or x > aw:
+            continue
+        _chip(d, x, 0, cw, ah, labels.get(index, ""),
+              index in focused_set, font)
+    return layer
 
 
 def _wrap(draw, text, font, max_w, rows=1, width=90):
@@ -72,9 +114,16 @@ def waiting(screen, img, draw, title, font):
               font=font, fill=(120, 120, 130))
 
 
-def header(draw, screen, title, state, stale, apps, apps_stale, tab,
-           fonts):
-    """Slim header: state, app strip, mode chip. Returns nothing."""
+def header(draw, screen, img, title, state, stale, apps, apps_stale,
+           tab, fonts, slide=None):
+    """Slim header: state, app strip, mode chip. Returns nothing.
+
+    `tab` is the first visible chip index (window start); the steppers
+    page it, they do not move a highlight. The only emphasis is the
+    Mac's live focused app (filled chip, real feed state). Dead-end
+    steppers draw dim. `slide` is (old_start, progress, direction) for
+    one animation frame: the old window slides out as the new window
+    slides in."""
     title_font, app_font, row_font, meta_font = fonts
     plain = title_font or app_font or row_font or meta_font
     focus, mouse, talon = state.get("focus") or {}, state.get("mouse") or {}, \
@@ -125,15 +174,19 @@ def header(draw, screen, title, state, stale, apps, apps_stale, tab,
         draw.text((screen.W - lay.PAD - 420, lay.SUB_Y),
                   "STALE -- feed quiet >3s", font=row_font or plain,
                   fill=C_STALE)
-    # App strip: steppers, visible window, tab highlight, focus marker.
+    # App strip: steppers, visible window, focus marker. The highlight
+    # is gone: it selected nothing. A dead-end stepper draws dim so a
+    # press that would do nothing looks like it.
     total = len(apps)
+    start = lay.page_start(tab, total)
+    at_first, at_last = lay.page_bounds(start, total)
     lx, _, _, _ = lay.stepper_rect("left", screen.W)
     draw.text((lx + 24, lay.STRIP_Y + 10), "<", font=row_font or plain,
-              fill=C_ROW)
+              fill=C_DIM if at_first else C_ROW)
     rx, _, _, _ = lay.stepper_rect("right", screen.W)
     draw.text((rx + 24, lay.STRIP_Y + 10), ">", font=row_font or plain,
-              fill=C_ROW)
-    ax, ay, _, _ = lay.chip_area(screen.W)
+              fill=C_DIM if at_last else C_ROW)
+    ax, ay, aw, ah = lay.chip_area(screen.W)
     if not apps:
         draw.text((ax, lay.STRIP_Y + 10),
                   "no running apps in feed" if not apps_stale else
@@ -141,25 +194,42 @@ def header(draw, screen, title, state, stale, apps, apps_stale, tab,
                   font=row_font or plain,
                   fill=C_STALE if apps_stale else C_DIM)
     else:
-        start, slots = lay.visible_slots(tab, total)
+        _, slots = lay.page_slots(start, total)
         focused = ta.clean((state.get("focus") or {}).get("app_name"))
-        for pos, index in enumerate(slots):
-            x, y, cw, ch = lay.chip_rect(pos, screen.W)
-            name = apps[index] if 0 <= index < total else ""
-            is_tab, is_focus = (index == tab % total), (name and
-                                                        name == focused)
-            if is_tab:
-                draw.rounded_rectangle([x, y, x + cw, y + ch],
-                                       radius=10, fill=C_TAB_BG)
-            else:
-                draw.rounded_rectangle([x, y, x + cw, y + ch],
-                                       radius=10, outline=C_LINE, width=2)
-            mark = "*" if is_focus else " "
-            draw.text((x + 14, y + 8),
-                      mark + _chip_label(draw, name, row_font or plain,
-                                         cw - 28),
-                      font=row_font or plain,
-                      fill=C_FOCUS if is_focus else C_ROW)
+        font = row_font or plain
+        animated = False
+        if slide is not None and img is not None and total > 0:
+            try:
+                old_start, progress, direction = slide
+                progress = max(0.0, min(1.0, float(progress)))
+                direction = 1 if int(direction) >= 0 else -1
+            except (TypeError, ValueError):
+                old_start, progress, direction = start, 1.0, 1
+            old_start = lay.page_start(old_start, total)
+            if old_start != start:
+                _, old_slots = lay.page_slots(old_start, total)
+                # Chip width matches chip_rect (uniform across slots).
+                _, _, ccw, _ = lay.chip_rect(0, screen.W)
+                per = {}
+                for index in set(old_slots) | set(slots):
+                    name = apps[index] if 0 <= index < total else ""
+                    per[index] = _chip_label(draw, name, font, ccw - 28)
+                focus_set = {i for i in per
+                             if focused and apps[i] == focused}
+                travel = aw + lay.GAP
+                layer = _strip_layer(
+                    aw, ah, ccw, old_slots, slots, per, focus_set,
+                    font, -direction * progress * travel,
+                    direction * (1.0 - progress) * travel)
+                img.paste(layer, (int(ax), int(ay)), layer)
+                animated = True
+        if not animated:
+            for pos, index in enumerate(slots):
+                x, y, cw, ch = lay.chip_rect(pos, screen.W)
+                name = apps[index] if 0 <= index < total else ""
+                _chip(draw, x, y, cw, ch,
+                      _chip_label(draw, name, font, cw - 28),
+                      bool(name and name == focused), font)
     if apps_stale and apps:
         draw.text((screen.W - lay.PAD - 300, lay.STRIP_Y + 10),
                   "apps STALE", font=row_font or plain, fill=C_STALE)

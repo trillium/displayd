@@ -5,7 +5,21 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
-## 0.3.1
+## 0.3.2
+
+App-bar steppers page the strip instead of stepping a highlight. One
+press moves the visible window by PAGE_STRIDE (VISIBLE - 1, so the new
+window overlaps the old by one chip) with a ~240ms slide (6 frames at
+40ms, presented directly past the change-identity dedup), clamped at
+both ends -- no wraparound. The press carries the old window in a new
+`tab_from` view param so the fresh renderer thread can animate
+old-to-new; mode switches drop the hint and draw steady. The `tab`
+param is now the first visible chip index (window start); the old
+movable highlight is gone entirely (it selected nothing) and the only
+emphasis is the Mac's live focused app from the feed (filled chip --
+real state). A press at either end is refused (`already at first/last
+page`) and that stepper draws dim. `GET /touch/check` geometry is
+unchanged (same region ids/rects/actions).
 
 Touch regions follow the Talon redesign (the 0.3.0 deploy refused to
 complete: drawn UI and live regions disagreed). Host `touch.json`

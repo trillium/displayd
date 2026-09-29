@@ -222,9 +222,10 @@ ACTION_TABLE = {
         "params": ("mode",),
     },
     "talon_tab": {
-        "effect": "step the header app highlight one app back/forward "
+        "effect": "page the header app strip one window back/forward "
                     "(view+mode-gated: refused unless the macbook view "
-                    "is showing in GLANCE mode with a fresh apps feed)",
+                    "is showing in GLANCE mode with a fresh apps feed; "
+                    "refused at the first/last page)",
         "method": "POST", "path": "/talon/tab",
         "params": ("dir",),
     },
@@ -609,9 +610,10 @@ def _resolve(action, panel=None, allow_missing_coords=False):
         spec = ACTION_TABLE[name]
         return (spec["method"], spec["path"], {"mode": mode}), None
     if name == "talon_tab":
-        # Header stepper: step the app highlight back/forward. The step
-        # direction rides in config (+1/-1 only); the daemon wraps it
-        # against the live app count, so the action aims at nothing.
+        # Header stepper: page the app strip one window back/forward.
+        # The page direction rides in config (+1/-1 only); the daemon
+        # clamps it against the live app count, so the action aims at
+        # nothing.
         direction = action.get("dir", action.get("direction"))
         if isinstance(direction, bool) or not isinstance(direction, int):
             return None, "talon_tab dir must be an integer +1 or -1"
