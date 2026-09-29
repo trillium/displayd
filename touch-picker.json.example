@@ -68,7 +68,7 @@
           179,
           59,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -81,7 +81,7 @@
           706,
           59,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -94,7 +94,7 @@
           1233,
           59,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -105,9 +105,9 @@
         "id": "view-chat",
         "rect": [
           179,
-          199,
+          179,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -118,9 +118,9 @@
         "id": "view-clock",
         "rect": [
           706,
-          199,
+          179,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -131,9 +131,9 @@
         "id": "view-feed_health",
         "rect": [
           1233,
-          199,
+          179,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -144,9 +144,9 @@
         "id": "view-life",
         "rect": [
           179,
-          339,
+          299,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -157,9 +157,9 @@
         "id": "view-macbook",
         "rect": [
           706,
-          339,
+          299,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -170,9 +170,9 @@
         "id": "view-options",
         "rect": [
           1233,
-          339,
+          299,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -183,9 +183,9 @@
         "id": "view-picker",
         "rect": [
           179,
-          479,
+          419,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -196,9 +196,9 @@
         "id": "view-resources",
         "rect": [
           706,
-          479,
+          419,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -209,9 +209,9 @@
         "id": "view-retro_grid",
         "rect": [
           1233,
-          479,
+          419,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -222,9 +222,9 @@
         "id": "view-row",
         "rect": [
           179,
-          619,
+          539,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -235,9 +235,9 @@
         "id": "view-services",
         "rect": [
           706,
-          619,
+          539,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -245,12 +245,25 @@
         }
       },
       {
-        "id": "view-solid",
+        "id": "view-sleep",
         "rect": [
           1233,
-          619,
+          539,
           508,
-          121
+          101
+        ],
+        "action": {
+          "name": "select_view",
+          "view": "sleep"
+        }
+      },
+      {
+        "id": "view-solid",
+        "rect": [
+          179,
+          659,
+          508,
+          101
         ],
         "action": {
           "name": "select_view",
@@ -260,10 +273,10 @@
       {
         "id": "view-stream",
         "rect": [
-          179,
-          759,
+          706,
+          659,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
@@ -273,14 +286,27 @@
       {
         "id": "view-touch_confidence",
         "rect": [
-          706,
-          759,
+          1233,
+          659,
           508,
-          121
+          101
         ],
         "action": {
           "name": "select_view",
           "view": "touch_confidence"
+        }
+      },
+      {
+        "id": "view-unified",
+        "rect": [
+          179,
+          779,
+          508,
+          101
+        ],
+        "action": {
+          "name": "select_view",
+          "view": "unified"
         }
       }
     ]

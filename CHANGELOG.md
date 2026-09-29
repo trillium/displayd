@@ -5,6 +5,27 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.3.1
+
+Touch regions follow the Talon redesign (the 0.3.0 deploy refused to
+complete: drawn UI and live regions disagreed). Host `touch.json`
+regenerated from the renderers' own region functions, never
+hand-computed -- `macbook_layout.touch_regions()` for the 7-entry
+macbook scope (the AIM button, back corner, both tab steppers, focus
+chip strip, map, and AIM click catcher), `picker_regions()` for the
+19-tile picker scope (`talon_apps` out, `unified` in), and
+`unified_regions()` entries `[1:]` for the 19-entry unified scope
+(18 tiles at real geometry plus the apps dock). The retired
+`talon_apps` scope is gone from the live set; the global home badge
+now targets `unified` (`HOME_VIEW`). `renderers/macbook_zoom.py`
+deleted: dead since 0.3.0 superseded it with `macbook_aim.py` +
+`macbook_glance.py` (nothing imported it). `touch-picker.json.example`
+regenerated (was 17 stale tiles); `touch-unified.json.example` already
+matched. TOUCH.md's unified generation command fixed to exclude the
+self tile (passing the full set silently shifts every tile rect).
+`GET /touch/check` is the drift guard: it failed the 0.3.0 deploy
+loudly and now reports agreement.
+
 ## 0.3.0
 
 Merged Talon feature (GLANCE + AIM modes, app list folded in).
