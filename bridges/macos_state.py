@@ -42,6 +42,11 @@ try:
 except Exception:  # zoom/click unavailable: state polling continues
     mac_zoom = None
 
+try:
+    import mac_preview
+except Exception:  # previews unavailable: boxes stay, state continues
+    mac_preview = None
+
 # Re-exported for backwards compatibility (pure feed-document shaping
 # lives in macos_state_format.py; the live poller below is the only
 # in-repo consumer besides the tests).
@@ -178,6 +183,8 @@ def main(argv=None):
     ap.add_argument("--displayd", default=os.environ.get("DISPLAYD_BASE", "http://100.81.88.113:8980"))
     ap.add_argument("--interval", type=float, default=float(os.environ.get("MACOS_STATE_INTERVAL", str(INTERVAL))))
     ap.add_argument("--once", action="store_true")
+    ap.add_argument("--no-preview", action="store_true",
+                    help="skip the live display-preview thread")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -185,6 +192,16 @@ def main(argv=None):
         print(json.dumps(poll(), indent=2)[:4000])
         return 0
     send, interval = make_sender(args.displayd), min(max(float(args.interval), 0.25), 10.0)
+    if mac_preview is not None and not args.no_preview:
+        try:
+            preview_interval = max(0.5, float(os.environ.get(
+                "MACOS_PREVIEW_INTERVAL",
+                str(mac_preview.PREVIEW_INTERVAL))))
+            mac_preview.start(args.displayd, preview_interval)
+            LOG.info("display previews on (~%.1f Hz -> /feed/macbook/preview)",
+                       1.0 / preview_interval)
+        except Exception as err:  # previews are optional; state is not
+            LOG.warning("preview thread failed to start: %s", err)
     last_mouse_ts = time.time()  # only taps from now on ever fire
     last_click_ts = time.time()
     while True:

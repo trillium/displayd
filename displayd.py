@@ -77,7 +77,7 @@ BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
 # a [project] table. Bump per CHANGELOG.md's convention on every change;
 # the daemon reports it via GET /version, GET /state's "version" key,
 # and the startup log line in main().
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 # Optional shared secret for the HTTP API. When set, every request (except
 # the unauthenticated health probes below) must carry
 #   Authorization: Bearer <token>

@@ -42,6 +42,7 @@ from PIL import ImageDraw, ImageFont
 import macbook_aim
 import macbook_glance
 import macbook_layout as lay
+import macbook_preview
 import talon_apps as ta
 
 NAME = "macbook"
@@ -115,6 +116,29 @@ INPUTS = {
         },
         "buffer": 1,
     },
+    "preview": {
+        "type": "object",
+        "help": "live per-display previews (see bridges/mac_preview.py)",
+        "required": ["ts", "frames"],
+        "properties": {
+            "ts": {"type": "number"},
+            "frames": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["display_index", "w", "h", "jpeg"],
+                    "properties": {
+                        "display_index": {"type": "number"},
+                        "w": {"type": "number"},
+                        "h": {"type": "number"},
+                        "jpeg": {"type": "string",
+                                 "maxLength": 56000},
+                    },
+                },
+            },
+        },
+        "buffer": 1,
+    },
 }
 
 POLL = 0.25
@@ -178,7 +202,7 @@ def _apps(apps_state):
     return [ta.clean(a) for a in raw] if isinstance(raw, list) else []
 
 
-def _key(state, apps_state, zoom, mode, tab):
+def _key(state, apps_state, zoom, preview, mode, tab):
     """Redraw identity: mode/tab/app/title/mode/pointer-cell/staleness."""
     if not state:
         return (mode, None)
@@ -195,11 +219,14 @@ def _key(state, apps_state, zoom, mode, tab):
             focus.get("display_index"), cell, talon.get("mode"),
             talon.get("muted"), stale, apps,
             (apps_state or {}).get("focused"), apps_stale,
-            macbook_aim.key(zoom), stale)
+            macbook_aim.key(zoom), stale,
+            macbook_preview.mode(preview),
+            (preview or {}).get("ts") if isinstance(preview, dict)
+            else None)
 
 
 def _draw(screen, title, mode, tab, state, stale, apps, apps_stale, bg,
-          zoom, slide=None):
+          zoom, preview, slide=None):
     img = screen.new_image(bg)
     draw = ImageDraw.Draw(img)
     meta = _font(screen, "DejaVuSans", macbook_glance.META_SIZE)
@@ -218,7 +245,8 @@ def _draw(screen, title, mode, tab, state, stale, apps, apps_stale, bg,
              _font(screen, "DejaVuSans", macbook_glance.ROW_SIZE), meta)
     macbook_glance.header(draw, screen, img, title, state, stale, apps,
                           apps_stale, tab, fonts, slide=slide)
-    macbook_glance.draw_map(img, draw, screen, state, meta or plain)
+    macbook_glance.draw_map(img, draw, screen, state, preview,
+                            meta or plain)
     return img
 
 
@@ -236,6 +264,7 @@ def _play_slide(screen, title, old_start, new_start, bg, stop):
         state = _latest(screen, "macbook", "state")
         apps_state = _latest(screen, "talon_apps", "state")
         zoom = _latest(screen, "macbook", "zoom")
+        preview = _latest(screen, "macbook", "preview")
         if state is None:
             return
         apps = _apps(apps_state)
@@ -256,7 +285,7 @@ def _play_slide(screen, title, old_start, new_start, bg, stop):
             try:
                 screen.present(_draw(screen, title, "glance", new_c,
                                      state, stale, apps, apps_stale, bg,
-                                     zoom,
+                                     zoom, preview,
                                      slide=(old_c, progress, direction)))
             except Exception:
                 return
@@ -279,17 +308,18 @@ def run(screen, params, stop):
         state = _latest(screen, "macbook", "state")
         apps_state = _latest(screen, "talon_apps", "state")
         zoom = _latest(screen, "macbook", "zoom")
+        preview = _latest(screen, "macbook", "preview")
         stale = bool(state) and \
             time.time() - state.get("ts", 0) > STALE_AFTER
         apps_stale = bool(apps_state) and \
             time.time() - apps_state.get("ts", 0) > ta.STALE_AFTER
-        key = _key(state, apps_state, zoom, mode, tab)
+        key = _key(state, apps_state, zoom, preview, mode, tab)
         if key != last_key:
             last_key = key
             try:
                 screen.present(_draw(screen, title, mode, tab, state,
                                      stale, _apps(apps_state), apps_stale,
-                                     bg, zoom))
+                                     bg, zoom, preview))
             except Exception:
                 pass
         stop.wait(POLL)
