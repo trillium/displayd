@@ -154,7 +154,7 @@ class RegionTest(unittest.TestCase):
         self.assertEqual(region["id"], "home")
         self.assertEqual(region["rect"], [0, 0, 160, 160])
         self.assertEqual(region["action"],
-                         {"name": "select_view", "view": "picker"})
+                         {"name": "select_view", "view": "unified"})
 
     def test_home_region_wins_overlap_by_order(self):
         import touch
@@ -182,7 +182,7 @@ class SuppressionTest(unittest.TestCase):
         screen = types.SimpleNamespace(current_view="clock")
         overlay = home_chrome.home_overlay(screen)
         self.assertTrue(top_left_differs(overlay(black()), side=160))
-        for view in ("picker", "reload", "notice"):
+        for view in ("unified", "picker", "reload", "notice"):
             screen.current_view = view
             self.assertFalse(top_left_differs(overlay(black()), side=160),
                              view)
@@ -217,6 +217,15 @@ class DaemonWiringTest(unittest.TestCase):
         self.addCleanup(daemon.playlist.stop)
         self.addCleanup(daemon.stop_watchdog)
         daemon.screen.current_view = "picker"
+        out = daemon.screen.overlay(black())
+        self.assertFalse(top_left_differs(out))
+
+    def test_chain_suppresses_home_on_unified(self):
+        daemon = displayd.DisplayDaemon(
+            policy_path=os.path.join(self.tmp.name, "policy.json"))
+        self.addCleanup(daemon.playlist.stop)
+        self.addCleanup(daemon.stop_watchdog)
+        daemon.screen.current_view = "unified"
         out = daemon.screen.overlay(black())
         self.assertFalse(top_left_differs(out))
 

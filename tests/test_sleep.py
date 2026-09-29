@@ -133,6 +133,8 @@ class ChromeTest(unittest.TestCase):
         self.assertTrue(top_right_differs(overlay(black())))
         screen.current_view = "picker"
         self.assertTrue(top_right_differs(overlay(black())), "picker")
+        screen.current_view = "unified"
+        self.assertTrue(top_right_differs(overlay(black())), "unified")
 
     def test_overlay_suppressed_where_meaningless(self):
         screen = types.SimpleNamespace(current_view="clock")

@@ -69,9 +69,10 @@ def _side_of(app, windows, leftmost, main):
 def group(apps, windows=None, displays=None):
     """Split app indices into LEFT/RIGHT columns.
 
-    Returns {"left", "right", "overflow", "mode", "left_display"}.
-    `apps` is the raw feed list; `windows` maps name -> {"d"} display
-    index; `displays` is the feed display list. Capped at
+    Returns {"left", "right", "overflow", "mode", "left_display",
+    "left_total", "right_total"}. `apps` is the raw feed list;
+    `windows` maps name -> {"d"} display index; `displays` is the feed
+    display list. Capped at
     MAX_PER_SIDE per side; the rest counts as overflow. Never raises.
     """
     try:
@@ -98,7 +99,8 @@ def group(apps, windows=None, displays=None):
     overflow = max(0, len(left) - MAX_PER_SIDE) + \
         max(0, len(right) - MAX_PER_SIDE)
     return {"left": left[:MAX_PER_SIDE], "right": right[:MAX_PER_SIDE],
-            "overflow": overflow, "mode": mode, "left_display": leftmost}
+            "overflow": overflow, "mode": mode, "left_display": leftmost,
+            "left_total": len(left), "right_total": len(right)}
 
 
 def button_rect(side, slot, width):

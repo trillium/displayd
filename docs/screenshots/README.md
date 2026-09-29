@@ -41,10 +41,12 @@ Most views are shown with default params -- exactly what
 
 Some shots show waiting/error states rather than data, because the
 headless capture host has no live sources: `beads` waits for its first
-poll, `row` has no journal or PM5 feed (STALE marker path), and
-`services` reports its inventory URL unreachable. Those are the views'
-real no-data screens, documented as such -- not placeholders.
+poll, `row` has no journal or PM5 feed (STALE marker path),
+`services` reports its inventory URL unreachable, and `unified` shows
+the waiting dock (no talon feed -- the tiles above still render). Those
+are the views' real no-data screens, documented as such -- not
+placeholders.
 
-No view was omitted: the set covers all 24 renderers the daemon
+No view was omitted: the set covers all 25 renderers the daemon
 advertised at capture time. If a future `GET /renderers` lists more,
 re-run the script and commit the new files.

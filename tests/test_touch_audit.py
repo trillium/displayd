@@ -358,6 +358,15 @@ class DaemonDriftTest(unittest.TestCase):
                 for v, r in zip(
                     views, pk.grid_geometry(rect, len(views)))]
 
+    def _live_unified(self):
+        from renderers import unified as un_mod
+        views = self.daemon._expected_picker_views({}, "unified")
+        # Tiles + dock only: the sleep badge is global (announced
+        # alongside HOME/SLEEP), asserted via the chrome helper.
+        return [{"id": e["id"], "rect": list(e["rect"]),
+                 "action": dict(e["action"])} for e in
+                un_mod.unified_regions(W, H, views)][1:]
+
     def test_unknown_until_heartbeat(self):
         report = self.daemon.touch_check()
         self.assertFalse(report["ok"])
@@ -383,6 +392,7 @@ class DaemonDriftTest(unittest.TestCase):
         # FIX: tiles scoped to picker, map scoped to macbook.
         self._announce([dict(HOME), dict(SLEEP)],
                          {"picker": tiles,
+                          "unified": self._live_unified(),
                           "macbook": [dict(MAP)],
                           "talon_apps": [dict(FOCUS)],
                           "sleep": [dict(WAKE)]})
@@ -397,6 +407,7 @@ class DaemonDriftTest(unittest.TestCase):
         self.assertEqual(self.daemon.state()["params"], {})
         self._announce([dict(HOME), dict(SLEEP)],
                          {"picker": self._live_tiles(),
+                          "unified": self._live_unified(),
                           "macbook": [dict(MAP)],
                           "talon_apps": [dict(FOCUS)],
                           "sleep": [dict(WAKE)]})

@@ -238,3 +238,19 @@ When updating this file, preserve this bar for all agents and keep entries conci
   `/root/displayd-webhook-secret`), not a daemon route, so the mid-deploy
   restart can't kill it. Only main-branch pushes deploy; ping/other refs
   ack without action. Install/rotate/restore: `hooks/RUNBOOK.md`.
+
+## Merged home screen (unified E layout)
+
+- `renderers/unified.py` is `HOME_VIEW` (picker tiles at real geometry +
+  live apps dock; dock drawing split into `renderers/unified_dock.py` per
+  the 250-line budget). Home badge/region target it
+  (`home_chrome.HOME_VIEW`, suppressed there); `picker` stays selectable.
+- The dock reads the `talon_apps` feed in place (no second feed path);
+  empty/stale render dock-only, tiles never move. Tile list defaults to
+  the live set minus `unified` (daemon fills it, like picker).
+- Touch: `unified_regions()` (sleep first, `uview-` tiles, `apps-dock`
+  last -- the prefix keeps picker/unified scopes id-unique for the
+  announce gate); scope entries `[1:]` under `view_regions` -> `unified`
+  (entry `[0]` is the global sleep badge). Reference:
+  `touch-unified.json.example`; post-deploy host steps in TOUCH.md
+  "Merged home screen" (refresh the global home region too).

@@ -13,7 +13,7 @@ import json
 import os
 
 COVERAGE = ("exact(id+rect): home/sleep badges; exact(+action): picker, "
-            "retro-grid cells; presence-only: macbook_mouse, talon_focus, "
+            "unified, retro-grid cells; presence-only: macbook_mouse, "
             "sleep screen_on; reported-not-asserted: strips, "
             "reload_confirm, feedback; unasserted: layout, blank")
 
@@ -89,29 +89,25 @@ def expected_for_view(view, params=None, w=1920, h=1080,
     if not view:
         return {"view": view, "checkable": True, "reason": "panel blank",
                 "exact": [], "presence": []}
-    if view == "picker":
-        try:
-            pk = _load_renderer("picker")
-            views = (list(picker_views) if picker_views is not None
-                     else pk.coerce_views(params))
-            exact = [{"id": e["id"], "rect": [int(v) for v in e["rect"]],
-                      "action": e["action"], "required": True}
-                     for e in pk.picker_regions(
-                          w, h, views, pk.coerce_rect(params, w, h))]
-        except Exception as exc:
-            return {"view": view, "checkable": False,
-                    "reason": "picker geometry failed: %s" % exc,
-                    "exact": [], "presence": []}
-        try:
-            nap = _load_renderer("sleep_chrome").audit_exact(view, w, h)
-        except Exception as exc:
-            return {"view": view, "checkable": False,
-                    "reason": "chrome geometry failed: %s" % exc,
-                    "exact": [], "presence": []}
-        return {"view": view, "checkable": True,
-                "reason": "%d tile(s)" % len(exact),
-                "exact": exact + nap, "presence": []}
     exact, presence, note = [], [], ""
+    if view in ("picker", "unified"):
+        try:
+            mod = _load_renderer(view)
+            views = (list(picker_views) if picker_views is not None
+                     else mod.coerce_views(params))
+            if view == "unified":
+                exact = mod.audit_exact(w, h, views, params)
+            else:
+                exact = [{"id": e["id"],
+                          "rect": [int(v) for v in e["rect"]],
+                          "action": e["action"], "required": True}
+                         for e in mod.picker_regions(
+                              w, h, views, mod.coerce_rect(params, w, h))]
+            note = " + %d tile(s)" % len(exact)
+        except Exception as exc:
+            return {"view": view, "checkable": False,
+                    "reason": "%s geometry failed: %s" % (view, exc),
+                    "exact": [], "presence": []}
     if view == "retro_grid":
         try:
             rg = _load_renderer("retro_grid")

@@ -36,7 +36,8 @@ Suppression (deliberate, see TOUCH.md "Home button"):
 
 - ``picker`` -- the button is meaningless on the selection screen
   itself; a tap there re-shows the picker (harmless no-op, same contract
-  as the options view), so nobody is trapped.
+  as the options view), so nobody is trapped. ``unified`` -- the merged
+  home screen suppresses it for the same reason (it IS the home target).
 - ``reload`` -- the deploy-proof confirmation keeps its full-screen
   dismiss area: every tap still POSTs /touch/tap first, and the corner
   tap then also navigates per normal region rules.
@@ -48,8 +49,8 @@ Suppression (deliberate, see TOUCH.md "Home button"):
 
 HOME_STRIP = 160  # button lives inside the left gesture strip's width,
 # so it never covers picker tiles (the grid starts at x=160).
-HOME_VIEW = "picker"  # select_view target: the view-selection screen.
-SUPPRESSED_VIEWS = ("picker", "reload", "notice", "sleep")
+HOME_VIEW = "unified"  # select_view target: the merged home screen.
+SUPPRESSED_VIEWS = ("unified", "picker", "reload", "notice", "sleep")
 
 BADGE_FILL = (13, 17, 28)
 BADGE_EDGE = (255, 255, 255)
@@ -157,8 +158,8 @@ def audit_exact(view, w=1920, h=1080):
 def home_overlay(screen, suppressed=SUPPRESSED_VIEWS, rect=None):
     """Overlay-fn factory for Screen.overlay: draw the button on every
     view except the suppressed ones. Reads ``screen.current_view`` live,
-    so transients (reload/notice) and the picker itself stay chrome-free
-    without any per-renderer code. Pure factory; never raises."""
+    so transients (reload/notice) and the home screens themselves stay
+    chrome-free without any per-renderer code. Pure factory; never raises."""
 
     def apply(img):
         try:
