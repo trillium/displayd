@@ -5,6 +5,22 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.4.2
+
+The touch service exits promptly on SIGTERM now (the P1 restart wedge:
+the evdev read loop blocked in a bare read() while the panel sat
+untouched, so the stop was never observed and the unit wedged in
+`deactivating` -- dead touch input -- until systemd timed out the stop).
+The loop waits in a bounded select() poll (0.5s) and the device fd is
+nonblocking, so a stop lands within ~a second; `touch-input.service`
+also pins `TimeoutStopSec=10` so any future regression fails fast and
+loud instead of wedging. `deploy.sh` step 7 verifies rather than
+assumes: after the restart it requires ActiveState=active plus a
+/touch/check whose announced_at is newer than the pre-restart heartbeat
+(the new process announced, not a stale one), and fails loudly
+otherwise. `GET /touch/check` agrees after a restart through the normal
+path.
+
 ## 0.4.0
 
 A tap on a monitor region opens the fullscreen zoom directly (the
