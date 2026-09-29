@@ -128,10 +128,12 @@ def expected_for_view(view, params=None, w=1920, h=1080,
             return {"view": view, "checkable": False,
                     "reason": "retro-grid geometry failed: %s" % exc,
                     "exact": [], "presence": []}
-    gated = {"macbook": "macbook_mouse", "talon_apps": "talon_focus",
-             "sleep": "screen_on"}
+    gated = {"macbook": ["macbook_mouse", "macbook_click", "talon_focus",
+                        "macbook_mode", "talon_tab"],
+             "sleep": ["screen_on"]}
     if view in gated:  # view-gated actions: unwired taps die silent
-        presence.append({"action": gated[view]})
+        for action in gated[view]:
+            presence.append({"action": action})
         note += " + " + view
     for helper in ("home_chrome", "sleep_chrome"):
         try:

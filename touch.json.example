@@ -82,37 +82,53 @@
       },
       {
         "id": "example-apps-dock",
-        "_comment": "apps dock: one tap opens the full grouped apps screen, live ONLY while the merged home screen shows (generated rect -- see touch-unified.json.example)",
+        "_comment": "apps dock: one tap opens the merged macbook screen, live ONLY while the merged home screen shows (generated rect -- see touch-unified.json.example)",
         "rect": [80, 770, 1760, 230],
-        "action": {"name": "select_view", "view": "talon_apps"}
+        "action": {"name": "select_view", "view": "macbook"}
       }
     ],
     "macbook": [
       {
+        "id": "mac-to-glance",
+        "_comment": "back to GLANCE (pins glance params); bottom-left, free of the composited badges: harmless no-op while glance shows, the way back while AIM shows. Rect is macbook_layout.back_rect() -- never hand-edit",
+        "rect": [0, 1024, 180, 56],
+        "action": {"name": "macbook_mode", "mode": "glance"}
+      },
+      {
+        "id": "mac-to-aim",
+        "_comment": "enter AIM fullscreen review (pins aim params, keeps tab); harmless re-pin while AIM shows. Rect is macbook_layout.mode_rect() -- never hand-edit",
+        "rect": [1544, 14, 200, 56],
+        "action": {"name": "macbook_mode", "mode": "aim"}
+      },
+      {
+        "id": "mac-tab-prev",
+        "_comment": "step the header highlight one app back (wraps). Rect is macbook_layout.stepper_rect('left') -- never hand-edit",
+        "rect": [176, 88, 72, 52],
+        "action": {"name": "talon_tab", "dir": -1}
+      },
+      {
+        "id": "mac-tab-next",
+        "_comment": "step the header highlight one app forward (wraps). Rect is macbook_layout.stepper_rect('right') -- never hand-edit",
+        "rect": [1672, 88, 72, 52],
+        "action": {"name": "talon_tab", "dir": 1}
+      },
+      {
+        "id": "mac-focus",
+        "_comment": "tap a header app chip to focus it (view+mode gated, coordinate-only). Rect is macbook_layout.focus_region() -- never hand-edit, regenerate from there",
+        "rect": [176, 88, 1568, 52],
+        "action": {"name": "talon_focus"}
+      },
+      {
         "id": "mac-map",
-        "_comment": "panel tap moves the MacBook cursor, live ONLY while the macbook map view shows (view-gated + fresh-feed-gated on the daemon; header/letterbox taps refused, never clamped). Coordinates are tap-supplied at dispatch, never stored here. Covers the map area between the 250px header and the zoom pane at y=740 (renderers/macbook_zoom.py MAP_BOTTOM); view-specific entries precede global ones, so the map wins its screen space while the strips still serve elsewhere",
-        "rect": [0, 250, 1920, 490],
+        "_comment": "panel tap warps the MacBook cursor, live ONLY while the merged macbook view shows in GLANCE mode (view+mode-gated + fresh-feed-gated on the daemon; header taps refused, never clamped). Coordinates are tap-supplied at dispatch, never stored here. Rect is macbook_layout.map_region() -- never hand-edit; view-specific entries precede global ones, so the map wins its screen space while the strips still serve elsewhere",
+        "rect": [0, 148, 1920, 932],
         "action": {"name": "macbook_mouse"}
       },
       {
         "id": "mac-zoom",
-        "_comment": "SECOND tap: click the reviewed point on the magnified image, live ONLY while the macbook view shows. The pane (renderers/macbook_zoom.py pane_rect) draws the fresh capture blown up around the cursor, or a position-hint when no fresh capture exists; daemon-side gates (fresh capture of this point, cursor still on it) refuse anything else, so a tap here can never blind-click",
-        "rect": [0, 740, 1920, 340],
+        "_comment": "AIM: tap the fullscreen review to click the reviewed point, live ONLY while the merged macbook view shows in AIM mode. Rect is macbook_layout.click_region() (whole panel) and sits LAST so the header controls win their pixels first; daemon-side gates (fresh capture of this point, cursor still on it) refuse anything else, so a tap here can never blind-click",
+        "rect": [0, 0, 1920, 1080],
         "action": {"name": "macbook_click"}
-      }
-    ],
-    "talon_apps": [
-      {
-        "id": "talon-focus-left",
-        "_comment": "tap a LEFT-column app button to focus it, live ONLY while the talon_apps view shows (view-gated: refused otherwise); the tap point picks the button daemon-side via renderers/talon_layout.py. Rect is talon_layout.column_rect('left') -- never hand-edit, regenerate from there",
-        "rect": [48, 250, 560, 782],
-        "action": {"name": "talon_focus"}
-      },
-      {
-        "id": "talon-focus-right",
-        "_comment": "tap a RIGHT-column app button to focus it; same contract as talon-focus-left, rect is talon_layout.column_rect('right')",
-        "rect": [1312, 250, 560, 782],
-        "action": {"name": "talon_focus"}
       }
     ]
   }

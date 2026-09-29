@@ -32,7 +32,8 @@ Quick start (foreground smoke test)::
   fail closed. See "Named-action allowlist + caller rule" below.
 - The action model is a closed allowlist (today: `playlist_next/pause/resume`,
   `screen_on/off`, `clear`, `show`, `options`, `select_view`, `notify`,
-  `feedback`, `reload_confirm`, `talon_focus`). There is no generic
+  `feedback`, `reload_confirm`, `talon_focus`, `macbook_mouse`,
+  `macbook_click`, `macbook_mode`, `talon_tab`). There is no generic
   "POST any path" or shell action, so a bad config cannot become command
   execution. No credentials live in source control; there are none to
   configure.
@@ -97,10 +98,21 @@ Tap-positioned actions (`talon_focus`, and the in-flight `macbook_mouse`
 sharing the same plumbing): the region carries no coordinates -- the tap
 point is stamped at dispatch and validated twice (touch refuses
 malformed/off-panel points, never clamping; the daemon re-validates and
-gates on the right view showing plus a fresh feed). `talon_focus` posts
+gates on the merged macbook view showing in GLANCE mode plus a fresh
+feed). `talon_focus` posts
 only the panel pixels to `POST /talon/focus`; the daemon maps the point
-to a feed-listed app name, so a tap can only ever select a listed app
+to a feed-listed app name via the same header geometry the renderer
+draws (`macbook_layout.chip_hit`), so a tap can only ever select a
+listed app
 and the action can never become a generic run-anything path.
+
+Two closed header controls round out the merged feature (static bodies
+from config, no coordinates at all): `macbook_mode` pins GLANCE or AIM
+(`POST /macbook/mode`, daemon keeps the tab highlight), and `talon_tab`
+steps the app highlight with wraparound (`POST /talon/tab` with
+`dir` +1/-1 only, daemon keeps the mode). Both refuse unless the
+merged view shows (tab additionally needs GLANCE + a fresh apps feed),
+so a tap can only ever re-pin this view's mode or step its highlight.
 
 The second is `reload_confirm`: a tap confirms the showing reload view --
 `{"name": "reload_confirm"}` posts the pinned body `{"via": "tap"}`
@@ -136,8 +148,8 @@ point inside the display map) validate, and an out-of-range or malformed
 point is refused rather than clamped into something plausible. The warp
 itself is a direct Quartz call, not Talon: Talon follows the OS cursor
 (verified 2026-09-28), so there is no desync and no Talon dependency.
-Wire it to a region covering the map area (below the 250px header -- see
-`touch.json.example`); taps in the header or letterbox are refused
+Wire it to a region covering the map area (below the slim GLANCE header -- see
+`touch.json.example`, rects generated from `macbook_layout`); taps in the header are refused
 harmlessly by the daemon. See "MacBook cursor" below.
 
 ## Device discovery
@@ -381,7 +393,7 @@ are global, so nothing errors and nothing changes on screen).
 
 `renderers/unified.py` is the merged home screen (E layout): the picker
 tile grid at real geometry plus a live apps dock below (count + focused
-app + LEFT/RIGHT split, one tap to the full grouped apps screen). It
+app + LEFT/RIGHT split, one tap to the merged macbook screen). It
 replaces `picker` as `HOME_VIEW` (see `renderers/home_chrome.py`); the
 `picker` renderer stays as a selectable view with its own scope.
 
@@ -405,7 +417,7 @@ Reference wiring (`touch-unified.json.example`, 1920x1080):
   fail the announce uniqueness check). Tile ids carry a `uview-` prefix
   (not the picker's `view-`): announce ids are unique across global AND
   every scoped set, so the two tile grids cannot share ids. The
-  `apps-dock` entry fires the existing `select_view talon_apps` action
+  `apps-dock` entry fires the existing `select_view macbook` action
   -- no new action. The dock rect never overlaps a tile (grid bottom is
 y=740, dock starts at y=770), but list the scope's tiles before the dock
   anyway: earlier wins every overlap.
@@ -486,7 +498,7 @@ badge -- same tile style, moon glyph, no font). Its region
 (`POST /screen/off`): no new action, no generic action. List it
 before `playlist-next`: the badge lives inside the right strip's
 width (never covers view content -- the picker grid ends at x=1760,
-the macbook map and talon columns start at y=250), and earlier
+the macbook map starts below the slim GLANCE header), and earlier
 entries win the overlap.
 
 Powering off also switches to the dedicated `sleep` view
@@ -579,8 +591,8 @@ and the loopback/tailnet caller rule -- a bad config fails fast in
 
 ## MacBook cursor (panel tap moves the Mac cursor)
 
-While the `macbook` view (the two-screen map) is showing, a tap in the
-map area moves the MacBook cursor to the tapped point. Chain:
+While the merged `macbook` view shows in GLANCE mode, a tap in the
+map area (everything below the slim header) moves the MacBook cursor to the tapped point. Chain:
 `touch.py` `macbook_mouse` region tap posts panel pixels to
 `POST /macbook/mouse`; the daemon maps them through the same pure
 geometry the renderer draws (`macbook_map.frame`/`locate`) and holds one
@@ -592,23 +604,23 @@ no desync to avoid and no Talon-running dependency. When Talon is not
 running nothing changes: the warp does not touch Talon at all.
 
 Refusals, never mis-moves: the daemon answers 409 (nothing queued, cursor
-untouched) unless the macbook view is showing single-fullscreen, the
+untouched) unless the macbook view is showing in GLANCE mode, the
 macbook feed is fresh (<5s), and the tap lands on a display rect --
-header/letterbox taps miss harmlessly. Coordinates are validated twice
+header taps miss harmlessly. Coordinates are validated twice
 (touch panel bounds, daemon panel bounds) and refused, never clamped.
 When displayd is unreachable the poller logs and retries; the queued
 command TTL-expires after 10s instead of firing late. The warp is one
 atomic OS call, so a failure lands the full point or nothing.
 
-Reference wiring (1920x1080; rect is display pixels below the 250px
-header -- the map area; scope it under `"view_regions" -> "macbook"`
-so it is live only while the map shows -- a global map region collides
+Reference wiring (1920x1080; rect is display pixels below the slim
+GLANCE header -- the map area; scope it under `"view_regions" -> "macbook"`
+so it is live only while the merged view shows -- a global map region collides
 with the picker tiles sharing that space, and ordering cannot save
 either (see above). The fullscreen `reload_confirm` entry stays global
 last:
 
     "view_regions": {"macbook": [
-      {"id": "mac-map", "rect": [0, 250, 1920, 830],
+      {"id": "mac-map", "rect": [0, 148, 1920, 932],
        "action": {"name": "macbook_mouse"}}]}
 
 Host procedure (host-local `~/displayd/touch.json` survives redeploys):
@@ -625,7 +637,7 @@ driving input as well as display.
 
 Global regions cannot separate two view-specific areas sharing screen
 space: the picker tile grid `[160,40,1600,860]` and the macbook map area
-`[0,250,1920,830]` overlap almost entirely, and `hit_test()` takes the
+`[0,148,1920,932]` overlap almost entirely, and `hit_test()` takes the
 first match -- so ordering alone cannot fix it (map-first breaks picker
 taps, tiles-first breaks map taps), and the daemon's view gate (409
 unless the macbook view shows) cannot rescue a tap the touch side

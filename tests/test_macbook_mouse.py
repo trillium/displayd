@@ -23,8 +23,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
                                 "renderers"))
 
 import displayd
+import macbook_layout
 import macbook_map
-import macbook_zoom
 import macos_state
 
 DISPLAYS = [{"bounds": {"x": 0, "y": 0, "w": 1728, "h": 1117},
@@ -51,18 +51,25 @@ def feed_payload(ts=None):
 
 
 class FrameTest(unittest.TestCase):
-    def test_frame_matches_renderer_math(self):
-        # The renderer drew fit-then-shift; frame() must be that same
-        # transform or taps land where the map is not.
-        import macbook as macbook_renderer
-        self.assertEqual(macbook_map.MAP_PAD, macbook_renderer.PAD)
-        self.assertEqual(macbook_map.MAP_TOP, macbook_renderer.MAP_TOP)
+    def test_frame_matches_layout_geometry(self):
+        # Renderer and tap-map share one frame: the GLANCE map fills
+        # header..base (macbook_layout), or taps land where the map is
+        # not. frame() with those folds must equal fit() on the same
+        # area, or draw/tap/region have drifted.
         box = macbook_map.union([d for d in DISPLAYS])
-        area_w = PANEL_W - 2 * macbook_renderer.PAD
-        area_h = PANEL_H - macbook_renderer.MAP_TOP - macbook_renderer.PAD
+        top, bottom = macbook_layout.header_bottom(), PANEL_H
+        pad = macbook_map.MAP_PAD
+        area_w = PANEL_W - 2 * pad
+        area_h = bottom - pad - top
         old = macbook_map.fit(box, area_w, area_h)
-        new = macbook_map.frame(box, PANEL_W, PANEL_H)
-        self.assertEqual((old[0], old[1], old[2] + 250), new)
+        new = macbook_map.frame(box, PANEL_W, PANEL_H, top=top,
+                                bottom=bottom)
+        self.assertEqual((old[0], old[1], old[2] + top), new)
+
+    def test_header_is_slimmer_than_old_bands(self):
+        # The inefficiency the captain complained about: the merged
+        # header must stay well under the old 210/250 fixed bands.
+        self.assertLess(macbook_layout.header_bottom(), 210)
 
     def test_degenerate_inputs_scale_zero(self):
         self.assertEqual(macbook_map.frame(None, PANEL_W, PANEL_H)[0], 0.0)
@@ -144,11 +151,12 @@ class DaemonMouseTest(unittest.TestCase):
         self.daemon.feed("macbook", "state", feed_payload())
 
     def _panel_of(self, qx, qy):
-        # The live map is shrunk above the zoom pane: project through
-        # the same bottom the daemon tap-maps with, or taps drift.
+        # The GLANCE map fills header..base: project through the same
+        # frame the daemon tap-maps with, or taps drift.
         box = macbook_map.union(DISPLAYS)
         scale, ox, oy = macbook_map.frame(
-            box, PANEL_W, PANEL_H, bottom=macbook_zoom.MAP_BOTTOM)
+            box, PANEL_W, PANEL_H,
+            top=macbook_layout.header_bottom(), bottom=PANEL_H)
         px, py = macbook_map.project(qx, qy, scale, ox, oy)
         return int(round(px)), int(round(py))
 
@@ -197,6 +205,17 @@ class DaemonMouseTest(unittest.TestCase):
         result = self.daemon.request_mouse_move(960, 100)  # header
         self.assertFalse(result["ok"])
         self.assertIn("outside", result["reason"])
+        self.assertIsNone(self.daemon.take_mouse_move())
+
+    def test_aim_mode_refused(self):
+        # Positioning belongs to GLANCE: in AIM the same pixel is a
+        # review tap, never a warp -- refuse, never mis-move.
+        self._show_macbook()
+        px, py = self._panel_of(100, 100)
+        self.daemon.show("macbook", {"mode": "aim"})
+        result = self.daemon.request_mouse_move(px, py)
+        self.assertFalse(result["ok"])
+        self.assertIn("GLANCE", result["reason"])
         self.assertIsNone(self.daemon.take_mouse_move())
 
     def test_malformed_raises(self):

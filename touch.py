@@ -202,21 +202,37 @@ ACTION_TABLE = {
     },
     "macbook_mouse": {
         "effect": "move the MacBook cursor to the tapped map point "
-                    "(view-gated: refused unless the macbook map view "
-                    "is showing)",
+                    "(view+mode-gated: refused unless the macbook view "
+                    "is showing in GLANCE mode)",
         "method": "POST", "path": "/macbook/mouse",
         "params": ("x", "y"),
     },
     "talon_focus": {
-        "effect": "focus the tapped app button (view-gated: refused "
-                    "unless the talon_apps side-button view is showing)",
+        "effect": "focus the tapped header app chip (view+mode-gated: "
+                    "refused unless the merged macbook view is showing "
+                    "in GLANCE mode)",
         "method": "POST", "path": "/talon/focus",
         "params": ("x", "y"),
     },
-    "macbook_click": {
-        "effect": "click the reviewed point on the magnified image "
+    "macbook_mode": {
+        "effect": "pin the merged macbook view to GLANCE or AIM "
                     "(view-gated: refused unless the macbook view is "
-                    "showing, plus fresh-capture and cursor-still gates)",
+                    "showing; keeps the tab highlight)",
+        "method": "POST", "path": "/macbook/mode",
+        "params": ("mode",),
+    },
+    "talon_tab": {
+        "effect": "step the header app highlight one app back/forward "
+                    "(view+mode-gated: refused unless the macbook view "
+                    "is showing in GLANCE mode with a fresh apps feed)",
+        "method": "POST", "path": "/talon/tab",
+        "params": ("dir",),
+    },
+    "macbook_click": {
+        "effect": "click the reviewed point on the fullscreen image "
+                    "(view+mode-gated: refused unless the macbook view "
+                    "is showing in AIM mode, plus fresh-capture and "
+                    "cursor-still gates)",
         "method": "POST", "path": "/macbook/click",
         "params": ("x", "y"),
     },
@@ -579,6 +595,31 @@ def _resolve(action, panel=None, allow_missing_coords=False):
             return None, "select_view view must be a plain view name"
         return ("POST", "/show",
                 {"renderer": view, "params": {}}), None
+    if name == "macbook_mode":
+        # Header control: pin GLANCE/AIM on the showing merged feature.
+        # The mode rides in config (never a free path or name), so the
+        # action can only ever re-pin this view's mode, never navigate.
+        mode = action.get("mode")
+        if not mode or not isinstance(mode, str):
+            return None, "macbook_mode action needs a mode"
+        mode = mode.strip().lower()
+        if mode not in ("glance", "aim"):
+            return None, ("macbook_mode mode must be glance or aim, "
+                           "got %r" % (action.get("mode"),))
+        spec = ACTION_TABLE[name]
+        return (spec["method"], spec["path"], {"mode": mode}), None
+    if name == "talon_tab":
+        # Header stepper: step the app highlight back/forward. The step
+        # direction rides in config (+1/-1 only); the daemon wraps it
+        # against the live app count, so the action aims at nothing.
+        direction = action.get("dir", action.get("direction"))
+        if isinstance(direction, bool) or not isinstance(direction, int):
+            return None, "talon_tab dir must be an integer +1 or -1"
+        if abs(direction) != 1:
+            return None, "talon_tab dir must be +1 or -1"
+        spec = ACTION_TABLE[name]
+        return (spec["method"], spec["path"],
+                {"dir": direction}), None
     if name == "notify":
         title = action.get("title")
         if not title or not isinstance(title, str):

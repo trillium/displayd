@@ -21,10 +21,10 @@ from renderers import unified as un
 from renderers import unified_dock as dock
 
 W, H = 1920, 1080
-VIEWS_19 = ["activity", "beads", "beads-detail", "chat", "clock",
+VIEWS_18 = ["activity", "beads", "beads-detail", "chat", "clock",
             "feed_health", "life", "macbook", "options", "picker",
             "resources", "retro_grid", "row", "services", "sleep",
-            "solid", "stream", "talon_apps", "touch_confidence"]
+            "solid", "stream", "touch_confidence"]
 LEFT_11 = ["Calendar", "Find My", "Mail", "Maps", "Music", "Notes",
            "Photos", "Safari", "Slack", "Talon", "Terminal"]
 RIGHT_9 = ["Activity Monitor", "Code", "Discord", "Finder", "Firebot v5",
@@ -70,7 +70,7 @@ class FakeScreen:
 
 def fake_renderers():
     table = {}
-    for name in VIEWS_19:
+    for name in VIEWS_18:
         table[name] = {"module": object(), "params": {}}
     table["unified"] = {"module": object(), "params": {}}
     table["image"] = {"module": object(),
@@ -96,8 +96,8 @@ class DefaultsTest(unittest.TestCase):
         self.assertEqual(un.tile_views({"views": ["clock"]}), ["clock"])
 
     def test_tile_views_live_minus_self(self):
-        self.assertEqual(un.live_tile_views(fake_renderers()), VIEWS_19)
-        self.assertEqual(un.tile_views({}, fake_renderers()), VIEWS_19)
+        self.assertEqual(un.live_tile_views(fake_renderers()), VIEWS_18)
+        self.assertEqual(un.tile_views({}, fake_renderers()), VIEWS_18)
 
     def test_tile_views_fallback_without_table(self):
         from renderers import picker as pk
@@ -106,27 +106,27 @@ class DefaultsTest(unittest.TestCase):
 
 class RegionsTest(unittest.TestCase):
     def test_sample_map_shape(self):
-        regs = un.unified_regions(W, H, list(VIEWS_19))
-        self.assertEqual(len(regs), 21)
+        regs = un.unified_regions(W, H, list(VIEWS_18))
+        self.assertEqual(len(regs), 20)
         self.assertEqual(regs[0]["id"], "screen-off")
         self.assertEqual(regs[0]["rect"], [1760, 0, 160, 160])
         self.assertEqual(regs[0]["action"], {"name": "screen_off"})
         tiles = regs[1:-1]
-        self.assertEqual(len(tiles), 19)
-        for entry, view in zip(tiles, VIEWS_19):
+        self.assertEqual(len(tiles), 18)
+        for entry, view in zip(tiles, VIEWS_18):
             self.assertEqual(entry["id"], "uview-%s" % view)
             self.assertEqual(entry["action"],
                              {"name": "select_view", "view": view})
         self.assertEqual(regs[-1]["id"], "apps-dock")
         self.assertEqual(regs[-1]["rect"], [80, 770, 1760, 230])
         self.assertEqual(regs[-1]["action"],
-                         {"name": "select_view", "view": "talon_apps"})
+                         {"name": "select_view", "view": "macbook"})
         self.assertFalse([r for r in regs if r["id"] == "home"])
 
     def test_tile_rects_match_picker_geometry(self):
         from renderers import picker as pk
-        regs = un.unified_regions(W, H, list(VIEWS_19))
-        expect = pk.grid_geometry([160, 40, 1600, 700], 19)
+        regs = un.unified_regions(W, H, list(VIEWS_18))
+        expect = pk.grid_geometry([160, 40, 1600, 700], 18)
         for entry, rect in zip(regs[1:-1], expect):
             self.assertEqual(entry["rect"], list(rect))
 
@@ -151,7 +151,7 @@ class FramesTest(unittest.TestCase):
         from renderers import picker as pk
         screen = FakeScreen()
         grid = un.coerce_grid({}, W, H)
-        views = un.tile_views({"views": list(VIEWS_19)})
+        views = un.tile_views({"views": list(VIEWS_18)})
         return un.draw(screen, views, pk.grid_geometry(grid, len(views)),
                        grid, un.coerce_dock({}, W, H), state, stale,
                        (8, 10, 16), (255, 255, 255))
@@ -219,17 +219,17 @@ class HomeWiringTest(unittest.TestCase):
 
     def test_audit_expects_tiles_plus_dock(self):
         expected = touch_audit.expected_for_view(
-            "unified", {"views": list(VIEWS_19)}, W, H,
-            picker_views=list(VIEWS_19))
+            "unified", {"views": list(VIEWS_18)}, W, H,
+            picker_views=list(VIEWS_18))
         self.assertTrue(expected["checkable"])
         ids = [e["id"] for e in expected["exact"]]
         self.assertEqual(ids[:-1],
-                         ["uview-%s" % v for v in VIEWS_19] + ["apps-dock"])
+                         ["uview-%s" % v for v in VIEWS_18] + ["apps-dock"])
         self.assertEqual(ids[-1], "screen-off")
         dock_entry = [e for e in expected["exact"]
                       if e["id"] == "apps-dock"][0]
         self.assertEqual(dock_entry["action"],
-                         {"name": "select_view", "view": "talon_apps"})
+                         {"name": "select_view", "view": "macbook"})
         self.assertFalse([i for i in ids if i == "home"])
 
 
