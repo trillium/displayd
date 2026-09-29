@@ -33,6 +33,7 @@ import select
 import signal
 import struct
 import sys
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -90,6 +91,16 @@ assert EVENT_SIZE == 24, "64-bit input_event must be 24 bytes"
 # read() never returns while idle, so request_stop() was never observed
 # and the unit wedged in `deactivating` until systemd timed out the stop.)
 READ_POLL_SECONDS = 0.5
+
+# Re-announce cadence for the touch heartbeat (POST /touch/announce):
+# the daemon's /touch/check treats a heartbeat older than its
+# TOUCH_HEARTBEAT_MAX_AGE (30 minutes) as blind ("stale"), so renewal
+# runs far inside that window -- six consecutive failed renewals before
+# the gate could go blind, and one cheap localhost POST every five
+# minutes on the panel host. In-process on purpose: the sibling P1
+# showed a periodic service restart can wedge the unit and kill touch
+# input entirely, so renewal must never depend on restarting.
+ANNOUNCE_INTERVAL_SECONDS = 300.0
 
 # Documented local-machine default: on lnx-server the attached panel was
 # previously identified as `G2Touch Multi-Touch`. This is NOT universal --
@@ -1171,9 +1182,12 @@ class TapDetector:
 class TouchService:
     """Foreground reader: device -> parser -> normalize -> tap -> action."""
 
-    def __init__(self, config, client=None, clock=None):
+    def __init__(self, config, client=None, clock=None, announce=None):
         self.config = config
         self.client = client or DisplaydClient(config["endpoint"])
+        self.announce = announce or (lambda: post_announce(self.config))
+        self.announce_interval = float(
+            config.get("announce_interval") or ANNOUNCE_INTERVAL_SECONDS)
         self.confidence = normalize_confidence_feedback(
             config.get("confidence_feedback"))
         self.tap_options = normalize_tap_options(
@@ -1185,6 +1199,48 @@ class TouchService:
             debounce_seconds=config.get("debounce_seconds", 0.3),
             clock=clock)
         self._stop = False
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread = None
+
+    def reannounce(self):
+        """One best-effort heartbeat renewal. Never raises: a failed
+        renewal is logged and retried on the next interval, and taps
+        keep serving -- the daemon reports blind until one lands."""
+        try:
+            ack = self.announce()
+        except Exception as exc:
+            LOG.warning("touch re-announce failed (best-effort, "
+                        "retry in %.0fs): %s",
+                        self.announce_interval, exc)
+            return None
+        LOG.info("touch re-announce: %d regions live (%s)",
+                 (ack or {}).get("regions", 0),
+                 (ack or {}).get("regions_sha"))
+        return ack
+
+    def start_heartbeat(self):
+        """Renew the announce on an interval, in-process. Idempotent:
+        a second start while the thread lives is a no-op."""
+        if (self._heartbeat_thread is not None
+                and self._heartbeat_thread.is_alive()):
+            return
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop, daemon=True)
+        self._heartbeat_thread.start()
+
+    def stop_heartbeat(self):
+        """Stop renewal; safe to call when never started."""
+        self._heartbeat_stop.set()
+        thread, self._heartbeat_thread = self._heartbeat_thread, None
+        if thread is not None:
+            thread.join(timeout=5)
+
+    def _heartbeat_loop(self):
+        while not self._heartbeat_stop.wait(self.announce_interval):
+            if self._stop:
+                return
+            self.reannounce()
 
     def request_stop(self, *_args):
         LOG.info("touch service stopping")
@@ -1518,12 +1574,23 @@ class TouchService:
                 os.set_blocking(stream.fileno(), False)
             except Exception:
                 pass  # best-effort: the select poll still bounds the wait
-            for ev_type, code, value in self.iter_device_events(stream):
-                for event in self.parser.feed(ev_type, code, value):
-                    LOG.debug("touch %s", event)
-                    self.handle_frame([event], dry_run=dry_run)
-                if self._stop:
-                    break
+            if not dry_run:
+                # Heartbeat renewal, in-process: the startup announce
+                # in main() is not enough -- a long-lived service (or a
+                # daemon restart wiping the daemon-side heartbeat) would
+                # otherwise leave /touch/check blind until the next
+                # deploy-time restart. No restart dependency (see the
+                # P1 restart wedge): one cheap POST per interval.
+                self.start_heartbeat()
+            try:
+                for ev_type, code, value in self.iter_device_events(stream):
+                    for event in self.parser.feed(ev_type, code, value):
+                        LOG.debug("touch %s", event)
+                        self.handle_frame([event], dry_run=dry_run)
+                    if self._stop:
+                        break
+            finally:
+                self.stop_heartbeat()
         LOG.info("touch service stopped")
 
 
@@ -1609,7 +1676,10 @@ def main(argv=None):
         # Heartbeat first: displayd's /touch/check compares the DRAWN UI
         # against this announced set, not the file. Best-effort -- taps
         # must serve even when displayd is unreachable; the check then
-        # reports unknown until the next (re)start or --announce.
+        # reports blind until an announce lands. run() renews it
+        # in-process every ANNOUNCE_INTERVAL_SECONDS, far inside the
+        # daemon's TOUCH_HEARTBEAT_MAX_AGE, so the gate never ages out
+        # between deploys.
         try:
             ack = post_announce(cfg)
             LOG.info("touch announce: %d regions live (%s)",

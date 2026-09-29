@@ -680,17 +680,27 @@ rotations, phone-driven shows, and transient returns -- exactly the
 drift this closes. Unknown view (unreachable daemon, blank panel,
 layout mode) means global regions only, never a guess. There is no
 config reload in the input loop (a reload path there risks mid-tap
-partial state): freshness comes from restarting the touch unit.
+partial state): region freshness comes from restarting the touch
+unit, while heartbeat freshness is automatic (see below).
 
 The running service announces its effective set at startup (`POST
 /touch/announce`, best-effort -- taps serve even when displayd is
-down; re-announce without a restart via `touch.py --announce`). `GET
+down; re-announce without a restart via `touch.py --announce`) and
+re-announces it in-process every 5 minutes (`ANNOUNCE_INTERVAL_SECONDS`),
+far inside the daemon's 30-minute `TOUCH_HEARTBEAT_MAX_AGE`, so the
+gate never ages out between deploys -- and a daemon restart wiping
+the daemon-side heartbeat self-heals at the next renewal. Renewal is
+deliberately not a periodic service restart (a restart can wedge the
+unit and kill touch input entirely). `GET
 /touch/check` compares DRAWN geometry (renderer functions, same code
 that draws; picker tiles use the same live-views derivation) against
 that announced set as a per-view matrix, plus the showing view in
 detail: 200 when it agrees, 409 with exact `missing`/`moved` rects and
-`presence_missing` actions when drifted, 409 `unknown` with no
-heartbeat. Undrawn live ids (strips, confirms) are reported, never
+`presence_missing` actions when drifted, 503 `unknown` with no
+heartbeat yet or 503 `stale` when the heartbeat expired. Both blind
+states carry `blind: true` -- the monitor reporting its OWN blindness
+(an alarm, not a pass) -- while genuine drift carries no blind flag
+(a block). Undrawn live ids (strips, confirms) are reported, never
 failed. Missing retro cells on an unscoped grid are `unwired` notes,
 not failures (opt-in arcade); picker tiles, the home badge, and the
 macbook map presence always fail when absent. `deploy.sh` restarts

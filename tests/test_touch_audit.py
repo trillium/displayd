@@ -390,6 +390,39 @@ class DaemonDriftTest(unittest.TestCase):
         report = self.daemon.touch_check()
         self.assertFalse(report["ok"])
         self.assertEqual(report["status"], "unknown")
+        self.assertTrue(report.get("blind"))
+
+    def test_stale_heartbeat_is_blind_not_drift(self):
+        self._announce([dict(HOME), dict(SLEEP)],
+                        {"picker": self._live_tiles(),
+                         "unified": self._live_unified(),
+                         "macbook": macbook_scope(),
+                         "sleep": [dict(WAKE)]})
+        self.assertTrue(self.daemon.touch_check()["ok"])
+        # Age the heartbeat past the freshness window without
+        # changing the regions: the gate must report its OWN
+        # blindness (stale), never a pass -- and never drift.
+        self.daemon.touch_live["announced_at"] -= (
+            displayd.DisplayDaemon.TOUCH_HEARTBEAT_MAX_AGE + 60)
+        stale = self.daemon.touch_check()
+        self.assertFalse(stale["ok"])
+        self.assertEqual(stale["status"], "stale")
+        self.assertTrue(stale.get("blind"))
+        self.assertGreater(stale["age_seconds"],
+                           stale["max_age_seconds"])
+
+    def test_mismatch_is_drift_not_blind(self):
+        views = self.daemon._expected_picker_views({})
+        rect = pk.default_rect(W, H)
+        tiles = [{"id": "view-%s" % v, "rect": list(r),
+                  "action": {"name": "select_view", "view": v}}
+                 for v, r in zip(
+                     views, pk.grid_geometry(rect, len(views)))]
+        self._announce([dict(HOME)] + tiles)
+        failed = self.daemon.touch_check()
+        self.assertFalse(failed["ok"])
+        self.assertEqual(failed["status"], "mismatch")
+        self.assertNotIn("blind", failed)
 
     def test_missing_mac_scope_fails_then_fix_passes(self):
         views = self.daemon._expected_picker_views({})

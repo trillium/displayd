@@ -318,6 +318,10 @@ elif [ "$CHECK_OK" = "True" ]; then
     echo "touch region check failed: $CHECK" >&2
     echo "deploy.sh: /touch/check agrees but the heartbeat is stale (no re-announce after restart); touch input may be dead" >&2
     exit 1
+elif [ "$CHECK_STATUS" = "stale" ] || [ "$CHECK_STATUS" = "unknown" ]; then
+    echo "touch region check failed: $CHECK" >&2
+    echo "deploy.sh: touch heartbeat is blind ($CHECK_STATUS) even after restart; touch input (and its drift gate) may be dead" >&2
+    exit 1
 else
     echo "touch region check failed: $CHECK" >&2
     echo "deploy.sh: drawn UI and live touch regions disagree (GET /touch/check); fix touch.json and re-run" >&2
