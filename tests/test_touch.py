@@ -1704,5 +1704,59 @@ class MacbookMouseTest(unittest.TestCase):
                          {"name": "macbook_mouse"})
 
 
+class HeartbeatRenewalTest(unittest.TestCase):
+    """The announce must renew in-process: a long-lived service (or a
+    daemon restart wiping the daemon-side heartbeat) must not leave
+    /touch/check blind until the next deploy-time restart -- and
+    renewal must never depend on restarting the service (the P1
+    restart wedge killed touch input entirely)."""
+
+    def _service(self, **overrides):
+        cfg = default_config()
+        cfg.update(overrides)
+        calls = []
+
+        def announce():
+            calls.append(time.monotonic())
+            return {"ok": True, "regions": 3,
+                    "regions_sha": "abc123"}
+
+        svc = TouchService(cfg, client=object(), announce=announce)
+        return svc, calls
+
+    def test_renewal_fires_on_interval(self):
+        svc, calls = self._service(announce_interval=0.05)
+        svc.start_heartbeat()
+        try:
+            deadline = time.monotonic() + 5
+            while len(calls) < 2 and time.monotonic() < deadline:
+                time.sleep(0.02)
+        finally:
+            svc.stop_heartbeat()
+        self.assertGreaterEqual(len(calls), 2)
+
+    def test_failed_renewal_never_raises(self):
+        cfg = default_config()
+
+        def boom():
+            raise RuntimeError("daemon down")
+
+        svc = TouchService(cfg, client=object(), announce=boom)
+        self.assertIsNone(svc.reannounce())
+
+    def test_stop_without_start_is_safe(self):
+        svc, _calls = self._service()
+        svc.stop_heartbeat()  # must not raise
+        self.assertIsNone(svc._heartbeat_thread)
+
+    def test_renewal_interval_sits_inside_daemon_window(self):
+        # Read from the check's actual freshness window, not a guess:
+        # renewal must run several times per window so a few failed
+        # renewals never flip the gate blind.
+        import displayd
+        window = displayd.DisplayDaemon.TOUCH_HEARTBEAT_MAX_AGE
+        self.assertLessEqual(touch.ANNOUNCE_INTERVAL_SECONDS * 3, window)
+
+
 if __name__ == "__main__":
     unittest.main()

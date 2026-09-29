@@ -2125,6 +2125,16 @@ class DisplayDaemon:
         file is written host-side by deploy.sh, never through the API."""
         return read_deploy_stamp()
 
+    # Freshness window for the touch-service heartbeat (POST
+    # /touch/announce): a heartbeat older than this makes
+    # touch_check() report blind ("stale"), never a pass. The touch
+    # service re-announces every ANNOUNCE_INTERVAL_SECONDS (touch.py),
+    # far inside this window, so a healthy gate never ages out; only a
+    # dead or wedged announcer goes blind. deploy.sh's post-restart
+    # freshness proof (announced_at newer than pre-restart) is
+    # unaffected: a restart still announces at startup first.
+    TOUCH_HEARTBEAT_MAX_AGE = 1800.0
+
     def announce_touch(self, body):
         """Touch-service heartbeat (POST /touch/announce): the region
         set the running service is actually dispatching. Best-effort on
@@ -2169,18 +2179,40 @@ class DisplayDaemon:
     def touch_check(self):
         """GET /touch/check body: DRAWN geometry vs the LIVE announced
         region set, evaluated per view (matrix) plus the showing view in
-        detail. ok False is unknown (no heartbeat: restart displayd-touch)
-        or mismatch (exact moved/missing rects). Undrawn live ids are
+        detail. ok False is blind -- "unknown" (no heartbeat yet) or
+        "stale" (heartbeat older than TOUCH_HEARTBEAT_MAX_AGE) -- or
+        "mismatch" (exact moved/missing rects). Blind carries
+        blind True (the monitor reporting its OWN blindness: an alarm,
+        not a pass); drift carries no blind flag (a block). Undrawn
+        live ids are
         reported, never failed. Non-showing views assume default params."""
         if touch_audit is None:
             return {"ok": False, "status": "error",
                     "error": "touch audit helper unavailable"}
         live = self.touch_live
         if live is None:
-            return {"ok": False, "status": "unknown",
+            return {"ok": False, "status": "unknown", "blind": True,
                     "current_view": self.current,
                     "error": "no touch heartbeat: restart displayd-touch "
-                    "(it announces at startup) or run touch.py --announce",
+                    "(it announces at startup and re-announces every "
+                    "5 minutes) or run touch.py --announce",
+                    "coverage": touch_audit.COVERAGE}
+        try:
+            age = time.time() - float(live.get("announced_at") or 0)
+        except (TypeError, ValueError):
+            age = float("inf")
+        if age > self.TOUCH_HEARTBEAT_MAX_AGE:
+            return {"ok": False, "status": "stale", "blind": True,
+                    "current_view": self.current,
+                    "error": ("touch heartbeat expired (%.0fs old, "
+                                "max %.0fs): the touch service stopped "
+                                "re-announcing; restart displayd-touch "
+                                "or run touch.py --announce" %
+                                (age, self.TOUCH_HEARTBEAT_MAX_AGE)),
+                    "age_seconds": round(age, 1),
+                    "max_age_seconds": self.TOUCH_HEARTBEAT_MAX_AGE,
+                    "announced_at": live.get("announced_at"),
+                    "regions_sha": live.get("regions_sha"),
                     "coverage": touch_audit.COVERAGE}
         announced = live.get("announced") or {}
         scoped = announced.get("view_regions") or {}
@@ -3943,11 +3975,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/touch/check":
             # Drawn-vs-live region assertion (see touch_audit.py): 200
             # when the per-view matrix agrees, 409 with the exact
-            # differing rects/ids when drifted or unknown. A GET: never
+            # differing rects/ids when drifted, 503 when the gate
+            # itself is blind (unknown: no heartbeat yet; stale: the
+            # heartbeat expired -- an alarm, not a pass). A GET: never
             # touches the idle clock.
             report = DAEMON.touch_check()
             if report.get("ok"):
                 return self._send(200, report)
+            if report.get("blind"):
+                return self._send(503, report)
             return self._send(409, report)
         if path == "/feedback":
             query = parse_qs(urlsplit(self.path).query)
