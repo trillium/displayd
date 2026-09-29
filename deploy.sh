@@ -5,6 +5,10 @@
 #
 # What it does, in order:
 #   1. Records the panel's current renderer (to re-show after restart).
+#      A missing or transient prior (empty = blank panel, or a transient-only
+#      view such as notice/reload) falls back to the clock instead: the
+#      daemon's own return paths use the clock the same way, so a deploy
+#      never skips the re-show and never parks the panel on a QR code.
 #   2. rsyncs this repo to ~/displayd on lnx-server (no --delete: the host
 #      holds host-local files the repo must never wipe -- touch.json,
 #      state/, backups/, policy.json, the feedback log).
@@ -54,14 +58,67 @@ DEPLOYER="${DEPLOYER:-$(id -un)}"
 echo "deploying $SHA ($DATE, by $DEPLOYER) to $HOST:$REMOTE_DIR"
 
 # 1. Current renderer, to re-show after the restart blanks the screen.
+#
+# What counts as a real view (vs a transient) is derived from the repo
+# itself, not a hardcoded list: transient kinds live in policy.PRIORITY
+# ({attention, notice, reload}), but only kinds that ALSO name an
+# installed renderer module are transient-only views. `attention` is a
+# pull that displays the configured real view (chat), so it is correctly
+# excluded -- the derivation yields exactly `notice reload`. The live
+# /state snapshot's policy.transient.active is honoured too, so a
+# transient caught mid-flight is treated as no prior even if the
+# renderer field lags. Either way the fallback is the clock -- the same
+# known-good default the daemon's own return paths
+# (_transient_expired, _return_from_base, dismiss_reload) use when there
+# is no base view to go back to.
+DEFAULT_VIEW="clock"
+TRANSIENT_VIEWS=$(python3 -c \
+    "import sys,os; sys.path.insert(0,'$HERE');"\
+    "import policy;"\
+    "renders={f[:-3] for f in os.listdir(os.path.join('$HERE','renderers')) if f.endswith('.py')};"\
+    "print(' '.join(sorted(k for k in policy.PRIORITY if k in renders)))" 2>/dev/null || echo "notice reload")
+[ -n "$TRANSIENT_VIEWS" ] || TRANSIENT_VIEWS="notice reload"
+is_transient_view() {
+    case " $TRANSIENT_VIEWS " in *" $1 "*) return 0;; *) return 1;; esac
+}
+# Best-effort restore: put a real view back before a loud failure exit,
+# so a failed deploy never leaves the jumbotron blank. Never fails the
+# deploy further -- the caller still exits non-zero after this.
+restore_panel() {
+    if curl -s -m 10 -X POST "http://$PANEL/show" \
+        -H 'Content-Type: application/json' \
+        -d "{\"renderer\":\"$1\"}" | grep -q '"view"\|"renderer"'; then
+        echo "restored $1 before exit"
+    else
+        echo "warning: could not restore $1 before exit" >&2
+    fi
+}
 PRIOR=""
+PRE_TRANSIENT=""
 PRESTATE=$(mktemp); trap 'rm -f "$PRESTATE"' EXIT INT TERM
 if curl -s -m 10 "http://$PANEL/state" -o "$PRESTATE"; then
     PRIOR=$(python3 -c \
-        "import json,sys; print(json.load(open('$PRESTATE')).get('renderer') or '')")
-    echo "prior view: ${PRIOR:-(blank)}"
+        "import json; print(json.load(open('$PRESTATE')).get('renderer') or '')" 2>/dev/null || true)
+    PRE_TRANSIENT=$(python3 -c \
+        "import json; d=json.load(open('$PRESTATE'));"\
+        " print(((d.get('policy') or {}).get('transient') or {}).get('active') or '')" 2>/dev/null || true)
+    FALLBACK_REASON=""
+    if [ -z "$PRIOR" ]; then
+        FALLBACK_REASON="empty (panel blank)"
+    elif is_transient_view "$PRIOR"; then
+        FALLBACK_REASON="transient view ($PRIOR)"
+    elif [ -n "$PRE_TRANSIENT" ] && is_transient_view "$PRE_TRANSIENT"; then
+        FALLBACK_REASON="transient active ($PRE_TRANSIENT showing $PRIOR)"
+    fi
+    if [ -n "$FALLBACK_REASON" ]; then
+        echo "prior view $FALLBACK_REASON; falling back to $DEFAULT_VIEW"
+        PRIOR="$DEFAULT_VIEW"
+    else
+        echo "prior view: $PRIOR"
+    fi
 else
-    echo "warning: panel unreachable pre-deploy; continuing without prior view" >&2
+    echo "warning: panel unreachable pre-deploy; falling back to $DEFAULT_VIEW" >&2
+    PRIOR="$DEFAULT_VIEW"
 fi
 
 # 2. Sync the repo. Host-state exclusions: DEPLOYED/policy.json/feedback
@@ -95,17 +152,28 @@ echo "daemon restarted"
 i=0
 until curl -s -m 5 "http://$PANEL/health" | grep -q '"ok"'; do
     i=$((i + 1)); [ "$i" -ge 30 ] && {
-        echo "deploy.sh: panel never became healthy" >&2; exit 1; }
+        echo "deploy.sh: panel never became healthy" >&2
+        restore_panel "$PRIOR"
+        exit 1; }
     sleep 1
 done
-if [ -n "$PRIOR" ]; then
-    if curl -s -m 10 -X POST "http://$PANEL/show" \
+# PRIOR is always a real view here (step 1 falls back to the clock), so
+# the re-show always runs -- it is never skipped and never parks a
+# transient. A failed re-show warns LOUDLY but continues: the strict
+# verify in step 6 still fails the deploy, and the touch step below is
+# always reached.
+reshow() {
+    curl -s -m 10 -X POST "http://$PANEL/show" \
         -H 'Content-Type: application/json' \
-        -d "{\"renderer\":\"$PRIOR\"}" | grep -q '"view"\|"renderer"'; then
-        echo "re-showed $PRIOR"
-    else
-        echo "warning: could not re-show $PRIOR (may need params); continuing" >&2
-    fi
+        -d "{\"renderer\":\"$1\"}" | grep -q '"view"\|"renderer"'
+}
+if reshow "$PRIOR"; then
+    echo "re-showed $PRIOR"
+elif [ "$PRIOR" != "$DEFAULT_VIEW" ] && reshow "$DEFAULT_VIEW"; then
+    echo "warning: could not re-show $PRIOR (may need params); showing $DEFAULT_VIEW instead" >&2
+    PRIOR="$DEFAULT_VIEW"
+else
+    echo "warning: could not re-show $PRIOR (may need params); continuing" >&2
 fi
 # Prove the build on the panel itself: RELOADED + SHA + commit QR, then
 # auto-returns to the re-showed view (or the clock when none). The host
@@ -136,6 +204,20 @@ if curl -s -m 10 -X POST "http://$PANEL/reload" \
 else
     echo "warning: /reload proof failed; continuing" >&2
 fi
+# Return from the proof to the real view: /reload stays up indefinitely
+# until confirmed, and the deploy must not report success while showing
+# a QR code (nor park transients via the re-show above). Confirming
+# returns to the re-showed base view; a manual /show of PRIOR is the
+# fallback when the confirm path misses (e.g. no reload active).
+if curl -s -m 10 -X POST "http://$PANEL/reload/confirm" \
+    -H 'Content-Type: application/json' \
+    -d '{"via":"tap"}' | grep -q '"confirmed": *true'; then
+    echo "reload confirmed, back to $PRIOR"
+elif reshow "$PRIOR"; then
+    echo "returned to $PRIOR after reload proof"
+else
+    echo "warning: could not return to $PRIOR after reload proof; continuing" >&2
+fi
 
 # 5. Delivery stamp, host-side only (never committed to the repo).
 STAMP_JSON=$(python3 -c \
@@ -148,12 +230,24 @@ echo "stamp written: $STAMP_JSON"
 # 6. Verify: stamp serves this SHA, screen shows content, backlight sane.
 GOT=$(curl -s -m 10 "http://$PANEL/deploy")
 echo "$GOT" | grep -q "$SHA" || {
-    echo "deploy.sh: /deploy does not show $SHA: $GOT" >&2; exit 1; }
+    echo "deploy.sh: /deploy does not show $SHA: $GOT" >&2
+    restore_panel "$PRIOR"
+    exit 1; }
 NOW=$(curl -s -m 10 "http://$PANEL/state")
 RENDERER=$(printf '%s' "$NOW" | python3 -c \
     "import json,sys; print(json.load(sys.stdin).get('renderer') or '')")
-[ -n "$RENDERER" ] || {
-    echo "deploy.sh: panel shows nothing after deploy" >&2; exit 1; }
+# A transient passes a truthiness test, so assert a REAL view: non-empty
+# and not a transient-only view. On failure restore the real view first
+# (loud exit, usable panel) instead of leaving whatever is showing.
+if [ -z "$RENDERER" ]; then
+    echo "deploy.sh: panel shows nothing after deploy" >&2
+    restore_panel "$PRIOR"
+    exit 1
+elif is_transient_view "$RENDERER"; then
+    echo "deploy.sh: panel shows transient '$RENDERER' after deploy (expected a real view)" >&2
+    restore_panel "$PRIOR"
+    exit 1
+fi
 BL=$(printf '%s' "$NOW" | python3 -c \
     "import json,sys; b=json.load(sys.stdin)['screen']['backlight']; print(b.get('value') or 0)")
 echo "panel: renderer=$RENDERER backlight=$BL stamp=$SHA"
