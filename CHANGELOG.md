@@ -5,6 +5,27 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.4.0
+
+A tap on a monitor region opens the fullscreen zoom directly (the
+captain's bug: taps only warped the cursor, and the zoom needed an
+unrequested AIM button). `POST /macbook/mouse` now queues the warp AND
+re-pins the showing view to AIM (window start kept) in the same gesture,
+so one tap carries the user from the glance map into the fullscreen zoomed
+screenshot; a refusal (wrong view, stale feed, tap outside a display)
+queues nothing and changes no mode. The AIM button is retired:
+`macbook_layout.mode_rect()` and the `mac-to-aim` region are gone, the
+glance header's `AIM >` affordance is gone (the Talon mode chip moves
+into its slot), and the AIM no-capture hint reads "tap a monitor on
+the GLANCE map" instead of "then open AIM". Kept and justified:
+`POST /macbook/mode` + the `mac-to-glance` corner (the way back out of
+AIM; a harmless no-op in glance) and the `macbook_mode` touch action it
+dispatches through -- nothing else wires `aim`. Unchanged: the stage-2
+click confirmation inside the zoom (it keys on the queued warp), the
+degraded states in both modes, and the coordinate-only tap contract.
+Host `touch.json` macbook scope regenerated (6 entries, `mac-to-aim`
+removed); `touch.json.example` matches. `GET /touch/check` agrees.
+
 ## 0.3.2
 
 App-bar steppers page the strip instead of stepping a highlight. One
@@ -20,6 +41,8 @@ emphasis is the Mac's live focused app from the feed (filled chip --
 real state). A press at either end is refused (`already at first/last
 page`) and that stepper draws dim. `GET /touch/check` geometry is
 unchanged (same region ids/rects/actions).
+
+## 0.3.1
 
 Touch regions follow the Talon redesign (the 0.3.0 deploy refused to
 complete: drawn UI and live regions disagreed). Host `touch.json`

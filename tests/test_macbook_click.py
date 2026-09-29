@@ -85,16 +85,17 @@ class DaemonClickTest(unittest.TestCase):
             os.environ["DISPLAYD_FAKE_FB"] = self._env
 
     def _armed(self, mouse=None):
-        # Stage 1 first (GLANCE map warp), then post the review
-        # capture of that point (capture ts post-dates the tap), then
-        # enter AIM: the click slot only fires on the fullscreen review.
+        # Stage 1 first (GLANCE map tap: warp queued AND the view
+        # re-pinned to AIM in the same gesture), then post the review
+        # capture of that point (capture ts post-dates the tap): the
+        # click slot only fires on the fullscreen review.
         self.daemon.show("macbook", {})
         self.daemon.feed("macbook", "state", state_payload(mouse=mouse))
         px, py = panel_of(QX, QY)
         moved = self.daemon.request_mouse_move(px, py)
         self.assertTrue(moved["ok"], moved)
+        self.assertEqual(moved["mode"], "aim")
         self.daemon.feed("macbook", "zoom", zoom_payload())
-        self.daemon.show("macbook", {"mode": "aim"})
         return px, py
 
     def test_second_tap_clicks_reviewed_point(self):
@@ -132,12 +133,13 @@ class DaemonClickTest(unittest.TestCase):
                       self.daemon.request_click_move(px, py)["reason"])
 
     def test_glance_mode_refused(self):
-        # Clicks belong to AIM: in GLANCE the same pixel is a map warp,
-        # never a click -- refuse, never blind-click.
+        # Clicks belong to AIM: with the glance view simply showing
+        # (no positioning tap yet), a click is refused -- never a
+        # blind click. (A successful map tap now enters AIM itself, so
+        # the refusal is pinned from a fresh glance show, not after a
+        # warp -- after a warp the zoom is already showing.)
         self.daemon.show("macbook", {})
         self.daemon.feed("macbook", "state", state_payload())
-        px, py = panel_of(QX, QY)
-        self.assertTrue(self.daemon.request_mouse_move(px, py)["ok"])
         self.daemon.feed("macbook", "zoom", zoom_payload())
         result = self.daemon.request_click_move(960, 900)
         self.assertFalse(result["ok"])

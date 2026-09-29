@@ -130,7 +130,9 @@ class LayoutTest(unittest.TestCase):
     def test_touch_regions_generated_order(self):
         entries = lay.touch_regions(1920, 1080)
         ids = [e["id"] for e in entries]
-        self.assertEqual(ids, ["mac-to-glance", "mac-to-aim",
+        # No mac-to-aim: the AIM button is retired -- the map tap is
+        # the only zoom entry, so no second competing way in remains.
+        self.assertEqual(ids, ["mac-to-glance",
                                "mac-tab-prev", "mac-tab-next",
                                "mac-focus", "mac-map", "mac-zoom"])
         # The click catcher is the whole panel and sits LAST, so header
@@ -138,19 +140,19 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(entries[-1]["rect"], [0, 0, 1920, 1080])
         self.assertEqual(entries[-1]["action"]["name"], "macbook_click")
         actions = {e["id"]: e["action"] for e in entries}
-        self.assertEqual(actions["mac-to-aim"],
-                         {"name": "macbook_mode", "mode": "aim"})
         self.assertEqual(actions["mac-to-glance"],
                          {"name": "macbook_mode", "mode": "glance"})
+        self.assertEqual(actions["mac-map"],
+                         {"name": "macbook_mouse"})
         self.assertEqual(actions["mac-tab-prev"],
                          {"name": "talon_tab", "dir": -1})
         self.assertEqual(actions["mac-tab-next"],
                          {"name": "talon_tab", "dir": 1})
         # Header controls tile the strip without overlap.
-        focus = entries[4]["rect"]
+        focus = entries[3]["rect"]
         self.assertEqual(focus[1] + focus[3],
                          lay.header_bottom() - 8)
-        for e in entries[1:5]:
+        for e in entries[1:4]:
             self.assertLessEqual(e["rect"][1] + e["rect"][3],
                                  lay.header_bottom())
 
@@ -164,8 +166,9 @@ class LayoutTest(unittest.TestCase):
         self.assertGreaterEqual(focus[0], 160)
         prev = entries["mac-tab-prev"]
         self.assertGreaterEqual(prev[0], 160)
-        aim = entries["mac-to-aim"]
-        self.assertLessEqual(aim[0] + aim[2], 1760)
+        # Retired: no AIM button rect may live under the sleep badge
+        # (or anywhere) -- the map tap is the zoom entry.
+        self.assertNotIn("mac-to-aim", entries)
         back = entries["mac-to-glance"]
         self.assertGreaterEqual(back[1], 900)
 

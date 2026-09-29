@@ -137,7 +137,8 @@ def header(draw, screen, img, title, state, stale, apps, apps_stale,
     draw.text((lay.PAD + title_w + 24, lay.TITLE_Y),
               "apps (%d)" % len(apps), font=meta_font or plain,
               fill=C_ROW)
-    # Talon mode chip, top-right next to the AIM button.
+    # Talon mode chip, top-right (the retired AIM button's slot stays
+    # empty: the map tap is the zoom entry, so no control lives here).
     mode = str(talon.get("mode") or "other")
     color = MODE_COLORS.get(mode, MODE_COLORS["other"])
     chip = mode.upper() + (" + MUTED" if talon.get("muted") else "")
@@ -145,8 +146,7 @@ def header(draw, screen, img, title, state, stale, apps, apps_stale,
         chw = draw.textlength(chip, font=meta_font or plain)
     except Exception:
         chw = 0
-    bx, by, bw, _ = lay.mode_rect(screen.W)
-    mx = bx - lay.GAP - chw - 36
+    mx = screen.W - lay.CHROME_R - chw - 36
     draw.rounded_rectangle([mx, lay.TITLE_Y, mx + chw + 36,
                             lay.TITLE_Y + META_SIZE + 22],
                            radius=10, fill=tuple(color))
@@ -233,11 +233,6 @@ def header(draw, screen, img, title, state, stale, apps, apps_stale,
     if apps_stale and apps:
         draw.text((screen.W - lay.PAD - 300, lay.STRIP_Y + 10),
                   "apps STALE", font=row_font or plain, fill=C_STALE)
-    # AIM button label (the region lives in touch config).
-    draw.rounded_rectangle([bx, by, bx + bw, by + lay.MODE_H],
-                           radius=10, outline=C_ROW, width=2)
-    draw.text((bx + 70, by + 10), "AIM >", font=row_font or plain,
-              fill=C_ROW)
     draw.line([(lay.PAD, lay.HDR_H - 12),
                (screen.W - lay.PAD, lay.HDR_H - 12)],
               fill=C_LINE, width=2)

@@ -175,6 +175,44 @@ class DaemonMouseTest(unittest.TestCase):
         self.assertIsNone(self.daemon.take_mouse_move(since=cmd["ts"]))
         self.assertIsNotNone(self.daemon.take_mouse_move(since=0))
 
+    def test_valid_tap_enters_fullscreen_zoom(self):
+        # The captain's bug: a tap inside a valid monitor region must
+        # ITSELF open the fullscreen zoomed screenshot -- one gesture,
+        # not warp-now plus an AIM button later. The warp is still
+        # queued (the click gates key on it), and the tab is kept.
+        self._show_macbook()
+        # Enough apps that a forward page moves (paging clamps: a
+        # two-app strip would refuse the press as a dead end).
+        self.daemon.feed("talon_apps", "state",
+                         {"ts": time.time(),
+                          "apps": ["App%d" % i for i in range(8)],
+                          "focused": "App0"})
+        stepped = self.daemon.request_tab_step(1)
+        self.assertTrue(stepped["ok"], stepped)
+        px, py = self._panel_of(100, 100)
+        result = self.daemon.request_mouse_move(px, py)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["mode"], "aim")
+        self.assertEqual(result["tab"], stepped["tab"])
+        self.assertEqual(self.daemon.current, "macbook")
+        self.assertEqual(self.daemon.current_params.get("mode"),
+                         "aim")
+        self.assertEqual(self.daemon.current_params.get("tab"),
+                         stepped["tab"])
+        # The queued warp survives the mode switch (stage 2 keys on
+        # it: fresh capture of this point, cursor still on it).
+        self.assertIsNotNone(self.daemon.take_mouse_move(since=0))
+
+    def test_refusal_changes_no_mode(self):
+        # A miss is a 409 with nothing queued AND no mode change: the
+        # glance screen stays put when the tap is outside the map.
+        self._show_macbook()
+        result = self.daemon.request_mouse_move(960, 100)  # header
+        self.assertFalse(result["ok"])
+        self.assertNotIn("mode", result)
+        self.assertEqual(self.daemon._macbook_mode(), "glance")
+        self.assertIsNone(self.daemon.take_mouse_move())
+
     def test_second_display_tap(self):
         self._show_macbook()
         px, py = self._panel_of(464, -283)
