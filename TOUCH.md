@@ -406,11 +406,17 @@ Reference wiring (`touch-unified.json.example`, 1920x1080):
         python3 -c 'import json,urllib.request; doc=json.load(\
           urllib.request.urlopen("http://100.81.88.113:8980/renderers")); \
           print(",".join(sorted(r["name"] for r in doc["renderers"] \
-          if "params" in r and not any(\
+          if "params" in r and r["name"] != "unified" and not any(\
           isinstance(s,dict) and s.get("required") \
           for s in (r.get("params") or {}).values()))))' > /tmp/views.csv
         python3 renderers/unified.py --width 1920 --height 1080 \
             --views "$(cat /tmp/views.csv)"
+
+  The `!= "unified"` filter matters: the daemon draws the home grid
+  from the live set MINUS itself (a self tile would just re-show home),
+  so passing the full set generates a 19-tile grid with wrong geometry
+  for every tile. The picker command has no such exclusion -- the
+  picker legitimately tiles every advertised view including `unified`.
 
   Paste entries `[1:]` scoped under `"view_regions" -> "unified"`:
   entry `[0]` is the sleep badge, already global (repeating its id would
