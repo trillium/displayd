@@ -10,11 +10,15 @@ strip plus state, and the display map fills everything below it -- no
 fixed 210/250 bands, no bottom pane. AIM drops every overlay: the
 review capture fills the whole panel edge-to-edge.
 
-Touch order (see touch_regions): mode/tab/focus first, map next, the
+Touch order (see touch_regions): back/tab/focus first, map next, the
 full-panel click region LAST so it only catches taps outside the header
-controls. In AIM the header rects still route (the corner one is the way
-back to GLANCE); the daemon's mode gates refuse anything else, so a tap
-can never mis-focus or mis-move -- it either clicks or is refused.
+controls. The map tap is the zoom entry: the daemon warps the cursor
+to the tapped point AND re-pins the view to AIM in the same gesture,
+so no AIM button exists (retired -- the tap is the entry, not a mode
+control). In AIM the header rects still route (the corner one is the
+way back to GLANCE); the daemon's mode gates refuse anything else, so
+a tap can never mis-focus or mis-move -- it either clicks or is
+refused.
 """
 
 PAD = 48
@@ -23,10 +27,10 @@ HDR_H = 148
 # Composited chrome keep-outs: the home badge (top-left) and the sleep
 # badge (top-right) overlay every view, so no header control may live
 # under them -- hidden controls still win taps (scoped regions precede
-# global ones) and would steal badge taps. The strip and the AIM button
-# sit between the badges; the back corner sits bottom-left (free in
-# both modes: in GLANCE it is a harmless no-op zone on the map, in AIM
-# it is the way back).
+# global ones) and would steal badge taps. The strip sits between the
+# badges; the back corner sits bottom-left (free in both modes: in
+# GLANCE it is a harmless no-op zone on the map, in AIM it is the way
+# back). No AIM button: the map tap enters the zoom directly.
 CHROME_L = 176
 CHROME_R = 176
 
@@ -37,8 +41,6 @@ STRIP_Y = 88
 STRIP_H = 52
 
 STEP_W = 72
-MODE_W = 200
-MODE_H = 56
 BACK_W = 180
 BACK_H = 56
 VISIBLE = 6
@@ -52,11 +54,6 @@ GAP = 12
 def header_bottom():
     """GLANCE map top: the slim header claims 0..HDR_H, nothing more."""
     return HDR_H
-
-
-def mode_rect(w):
-    """GLANCE 'AIM' button rect: (x, y, w, h), right of the header."""
-    return (w - CHROME_R - MODE_W, TITLE_Y, MODE_W, MODE_H)
 
 
 def back_rect(h=1080):
@@ -214,8 +211,9 @@ def click_region(w, h):
 def touch_regions(w=1920, h=1080):
     """touch.json entries for the macbook scope: generate, never hand-compute.
 
-    Order matters (first hit wins): back/mode/tab/focus, then the map,
-    then the full-panel click catcher last."""
+    Order matters (first hit wins): back/tab/focus, then the map (the
+    zoom entry: warp + AIM in one gesture), then the full-panel click
+    catcher last. No AIM button: the tap is the entry."""
     bw, bh = int(w), int(h)
     entries = [
         {"id": "mac-to-glance",
@@ -225,12 +223,6 @@ def touch_regions(w=1920, h=1080):
                      "Rect is macbook_layout.back_rect() -- never hand-edit",
          "rect": [int(v) for v in back_rect(h)],
          "action": {"name": "macbook_mode", "mode": "glance"}},
-        {"id": "mac-to-aim",
-         "_comment": "enter AIM fullscreen review (pins aim params, keeps "
-                     "tab); harmless re-pin while AIM shows. Rect is "
-                     "macbook_layout.mode_rect() -- never hand-edit",
-         "rect": [int(v) for v in mode_rect(bw)],
-         "action": {"name": "macbook_mode", "mode": "aim"}},
         {"id": "mac-tab-prev",
          "_comment": "page the app strip one window back (clamps at "
                      "the first page). Rect is "
@@ -251,8 +243,9 @@ def touch_regions(w=1920, h=1080):
          "rect": focus_region(bw),
          "action": {"name": "talon_focus"}},
         {"id": "mac-map",
-         "_comment": "tap the display map to warp the cursor (view+mode "
-                     "gated, coordinate-only). Rect is "
+         "_comment": "tap the display map to warp the cursor AND enter "
+                     "the fullscreen AIM review in the same gesture "
+                     "(view+mode gated, coordinate-only). Rect is "
                      "macbook_layout.map_region()",
          "rect": map_region(bw, bh),
          "action": {"name": "macbook_mouse"}},

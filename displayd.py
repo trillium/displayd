@@ -77,7 +77,7 @@ BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
 # a [project] table. Bump per CHANGELOG.md's convention on every change;
 # the daemon reports it via GET /version, GET /state's "version" key,
 # and the startup log line in main().
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.4.0"
 # Optional shared secret for the HTTP API. When set, every request (except
 # the unauthenticated health probes below) must carry
 #   Authorization: Bearer <token>
@@ -2290,15 +2290,19 @@ class DisplayDaemon:
     # ---- MacBook cursor (panel tap -> Mac mouse) ------------------------
     #
     # A tap while the macbook map view shows moves the MacBook cursor to
-    # the tapped point. touch.py posts panel pixels (closed named action
-    # `macbook_mouse`); the daemon maps them through the same pure
-    # geometry the renderer draws (macbook_map.frame/locate) and holds
-    # one pending Quartz command the Mac-side poller fetches each tick
-    # and warps to directly (Quartz CGWarpMouseCursorPosition -- Talon
+    # the tapped point AND enters the fullscreen AIM review of that zone
+    # in the same gesture: touch.py posts panel pixels (closed named
+    # action `macbook_mouse`); the daemon maps them through the same pure
+    # geometry the renderer draws (macbook_map.frame/locate), holds one
+    # pending Quartz command the Mac-side poller fetches each tick and
+    # warps to directly (Quartz CGWarpMouseCursorPosition -- Talon
     # follows the OS cursor, verified 2026-09-28, so no Talon channel
-    # is needed and none is depended on). Single fullscreen-map view
-    # only: in layout mode the map owns a sub-rect the frame math does
-    # not know, so layout taps are refused rather than mis-mapped.
+    # is needed and none is depended on), then re-shows the merged view
+    # in AIM mode (tab preserved). The tap is the only entry to the
+    # zoom: the retired AIM button is gone, so positioning and review
+    # are one gesture, not two. Single fullscreen-map view only: in
+    # layout mode the map owns a sub-rect the frame math does not know,
+    # so layout taps are refused rather than mis-mapped.
     #
     # Failure is always a refusal, never a half-move: the warp is one
     # atomic OS call on the Mac, so a lost race lands the full point or
@@ -2324,11 +2328,15 @@ class DisplayDaemon:
         return state
 
     def request_mouse_move(self, px, py):
-        """Queue a cursor move for panel pixel (px, py).
+        """Queue a cursor move for panel pixel (px, py) and enter AIM.
 
-        Returns {"ok": True, "command": {...}} on success, or
-        {"ok": False, "reason": ...} on any refusal (wrong view,
-        stale feed, tap outside the display map). Raises ValueError
+        Returns {"ok": True, "command": {...}, "mode": "aim",
+        "tab": ...} on success -- the warp is queued AND the showing
+        view is re-pinned to the fullscreen AIM review (tab preserved),
+        so the tap lands the user in the zoom, not back on the glance
+        screen. Returns {"ok": False, "reason": ...} on any refusal
+        (wrong view, stale feed, tap outside the display map); a
+        refusal queues nothing and changes no mode. Raises ValueError
         only for malformed coordinates (non-int or off-panel)."""
         for value in (px, py):
             if isinstance(value, bool) or not isinstance(value, int):
@@ -2376,8 +2384,19 @@ class DisplayDaemon:
             self.mouse_seq = getattr(self, "mouse_seq", 0) + 1
             command["id"] = self.mouse_seq
             self.mouse_pending = command
+        # The tap carries the user into the zoom: re-show the merged
+        # feature in AIM mode (manual navigation, so rotation holds
+        # while the review is up). Only on success -- a refusal above
+        # returns before this line, leaving view and mode untouched.
+        params = dict(self.current_params or {})
+        params["mode"] = "aim"
+        # A mode switch is not a page turn: drop any stale slide hint
+        # so the fresh thread draws steady instead of replaying it.
+        params.pop("tab_from", None)
+        self.show("macbook", params)
         self.policy.note_api()
-        return {"ok": True, "command": dict(command)}
+        return {"ok": True, "command": dict(command),
+                "mode": "aim", "tab": params.get("tab", 0)}
 
     def take_mouse_move(self, since=None):
         """Pending cursor command newer than `since`, else None.
@@ -3871,12 +3890,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"ok": False,
                                          "error": str(exc)})
         if path == "/macbook/mouse":
-            # Panel tap -> MacBook cursor: touch.py posts panel pixels
-            # (closed `macbook_mouse` action); the Mac-side poller
-            # fetches the queued Quartz point via GET below. 200 +
-            # {ok: True, command} on queue; 400 on malformed or
+            # Panel tap -> MacBook cursor + fullscreen zoom: touch.py
+            # posts panel pixels (closed `macbook_mouse` action); the
+            # Mac-side poller fetches the queued Quartz point via GET
+            # below, and the showing view is re-pinned to AIM (the tap
+            # is the zoom entry; no AIM button remains). 200 +
+            # {ok: True, command, mode} on queue; 400 on malformed or
             # off-panel coordinates; 409 on any refusal (wrong view,
-            # stale feed, tap outside the map) -- never a mis-move.
+            # stale feed, tap outside the map) -- never a mis-move and
+            # never a mode change on a miss.
             body = self._body()
             try:
                 result = DAEMON.request_mouse_move(body.get("x"),

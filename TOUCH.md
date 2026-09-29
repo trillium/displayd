@@ -106,14 +106,20 @@ draws (`macbook_layout.chip_hit`), so a tap can only ever select a
 listed app
 and the action can never become a generic run-anything path.
 
-Two closed header controls round out the merged feature (static bodies
-from config, no coordinates at all): `macbook_mode` pins GLANCE or AIM
-(`POST /macbook/mode`, daemon keeps the window start), and `talon_tab`
-pages the app strip one window with a slide (`POST /talon/tab` with
-`dir` +1/-1 only, daemon keeps the mode, clamped at both ends). Both
-refuse unless the
-merged view shows (tab additionally needs GLANCE + a fresh apps feed),
-so a tap can only ever re-pin this view's mode or page its app strip.
+One closed header control rounds out the merged feature (static body
+from config, no coordinates at all): `talon_tab` pages the app strip
+one window with a slide (`POST /talon/tab` with `dir` +1/-1 only,
+daemon keeps the mode, clamped at both ends). It refuses unless the
+merged view shows in GLANCE with a fresh apps feed, so a tap can only
+ever page its app strip. The zoom needs no control: a tap inside a
+valid monitor region warps the cursor AND re-pins the view to the
+fullscreen AIM review in the same gesture (see `macbook_mouse`
+below) -- the old AIM button is retired, since the tap is the entry,
+not a mode switch. `macbook_mode` (`POST /macbook/mode`, daemon keeps
+the window start) survives only as the way back out: the bottom-left
+`mac-to-glance` corner re-pins GLANCE (a harmless no-op while glance
+shows). It still accepts `aim`, but nothing wires it -- do not add a
+second way into the zoom.
 
 The second is `reload_confirm`: a tap confirms the showing reload view --
 `{"name": "reload_confirm"}` posts the pinned body `{"via": "tap"}`
@@ -137,11 +143,14 @@ from `GET /renderers` (never a probe), and `touch.py --check-views`
 cross-checks a config file against the live set before it ships to the host.
 See "View-selection tiles" below.
 
-The fourth is `macbook_mouse`: a tap moves the MacBook cursor --
-`{"name": "macbook_mouse"}` on a region posts the TAP's panel pixels
-`{"x", "y"}` to `POST /macbook/mouse`, where the daemon maps them
-through the drawn map geometry and queues one Quartz point for the
-Mac-side poller to warp to directly. Coordinates are tap-supplied at
+The fourth is `macbook_mouse`: a tap moves the MacBook cursor AND
+opens the fullscreen zoom of that zone -- `{"name": "macbook_mouse"}`
+on a region posts the TAP's panel pixels `{"x", "y"}` to
+`POST /macbook/mouse`, where the daemon maps them through the drawn map
+geometry, queues one Quartz point for the Mac-side poller to warp to
+directly, and re-pins the showing view to the AIM review (tab kept).
+One gesture: tap the zone, get the fullscreen zoomed screenshot of it.
+Coordinates are tap-supplied at
 dispatch (stamped by `TouchService.handle_frame`), never stored in
 config, so a config entry carries no `x`/`y`; both touch (`panel`
 bounds) and the daemon (panel bounds, macbook view showing, fresh feed,
@@ -599,11 +608,15 @@ and the loopback/tailnet caller rule -- a bad config fails fast in
 ## MacBook cursor (panel tap moves the Mac cursor)
 
 While the merged `macbook` view shows in GLANCE mode, a tap in the
-map area (everything below the slim header) moves the MacBook cursor to the tapped point. Chain:
+map area (everything below the slim header) moves the MacBook cursor to the tapped point AND
+shifts the whole UI to the fullscreen AIM screenshot of that zone, zoomed. Chain:
 `touch.py` `macbook_mouse` region tap posts panel pixels to
 `POST /macbook/mouse`; the daemon maps them through the same pure
-geometry the renderer draws (`macbook_map.frame`/`locate`) and holds one
-pending Quartz point; the Mac-side poller (`bridges/macos_state.py`)
+geometry the renderer draws (`macbook_map.frame`/`locate`), holds one
+pending Quartz point, and re-pins the showing view to AIM (tab kept) --
+the tap is the zoom entry, so no AIM button exists anymore (retired;
+the `mac-to-glance` corner stays as the way back out).
+The Mac-side poller (`bridges/macos_state.py`)
 fetches it each tick and warps directly (`CGWarpMouseCursorPosition`).
 Direct, not Talon: Talon follows the OS cursor (verified 2026-09-28 --
 a bare warp reads back identically through the Talon REPL), so there is
@@ -611,7 +624,8 @@ no desync to avoid and no Talon-running dependency. When Talon is not
 running nothing changes: the warp does not touch Talon at all.
 
 Refusals, never mis-moves: the daemon answers 409 (nothing queued, cursor
-untouched) unless the macbook view is showing in GLANCE mode, the
+untouched, mode unchanged -- the glance screen stays put) unless the
+macbook view is showing in GLANCE mode, the
 macbook feed is fresh (<5s), and the tap lands on a display rect --
 header taps miss harmlessly. Coordinates are validated twice
 (touch panel bounds, daemon panel bounds) and refused, never clamped.

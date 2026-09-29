@@ -91,8 +91,8 @@ def degraded(draw, w, h, stale, font):
     back_chip(draw, h, font)
     draw.text((48, 60), "AIM -- no review capture",
               font=font, fill=C_DIM)
-    draw.text((48, 120), "tap the GLANCE map to position, then open AIM "
-              "-- a magnified review fills this screen",
+    draw.text((48, 120), "tap a monitor on the GLANCE map -- "
+              "a magnified review fills this screen",
               font=font, fill=C_DIM)
     if stale:
         draw.text((48, 180), "STALE -- macbook feed quiet >3s",
@@ -109,7 +109,7 @@ def draw(img, draw, screen, zoom, stale, font):
     if shot is None or screen.W <= 0 or screen.H <= 0:
         draw.text((48, 60), "AIM -- review capture unreadable",
                   font=font, fill=C_STALE)
-        draw.text((48, 120), "tap the GLANCE map to position again",
+        draw.text((48, 120), "tap a monitor on the GLANCE map again",
                   font=font, fill=C_DIM)
         return False
     scale, left, top, cw, ch = cover(shot.size[0], shot.size[1],

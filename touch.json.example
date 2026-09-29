@@ -95,20 +95,14 @@
         "action": {"name": "macbook_mode", "mode": "glance"}
       },
       {
-        "id": "mac-to-aim",
-        "_comment": "enter AIM fullscreen review (pins aim params, keeps tab); harmless re-pin while AIM shows. Rect is macbook_layout.mode_rect() -- never hand-edit",
-        "rect": [1544, 14, 200, 56],
-        "action": {"name": "macbook_mode", "mode": "aim"}
-      },
-      {
         "id": "mac-tab-prev",
-        "_comment": "step the header highlight one app back (wraps). Rect is macbook_layout.stepper_rect('left') -- never hand-edit",
+        "_comment": "page the app strip one window back (clamps at the first page). Rect is macbook_layout.stepper_rect('left') -- never hand-edit",
         "rect": [176, 88, 72, 52],
         "action": {"name": "talon_tab", "dir": -1}
       },
       {
         "id": "mac-tab-next",
-        "_comment": "step the header highlight one app forward (wraps). Rect is macbook_layout.stepper_rect('right') -- never hand-edit",
+        "_comment": "page the app strip one window forward (clamps at the last page). Rect is macbook_layout.stepper_rect('right') -- never hand-edit",
         "rect": [1672, 88, 72, 52],
         "action": {"name": "talon_tab", "dir": 1}
       },
@@ -120,7 +114,7 @@
       },
       {
         "id": "mac-map",
-        "_comment": "panel tap warps the MacBook cursor, live ONLY while the merged macbook view shows in GLANCE mode (view+mode-gated + fresh-feed-gated on the daemon; header taps refused, never clamped). Coordinates are tap-supplied at dispatch, never stored here. Rect is macbook_layout.map_region() -- never hand-edit; view-specific entries precede global ones, so the map wins its screen space while the strips still serve elsewhere",
+        "_comment": "tap the display map to warp the MacBook cursor AND enter the fullscreen AIM review in the same gesture (view+mode-gated + fresh-feed-gated on the daemon; header taps refused, never clamped). Coordinates are tap-supplied at dispatch, never stored here. Rect is macbook_layout.map_region() -- never hand-edit; view-specific entries precede global ones, so the map wins its screen space while the strips still serve elsewhere",
         "rect": [0, 148, 1920, 932],
         "action": {"name": "macbook_mouse"}
       },
