@@ -233,6 +233,13 @@ def main(argv=None):
                         args.displayd, mac_zoom.comm_dir(),
                         state, cmd["x"], cmd["y"]):
                     LOG.info("review capture posted")
+                elif mac_zoom is not None:
+                    # Silence here is how the zoom feed starved stale
+                    # (task-ax59w): a failed capture must be loud, so
+                    # the next ladder starts from the Mac log, not a
+                    # 490 s-old feed.
+                    LOG.warning("review capture failed; "
+                                "zoom feed going stale")
         except Exception as err:  # a failed warp moves nothing, by design
             LOG.warning("mouse move failed: %s", err)
         try:

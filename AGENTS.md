@@ -254,3 +254,19 @@ When updating this file, preserve this bar for all agents and keep entries conci
   (entry `[0]` is the global sleep badge). Reference:
   `touch-unified.json.example`; post-deploy host steps in TOUCH.md
   "Merged home screen" (refresh the global home region too).
+
+## Zoom review capture (two-stage tap stage 1)
+
+- `bridges/mac_zoom.py` `position_hook` captures the AIM review around the
+  warped cursor: Talon file-channel capture primary, bounded ffmpeg crop
+  fallback (same avfoundation flags as `mac_preview.py`, parity pinned in
+  `tests/test_mac_zoom.py`; crop snapped even for yuv420p, Retina scale via
+  live Quartz). One broken capture mechanism can no longer starve the zoom
+  feed stale past `CLICK_FRESH` (task-ax59w: 490s stale refused every tap-2).
+- Capture failures are LOUD: warning in the Mac bridge log on each miss
+  (`macos_state.py`), never silent. `CLICK_EPS`/`CLICK_FRESH` are frozen
+  safeties (pinned in `tests/test_macbook_tap_live.py`); retuning needs
+  captain approval.
+- End-to-end tap proof lives in `tests/test_macbook_tap_live.py` (real HTTP
+  headless daemon + real touch client: tap-1 warps into AIM, fresh zoom ->
+  tap-2 200 + queued command, 490s-stale zoom -> 409 + nothing queued).
