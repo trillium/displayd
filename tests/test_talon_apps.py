@@ -408,7 +408,7 @@ class BridgeHelperTest(unittest.TestCase):
             posted = []
             real_post, real_fetch = BRIDGE.post_feed, BRIDGE.fetch_focus
             BRIDGE.post_feed = lambda base, doc: posted.append(doc) or True
-            BRIDGE.fetch_focus = lambda base, since=0.0: None
+            BRIDGE.fetch_focus = lambda base, since=0.0, wait=0.0: None
             try:
                 seen = [None, 0.0, 0.0]
                 hb = BRIDGE.HEARTBEAT

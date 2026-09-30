@@ -66,7 +66,9 @@ build_payload = _format.build_payload
 read_talon = _format.read_talon
 
 INTERVAL, TIMEOUT = 0.5, 5.0
-MOUSE_FETCH_TIMEOUT = 2.0  # command fetch must never slow the 2 Hz tick
+MOUSE_FETCH_TIMEOUT = 2.0  # idle command fetch must never slow the 2 Hz tick
+LONGPOLL_WAIT_MAX = 2.0  # fetch hold never exceeds this; the tick keeps
+# its cadence (state POSTs every loop), taps just wake the fetch early.
 MOUSE_TTL = 10.0  # mirrors the daemon slot: stale taps never fire
 
 
@@ -155,15 +157,22 @@ def make_sender(displayd_base):
     return send
 
 
-def fetch_mouse_command(displayd_base, since=0.0):
+def fetch_mouse_command(displayd_base, since=0.0, wait=0.0):
     """Pending cursor command newer than `since`; None when idle.
     Best-effort: any failure means no move -- the tap simply does not
     fire, and the daemon TTL-expires it, so failure can never land the
-    cursor somewhere unexpected."""
+    cursor somewhere unexpected. `wait` holds the GET on the daemon
+    (bounded server-side) so a tap queued mid-hold wakes this fetch;
+    0 is today's immediate reply. The HTTP timeout always covers the
+    hold, so a hung turn is impossible."""
     url = (displayd_base.rstrip("/") + "/macbook/mouse"
            + "?since=%s" % since)
+    if wait and wait > 0:
+        url += "&wait=%s" % wait
     try:
-        with urllib.request.urlopen(url, timeout=MOUSE_FETCH_TIMEOUT) as resp:
+        with urllib.request.urlopen(
+                url,
+                timeout=MOUSE_FETCH_TIMEOUT + max(0.0, wait)) as resp:
             doc = json.loads(resp.read(4096).decode("utf-8", "replace"))
         cmd = doc.get("command") if isinstance(doc, dict) else None
         x, y, ts = float(cmd["x"]), float(cmd["y"]), float(cmd.get("ts", 0))
@@ -203,6 +212,9 @@ def main(argv=None):
         print(json.dumps(poll(), indent=2)[:4000])
         return 0
     send, interval = make_sender(args.displayd), min(max(float(args.interval), 0.25), 10.0)
+    # Long-poll hold matches the tick: loop cadence (and its per-tick
+    # state POST) is preserved while taps wake the fetches at once.
+    wait = min(interval, LONGPOLL_WAIT_MAX)
     if mac_preview is not None and not args.no_preview:
         try:
             preview_interval = max(0.5, float(os.environ.get(
@@ -217,6 +229,7 @@ def main(argv=None):
     last_click_ts = time.time()
     while True:
         t0 = time.monotonic()
+        acted = False
         state = None
         try:
             state = poll()
@@ -224,9 +237,11 @@ def main(argv=None):
         except Exception as err:  # never die on a bad tick
             LOG.warning("poll tick failed: %s", err)
         try:
-            cmd = fetch_mouse_command(args.displayd, since=last_mouse_ts)
+            cmd = fetch_mouse_command(args.displayd, since=last_mouse_ts,
+                                      wait=wait)
             if cmd is not None:
                 last_mouse_ts = max(last_mouse_ts, cmd["ts"])
+                acted = True
                 warp_mouse(cmd["x"], cmd["y"])
                 LOG.info("cursor -> (%.0f, %.0f)", cmd["x"], cmd["y"])
                 if mac_zoom is not None and mac_zoom.position_hook(
@@ -238,14 +253,22 @@ def main(argv=None):
         try:
             if mac_zoom is not None:
                 cmd = mac_zoom.fetch_click_command(args.displayd,
-                                                   since=last_click_ts)
+                                                   since=last_click_ts,
+                                                   wait=wait)
                 if cmd is not None:
                     last_click_ts = max(last_click_ts, cmd["ts"])
                     mac_zoom.do_click(cmd["x"], cmd["y"])
                     LOG.info("click -> (%.0f, %.0f)", cmd["x"], cmd["y"])
+                    acted = True
         except Exception as err:  # a failed click clicks nothing
             LOG.warning("mouse click failed: %s", err)
-        time.sleep(max(0.05, interval - (time.monotonic() - t0)))
+        # After acting on a tap the next hold re-parks at once (0.05
+        # floor), so a back-to-back tap wakes instead of riding out the
+        # tick sleep; idle ticks keep their cadence (state POSTs first).
+        if acted:
+            time.sleep(0.05)
+        else:
+            time.sleep(max(0.05, interval - (time.monotonic() - t0)))
 
 
 if __name__ == "__main__":
