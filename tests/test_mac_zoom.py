@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
                                 "bridges"))
 
 import mac_zoom as mz
+import mac_preview as mp
 
 DISPLAYS = [{"bounds": {"x": 0, "y": 0, "w": 1728, "h": 1117},
              "main": True},
@@ -148,6 +149,126 @@ class CaptureTest(unittest.TestCase):
                                "jpeg": "abc"})
         self.assertIsNone(mz.zoom_doc(1, 2, "", 100.0))
         self.assertIsNone(mz.zoom_doc("x", 2, "abc", 100.0))
+
+
+class FfmpegFallbackTest(unittest.TestCase):
+    """Review-capture ffmpeg fallback (task-ax59w: a broken Talon side
+    must degrade to a coarser review, never a stale zoom feed that
+    409-refuses every image tap). No real ffmpeg on CI (subprocess
+    injected); no Quartz on CI (scales injected)."""
+
+    SCALES = [(0, 0, 1728, 1117, 2.0),
+              (-355, -1080, 1920, 1080, 2.0)]
+
+    def _jpeg(self, size=(480, 360)):
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", size, (40, 90, 140)).save(buf, "JPEG",
+                                                     quality=70)
+        return buf.getvalue()
+
+    def _patch(self, name, value):
+        old = getattr(mz, name)
+        setattr(mz, name, value)
+        self.addCleanup(setattr, mz, name, old)
+
+    def test_input_flags_track_preview(self):
+        # The fallback rides the live-verified preview pixel path:
+        # same binary input flags, only -vf gains the crop. If the
+        # preview flags move, this fails until the fallback follows.
+        zoom = mz.ffmpeg_review_cmd(
+            1, {"x": 0, "y": 0, "w": 480, "h": 360})
+        prev = mp.ffmpeg_cmd(1)
+        self.assertEqual(zoom[:11], prev[:11])
+        self.assertEqual(zoom[-3:], ["-f", "mjpeg", "-"])
+        self.assertEqual(zoom[zoom.index("-q:v") + 1],
+                         str(mz._ffmpeg_q(mz.JPEG_QUALITY)))
+        self.assertEqual(mz._ffmpeg_q(60), mp.ffmpeg_quality(60))
+        vf = zoom[zoom.index("-vf") + 1]
+        self.assertTrue(vf.startswith("crop="))
+        self.assertIn("scale=", vf)
+
+    def test_crop_snapped_even(self):
+        # yuv420p refuses odd crop geometry: odd device rects snap.
+        zoom = mz.ffmpeg_review_cmd(
+            0, {"x": 1, "y": 3, "w": 481, "h": 361})
+        vf = zoom[zoom.index("-vf") + 1]
+        self.assertTrue(vf.startswith("crop=480:360:0:2,"), vf)
+
+    def test_review_crop_posts_device_pixels(self):
+        seen = {}
+
+        class Proc:
+            returncode = 0
+            stdout = self._jpeg()
+            stderr = b""
+
+        def fake_run(argv, **kw):
+            seen["argv"] = argv
+            return Proc()
+
+        self._patch("display_pixel_scales", lambda: list(self.SCALES))
+        self._patch("subprocess",
+                    type("S", (), {"run": staticmethod(fake_run),
+                                    "DEVNULL": mz.subprocess.DEVNULL,
+                                    "PIPE": mz.subprocess.PIPE}))
+        data = mz.ffmpeg_review_crop(100, 100, DISPLAYS)
+        self.assertTrue(data.startswith(b"\xff\xd8"))
+        vf = seen["argv"][seen["argv"].index("-vf") + 1]
+        # (100,100) on the 2x main display: 480x360 pt -> 960x720 dev.
+        self.assertTrue(vf.startswith("crop=960:720:"), vf)
+
+    def test_review_crop_failures_are_none(self):
+        self._patch("display_pixel_scales", lambda: list(self.SCALES))
+
+        class Bad:
+            returncode = 1
+            stdout = b""
+            stderr = b"no grant"
+
+        self._patch("subprocess",
+                    type("S", (), {"run": staticmethod(
+                        lambda argv, **kw: Bad()),
+                        "DEVNULL": mz.subprocess.DEVNULL,
+                        "PIPE": mz.subprocess.PIPE}))
+        self.assertIsNone(mz.ffmpeg_review_crop(100, 100, DISPLAYS))
+        # No scales (CI has no Quartz): no fallback, Talon unaffected.
+        self._patch("display_pixel_scales", lambda: None)
+        self.assertIsNone(mz.ffmpeg_review_crop(100, 100, DISPLAYS))
+        # Off every display: nothing to crop.
+        self._patch("display_pixel_scales", lambda: list(self.SCALES))
+        self.assertIsNone(mz.ffmpeg_review_crop(9000, 9000, DISPLAYS))
+
+    def test_position_hook_falls_back_when_talon_fails(self):
+        posted = {}
+
+        def boom(directory, crop, timeout=4.0):
+            raise RuntimeError("talon capture refused: None")
+
+        self._patch("capture", boom)
+        self._patch("ffmpeg_review_crop", lambda *a, **k: self._jpeg())
+        self._patch("post_zoom",
+                    lambda base, doc: posted.setdefault("doc", doc)
+                    or True)
+        state = {"displays": DISPLAYS}
+        self.assertTrue(mz.position_hook("http://x", "/tmp", state,
+                                         100, 100, now=123.0))
+        self.assertEqual(posted["doc"]["x"], 100.0)
+        self.assertEqual(posted["doc"]["ts"], 123.0)
+
+    def test_position_hook_false_when_both_fail(self):
+        def boom(directory, crop, timeout=4.0):
+            raise RuntimeError("talon down")
+
+        self._patch("capture", boom)
+        self._patch("ffmpeg_review_crop", lambda *a, **k: None)
+        called = []
+        self._patch("post_zoom",
+                    lambda base, doc: called.append(doc) or True)
+        state = {"displays": DISPLAYS}
+        self.assertFalse(mz.position_hook("http://x", "/tmp", state,
+                                          100, 100))
+        self.assertEqual(called, [])
 
 
 class ClickTest(unittest.TestCase):
