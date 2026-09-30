@@ -93,7 +93,7 @@ def test_installer_renders_flat_dest_and_plists():
              "--no-restart", "--no-verify"],
             capture_output=True, text=True, timeout=120)
         assert proc.returncode == 0, proc.stdout + proc.stderr
-        assert "deployed 16 files" in proc.stdout
+        assert "deployed 17 files" in proc.stdout
         for name, _role in manifest_rows():
             src = os.path.join(BRIDGES, name)
             got = os.path.join(dest, name)

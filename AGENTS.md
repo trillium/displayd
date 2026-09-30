@@ -186,6 +186,34 @@ When updating this file, preserve this bar for all agents and keep entries conci
   page and dismisses the view like a tap. Single-scan, dies with the
   view; no tracking beyond the confirm.
 
+## MacBook preview bridge (staggered tick)
+
+- `bridges/mac_preview.py` (runs INSIDE `macos_state.py`) captures one
+display per tick, round-robin, and POSTs as soon as that capture lands:
+batched ticks aged the first display by the second display's capture
+wait (measured live p95 ~2-2.5 s at two displays). `PREVIEW_INTERVAL` is
+0.5 so the per-display refresh rate is unchanged; captures per second do
+not rise, so per-set CPU stays at-or-below the batched baseline. Rules
+live pure in `bridges/mac_preview_plan.py` (stagger, last-known merge,
+byte-identical skip) and the whole claim is measured by the virtual-clock
+harness in `tests/test_macbook_preview.py`.
+- Capture wall is ~1.5 s/display while CPU is only ~0.4 s: any future
+"make previews faster" work must shorten the ffmpeg device-open, not the
+encode budget. Byte-identical sets may skip the wire POST only while the
+skip keeps the POST gap inside the plan's `FRESH_BUDGET` (2.8 s) -- the
+panel's `PREVIEW_FRESH` is 3.0 s, so wire savings can never buy a STALE
+badge. At the measured 1.7 s tick the guard degrades to one POST/tick.
+- Capture uses the Homebrew ffmpeg (`resolve_ffmpeg()`, `DISPLAYD_FFMPEG`
+override): it holds this Mac's Screen Recording grant (verified live
+returning real pixels 2026-09-29). Local probe hangs during the loop
+were device contention (production bridge + parallel probes), not a
+binary defect -- keep the grant story single, never default elsewhere.
+- The Mac's deployed copy lives in `~/.local/share/displayd` and is only
+updated by `bridges/install-mac.sh`; when the repo tree moves on, the host
+keeps running the old tick until the installer runs (`install-mac.sh
+--check` reports the mismatch). Any new bridge module must join
+`bridges/mac-set.manifest` or the install set is partial.
+
 ## Row view remote source (mini1 PM5 feed)
 
 - `renderers/row.py` sources the streak live from mini1's PM5 bridge WebSocket
