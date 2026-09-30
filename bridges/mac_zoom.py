@@ -338,12 +338,19 @@ def post_zoom(displayd_base, doc, timeout=5.0):
     return True
 
 
-def fetch_click_command(displayd_base, since=0.0, timeout=2.0):
-    """Pending click newer than `since`; None when idle or stale."""
+def fetch_click_command(displayd_base, since=0.0, timeout=2.0, wait=0.0):
+    """Pending click newer than `since`; None when idle or stale.
+    `wait` holds the GET on the daemon (bounded server-side) so a tap
+    queued mid-hold wakes this fetch; 0 is today's immediate reply.
+    The HTTP timeout always covers the hold, so a hung turn is
+    impossible."""
     url = (displayd_base.rstrip("/") + "/macbook/click"
            + "?since=%s" % since)
+    if wait and wait > 0:
+        url += "&wait=%s" % wait
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(url,
+                                     timeout=timeout + max(0.0, wait)) as resp:
             doc = json.loads(resp.read(4096).decode("utf-8", "replace"))
         cmd = doc.get("command") if isinstance(doc, dict) else None
         x, y, ts = float(cmd["x"]), float(cmd["y"]), float(cmd.get("ts", 0))

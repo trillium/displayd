@@ -45,6 +45,8 @@ except Exception:  # never: stdlib-only sibling, same directory
 
 INTERVAL, TIMEOUT = 0.5, 5.0
 WAIT_RESPONSE = 4.0
+LONGPOLL_WAIT_MAX = 2.0  # fetch hold never exceeds this; the tick
+# cadence (and its state POSTs) is preserved, taps just wake it early.
 NAME_CHARS, MAX_APPS = 48, 30
 
 
@@ -115,11 +117,18 @@ def post_feed(displayd_base, doc):
     return True
 
 
-def fetch_focus(displayd_base, since=0.0):
-    """Pending panel focus command newer than `since`; None when idle."""
+def fetch_focus(displayd_base, since=0.0, wait=0.0):
+    """Pending panel focus command newer than `since`; None when idle.
+    `wait` holds the GET on the daemon (bounded server-side) so a tap
+    queued mid-hold wakes this fetch instead of waiting for the next
+    tick; 0 is today's immediate reply. The HTTP timeout always covers
+    the hold, so a hung turn is impossible."""
     url = (displayd_base.rstrip("/") + "/talon/focus?since=%s" % since)
+    if wait and wait > 0:
+        url += "&wait=%s" % wait
     try:
-        with urllib.request.urlopen(url, timeout=TIMEOUT) as resp:
+        with urllib.request.urlopen(url,
+                                     timeout=TIMEOUT + max(0.0, wait)) as resp:
             doc = json.loads(resp.read().decode("utf-8", "replace"))
     except Exception as err:
         LOG.debug("focus fetch skipped (%s)", err)
@@ -154,17 +163,19 @@ HEARTBEAT = 2.0  # re-POST unchanged state this often. Must stay well
 # at tap time, so a 10s heartbeat would leave it closed most ticks.
 
 
-def tick(displayd_base, directory, seen, now=None):
+def tick(displayd_base, directory, seen, now=None, wait=0.0):
     """One poller tick. `seen` holds [state_mtime, focus_ts,
     last_post]. State POSTs on change plus a heartbeat, so the panel
-    can tell a live-but-quiet bridge from a dead one."""
+    can tell a live-but-quiet bridge from a dead one. `wait` long-polls
+    the focus fetch (tap wakes it); the state POST above still runs
+    every tick, so cadence never degrades."""
     now = now if now is not None else time.time()
     mtime, doc = load_state(directory, now=now)
     if doc is not None and (mtime != seen[0]
                              or now - seen[2] > HEARTBEAT):
         if post_feed(displayd_base, doc):
             seen[0], seen[2] = mtime, now
-    cmd = fetch_focus(displayd_base, seen[1])
+    cmd = fetch_focus(displayd_base, seen[1], wait=wait)
     if cmd is None:
         return
     try:
@@ -203,14 +214,23 @@ def main(argv=None):
                          indent=2)[:4000])
         return 0
     interval = min(max(float(args.interval), 0.25), 10.0)
+    # Long-poll hold matches the tick: the loop keeps its cadence (state
+    # POSTs and heartbeat unaffected) while taps wake the fetch at once.
+    # After acting on a tap the next hold re-parks at once (0.05 floor),
+    # so a back-to-back tap wakes instead of riding out the tick sleep.
+    wait = min(interval, LONGPOLL_WAIT_MAX)
     seen = [None, 0.0, 0.0]
     while True:
         t0 = time.monotonic()
+        focus_ts = seen[1]
         try:
-            tick(args.displayd, directory, seen)
+            tick(args.displayd, directory, seen, wait=wait)
         except Exception as err:  # never die on a bad tick
             LOG.warning("apps tick failed: %s", err)
-        time.sleep(max(0.05, interval - (time.monotonic() - t0)))
+        if seen[1] != focus_ts:
+            time.sleep(0.05)
+        else:
+            time.sleep(max(0.05, interval - (time.monotonic() - t0)))
 
 
 if __name__ == "__main__":

@@ -1121,6 +1121,12 @@ class DisplayDaemon:
         self.screen = Screen(self.fb)
         self.renderers = load_renderers(RENDERER_DIR)
         self.lock = threading.Lock()
+        # Long-poll wakeups: every request_* command queue below
+        # notifies this condition, so a GET ?wait= hold on a command
+        # endpoint wakes the instant a tap queues (never the next
+        # poll tick). Own lock -- never held together with self.lock,
+        # so queue and wait cannot deadlock.
+        self.cmd_cond = threading.Condition()
         self.cache_lock = threading.Lock()
         self.feeds = FeedStore()
         self.screen.feeds = self.feeds
@@ -2562,6 +2568,8 @@ class DisplayDaemon:
             self.mouse_seq = getattr(self, "mouse_seq", 0) + 1
             command["id"] = self.mouse_seq
             self.mouse_pending = command
+        with self.cmd_cond:
+            self.cmd_cond.notify_all()
         # The tap carries the user into the zoom: re-show the merged
         # feature in AIM mode (manual navigation, so rotation holds
         # while the review is up). Only on success -- a refusal above
@@ -2674,6 +2682,8 @@ class DisplayDaemon:
             self.focus_seq = getattr(self, "focus_seq", 0) + 1
             command["id"] = self.focus_seq
             self.focus_pending = command
+        with self.cmd_cond:
+            self.cmd_cond.notify_all()
         self.policy.note_api()
         return {"ok": True, "command": dict(command)}
 
@@ -2924,6 +2934,8 @@ class DisplayDaemon:
             self.click_seq = getattr(self, "click_seq", 0) + 1
             command["id"] = self.click_seq
             self.click_pending = command
+        with self.cmd_cond:
+            self.cmd_cond.notify_all()
         self.policy.note_api()
         return {"ok": True, "command": dict(command)}
 
@@ -2947,6 +2959,50 @@ class DisplayDaemon:
         if time.time() - pending["ts"] > self.CLICK_TTL:
             return None
         return pending
+
+    # ---- command long-poll (tap-latency fast lane) --------------------
+    # The three GET command endpoints accept an optional ?wait= (seconds).
+    # wait=0 (or absent/garbage) is exactly today's behavior: one take_*
+    # sample, immediate reply. wait>0 holds the reply until a tap queues
+    # a newer command or the hold expires -- the TTL slot stays the truth
+    # (socket-is-a-fast-lane shape from the transport report): an unacked
+    # command simply sits for the next poll, so the fallback is the status
+    # quo, not a second code path. Bounded by CMD_WAIT_MAX so a turn can
+    # never hang; the held GET runs on its own handler thread and never
+    # touches the idle clock (observation, like every GET). take_*
+    # semantics (read-only, since= idempotency, TTL expiry) are unchanged.
+    CMD_WAIT_MAX = 5.0
+
+    def wait_command(self, kind, since=None, wait=0.0):
+        """take_* with an optional bounded hold. `kind` is one of
+        "mouse" / "focus" / "click". Returns the pending command
+        newer than `since`, or None when idle at hold expiry -- the same
+        shape as take_*, so callers and the wire format never change."""
+        takes = {"mouse": self.take_mouse_move,
+                 "focus": self.take_focus_move,
+                 "click": self.take_click_move}
+        take = takes[kind]  # internal callers only; unknown kind raises
+        try:
+            wait = float(wait) if wait is not None else 0.0
+        except (TypeError, ValueError):
+            wait = 0.0
+        if not wait > 0:  # covers zero, negatives, and NaN alike
+            wait = 0.0
+        wait = min(wait, self.CMD_WAIT_MAX)
+        cmd = take(since)
+        if cmd is not None or wait <= 0:
+            return cmd
+        deadline = time.monotonic() + wait
+        with self.cmd_cond:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self.cmd_cond.wait(timeout=remaining)
+                cmd = take(since)  # re-sample: wakes can be spurious
+                if cmd is not None:
+                    return cmd
+        return take(since)
 
     # ---- policy configuration surface ------------------------------------
 
@@ -3962,19 +4018,29 @@ class Handler(BaseHTTPRequestHandler):
             # pending cursor command, or {"command": None} when there
             # is nothing new (or it TTL-expired). Read-only and
             # idempotent -- a retried fetch never double-fires.
+            # Optional ?wait=<seconds> holds (bounded, see wait_command)
+            # until a tap queues, so the poller wakes on the tap instead
+            # of its next tick; absent/zero is today's immediate reply.
             query = parse_qs(urlsplit(self.path).query)
             raw = (query.get("since", [None])[0])
+            wait = (query.get("wait", [None])[0])
             return self._send(200, {"command":
-                                    DAEMON.take_mouse_move(raw)})
+                                    DAEMON.wait_command("mouse",
+                                                        raw, wait)})
         if path == "/macbook/click":
             # Poller fetch path: ?since=<last acted ts> returns the
             # pending click, or {"command": None} when there is
             # nothing new (or it TTL-expired). Read-only and
             # idempotent -- a retried fetch never double-fires.
+            # Optional ?wait=<seconds> holds (bounded, see wait_command)
+            # until a tap queues, so the poller wakes on the tap instead
+            # of its next tick; absent/zero is today's immediate reply.
             query = parse_qs(urlsplit(self.path).query)
             raw = (query.get("since", [None])[0])
+            wait = (query.get("wait", [None])[0])
             return self._send(200, {"command":
-                                    DAEMON.take_click_move(raw)})
+                                    DAEMON.wait_command("click",
+                                                        raw, wait)})
         if path == "/layout":
             return self._send(200, {"layout": DAEMON.layout_state()})
         if path == "/touch/check":
@@ -4029,10 +4095,15 @@ class Handler(BaseHTTPRequestHandler):
             # Mac-side poller fetch: the one pending focus command
             # newer than ?since=, else no command. Read-only; the
             # poller tracks what it already acted on.
+            # Optional ?wait=<seconds> holds (bounded, see wait_command)
+            # until a tap queues, so the poller wakes on the tap instead
+            # of its next tick; absent/zero is today's immediate reply.
             query = parse_qs(urlsplit(self.path).query)
             raw = query.get("since", [None])[0]
+            wait = query.get("wait", [None])[0]
             return self._send(200, {"command":
-                                    DAEMON.take_focus_move(raw)})
+                                    DAEMON.wait_command("focus",
+                                                        raw, wait)})
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
