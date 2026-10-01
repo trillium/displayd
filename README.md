@@ -38,6 +38,9 @@ through `GET /renderers`.
 * Python 3.8+.
 * [Pillow](https://python-pillow.org/) — used by the daemon and by the bundled
   renderers.
+* Optional, for the [`html` renderer](#html-renderer-optional-litehtml) only: a
+  C++ toolchain, to build the bundled layout engine once with
+  `tools/build_litehtml.sh`. Nothing else here needs it.
 * For screen power control: a `/sys/class/backlight/*` device is used when
   present. Without one, blanking still works but the panel backlight is not
   touched.
@@ -221,9 +224,32 @@ evidence for later human-guided work, not a control loop.
 | `chat` | no | `title`, `lines` (default 7), `background` — inputs: `message`, `delete` |
 | `stream` | no | `url` (snapshot JPEG to poll), `fps` (0.5–5, default 2), `fit` (cover/contain/stretch), `background`, `label` — inputs: `frame` (`{data}` base64 or `{url}`) |
 | `retro_grid` | no | `boxes` (per-cell `label`/`text` or `image` file-or-URL + `color`/`text_color`/`text_size`), `columns`/`rows` (default 4/3), `gutter`, `border`, `background`, `flash_seconds` — input: `tap` (`{cell,label,id,region,x,y}`); tap wiring in `touch-retro-grid.json.example`, see TOUCH.md "Retro grid wiring" |
+| `html` | no | `template` (required, file name in the template root), `vars` (values for `{{placeholders}}`), `background` — input: `vars`; optional, needs the native engine built once, see [docs/HTML_RENDERER.md](docs/HTML_RENDERER.md) |
 
 Static renderers draw one frame and return; that frame stays on screen.
 Animated renderers loop until the daemon stops them.
+
+## HTML renderer (optional, litehtml)
+
+A view that needs real layout, hierarchy and typography can be a few dozen lines
+of HTML and CSS in a file instead of a few hundred lines of PIL. `POST /show
+{"renderer": "html", "params": {"template": "status.html", "vars": {...}}}`
+renders it, and `POST /feed/html/vars {...}` re-renders in place.
+
+The trust boundary is the design: a caller names a template that already exists
+in the template root and passes only *data*, which is HTML-escaped on the way in.
+So a feed payload can never add a style, a remote URL, a script, or a file
+reference. Templates come from `$DISPLAYD_HTML_TEMPLATES` or
+`html-templates/`; the request cannot change that.
+
+The engine is optional and lazily loaded, so the daemon and `GET /renderers`
+work unchanged without it — the view explains how to build it instead of going
+missing. Build it once with:
+
+    DISPLAYD_LITEHTML_BUILD="$PWD/build/litehtml" ./tools/build_litehtml.sh
+
+Full contract, supported CSS, cost measurements, and the failure behaviour:
+[docs/HTML_RENDERER.md](docs/HTML_RENDERER.md).
 
 ## Writing a renderer
 

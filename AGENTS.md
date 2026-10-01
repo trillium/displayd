@@ -298,3 +298,57 @@ keeps running the old tick until the installer runs (`install-mac.sh
 - End-to-end tap proof lives in `tests/test_macbook_tap_live.py` (real HTTP
   headless daemon + real touch client: tap-1 warps into AIM, fresh zoom ->
   tap-2 200 + queued command, 490s-stale zoom -> 409 + nothing queued).
+
+## HTML renderer (optional litehtml template view)
+
+- `renderers/html.py` renders a named local template; the full contract is
+  `docs/HTML_RENDERER.md` (trust boundary, supported CSS, cost). Start from
+  `html-templates/status.html`, which is a working example.
+- The engine is NOT vendored. One pinned commit
+  (`5624e795be50f02c21c89985c374dcd659dbd74b`), built by
+  `DISPLAYD_LITEHTML_BUILD="$PWD/build/litehtml" ./tools/build_litehtml.sh`;
+  `--check` reports staleness, `--force` rebuilds. `build/` and
+  `renderers/native/liblitehtmlpil.{dylib,so}` are gitignored, so a fresh
+  checkout needs one build before the view draws.
+- Loaded lazily in `_html_native.py`, so the view is ALWAYS discovered by
+  `GET /renderers` and MCP even unbuilt, and shows a build hint instead of
+  vanishing. Opt-in by a required `template` param, so it stays out of the
+  default picker/home set.
+- Trust boundary lives in `_html_templates.py`: root from
+  `$DISPLAYD_HTML_TEMPLATES` or `html-templates/` only (never a request), name
+  is `[A-Za-z0-9_-]{1,64}.html`, every `{{value}}` is escaped, a missing
+  variable is an error naming the key, and HTML comments are stripped BEFORE
+  placeholders are read (a commented-out example must not demand a variable).
+  Image refs go through `allow_root()` + `resolve_local()`: local-only, no
+  URL/data/absolute/home/UNC, symlink escape refused, `?`/`#` stripped.
+- Three litehtml gotchas, all verified live, each of which silently renders
+  WRONG rather than failing: `document::render()` returns natural WIDTH, not
+  height (read `doc->height()`, and note this revision declares but never
+  defines `content_height()`); `background_layer` hands the embedder the first
+  TILE in `origin_box` and the region to fill in `border_box` (passing only
+  origin draws exactly one tile, so the ABI carries both); and flex `gap` is
+  dropped when children grow, so templates use child margins.
+- `pil_container::create_element` MUST return nullptr so litehtml builds its
+  own `el_body`/`el_style`/etc.; returning a generic container there is why
+  styles vanish. C ABI side order is left/top/right/bottom. `draw_text`
+  position.y is the top of the text box, not the baseline (PIL uses
+  `y + ascent` with `anchor="ls"`).
+- Callback prototypes are derived from the `_Callbacks` struct via
+  `_prototype()`, never written out twice: a rect added to `draw_image` in the
+  header left the standalone `_CB_*` list short and ctypes failed the whole
+  table with an opaque `TypeError` at render time.
+- Repeating backgrounds compose the covered region into ONE image by doubling
+  the grid (`_compose_repeat`, ~O(log tiles) pastes). Do not reintroduce a
+  per-tile walk with a count cap: the cap truncates in raster order and paints
+  the panel's bottom-right corner black. Verified 1px-tile-over-full-HD in
+  ~2ms.
+- Cost (`python3 tools/bench_html.py`, 1920x1080 `status.html`): ~7ms cold,
+  ~5.6ms warm median, and RSS per render falls 9.6 -> 4.3 -> 0.6 -> 0.2 KiB as
+  the font/image caches fill, i.e. flat in steady state. A leak holds a
+  constant per-render cost, so the staged RSS series is the check.
+- Tests: `tests/test_html.py` (whole contract; 33 skip cleanly with the
+  library hidden, 36 pass). Beware the vacuous shapes: counting frames proves
+  nothing because the view re-renders on every variable change, and a
+  bad-push test that counts 2 frames passes even when frame 2 is the same error
+  card -- discriminate on `_is_error_card` (the red rule) and the template
+  background instead.
