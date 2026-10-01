@@ -16,6 +16,14 @@ venv/
 /snapshot*.png
 /policy.json
 
+# Build output (tools/build_litehtml.sh fetches and builds the pinned
+# layout engine here; see docs/HTML_RENDERER.md). The compiled library is
+# generated too, so it is never committed -- the build script and the pinned
+# revision in it are what make it reproducible.
+/build/
+renderers/native/liblitehtmlpil.dylib
+renderers/native/liblitehtmlpil.so
+
 # Editors / OS
 .DS_Store
 .idea/

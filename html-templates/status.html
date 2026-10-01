@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<!--
+  A working example template, and the seed to copy. This directory IS the
+  template root ($DISPLAYD_HTML_TEMPLATES, default html-templates/ next
+  to the daemon). Copy it, edit the CSS, then:
+
+      POST /show {"renderer": "html",
+                  "params": {"template": "status.html",
+                             "vars": {"title": "BUILD", "sub": "12:04",
+                                      "value": "142", "unit": "taps",
+                                      "note": "AIM review - last 7 days"}}}
+
+  Every {{name}} is HTML-escaped on the way in, so a value from a feed can
+  never add markup. Keep the CSS to what litehtml supports: block and
+  flex layout, padding/margins, borders, solid and rgba colours, local
+  images, and text. No grid, no gradients, no @import, no webfonts.
+  Note: litehtml drops `gap` on a flex row whose children grow, so the
+  cards below space themselves with margin-right instead.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { background: #0b0d10; color: #e9ecf3; font-family: sans-serif; }
+  .wrap  { padding: 34px 40px; }
+  .head  { display: flex; justify-content: space-between; align-items: baseline;
+           border-bottom: 3px solid #24405c; padding-bottom: 12px; }
+  .title { font-size: 40px; font-weight: bold; color: #7fd1ff; }
+  .sub   { font-size: 24px; color: #8b93a7; }
+  .cards { display: flex; margin-top: 26px; }
+  .card  { background: #161b22; border: 1px solid #2b3240; padding: 20px 24px;
+           margin-right: 18px; }
+  .card.last { margin-right: 0; }
+  .value { font-size: 72px; font-weight: bold; }
+  .unit  { font-size: 20px; color: #9aa3b5; }
+  .note  { margin-top: 28px; font-size: 26px; color: #cfd6e4; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div class="title">{{title}}</div>
+      <div class="sub">{{sub}}</div>
+    </div>
+    <div class="cards">
+      <div class="card"><div class="value">{{value}}</div>
+        <div class="unit">{{unit}}</div></div>
+      <div class="card last"><div class="value">{{value}}</div>
+        <div class="unit">{{unit}}</div></div>
+    </div>
+    <div class="note">{{note}}</div>
+  </div>
+</body>
+</html>
