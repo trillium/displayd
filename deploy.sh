@@ -72,11 +72,20 @@ echo "deploying $SHA ($DATE, by $DEPLOYER) to $HOST:$REMOTE_DIR"
 # (_transient_expired, _return_from_base, dismiss_reload) use when there
 # is no base view to go back to.
 DEFAULT_VIEW="clock"
-TRANSIENT_VIEWS=$(python3 -c \
-    "import sys,os; sys.path.insert(0,'$HERE');"\
-    "import policy;"\
-    "renders={f[:-3] for f in os.listdir(os.path.join('$HERE','renderers')) if f.endswith('.py')};"\
-    "print(' '.join(sorted(k for k in policy.PRIORITY if k in renders)))" 2>/dev/null || echo "notice reload")
+# One quoted argument with real newlines (see the RELOAD_BODY note below):
+# backslash-continued "..." segments arrive as separate argv words, so this
+# derivation ran only `import sys,os` and printed nothing, silently living on
+# the `|| echo` fallback -- the repo-derived set its comment promises was
+# never computed.
+TRANSIENT_VIEWS=$(HERE="$HERE" python3 -c '
+import os, sys
+here = os.environ["HERE"]
+sys.path.insert(0, here)
+import policy
+renders = {f[:-3] for f in os.listdir(os.path.join(here, "renderers"))
+           if f.endswith(".py")}
+print(" ".join(sorted(k for k in policy.PRIORITY if k in renders)))
+' 2>/dev/null || echo "notice reload")
 [ -n "$TRANSIENT_VIEWS" ] || TRANSIENT_VIEWS="notice reload"
 is_transient_view() {
     case " $TRANSIENT_VIEWS " in *" $1 "*) return 0;; *) return 1;; esac
@@ -99,9 +108,14 @@ PRESTATE=$(mktemp); trap 'rm -f "$PRESTATE"' EXIT INT TERM
 if curl -s -m 10 "http://$PANEL/state" -o "$PRESTATE"; then
     PRIOR=$(python3 -c \
         "import json; print(json.load(open('$PRESTATE')).get('renderer') or '')" 2>/dev/null || true)
-    PRE_TRANSIENT=$(python3 -c \
-        "import json; d=json.load(open('$PRESTATE'));"\
-        " print(((d.get('policy') or {}).get('transient') or {}).get('active') or '')" 2>/dev/null || true)
+    # One quoted argument (same reason as TRANSIENT_VIEWS above): split
+    # segments left this always empty, so the "transient active" fallback
+    # reason below could never fire.
+    PRE_TRANSIENT=$(PRESTATE="$PRESTATE" python3 -c '
+import json, os
+d = json.load(open(os.environ["PRESTATE"]))
+print(((d.get("policy") or {}).get("transient") or {}).get("active") or "")
+' 2>/dev/null || true)
     FALLBACK_REASON=""
     if [ -z "$PRIOR" ]; then
         FALLBACK_REASON="empty (panel blank)"
@@ -188,10 +202,30 @@ if MSG=$(git -C "$HERE" log -1 --format=%B "$SHA" 2>/dev/null); then
     HIGHLIGHTS=$(printf '%s' "$MSG" \
         | python3 "$HERE/renderers/reload_highlights.py" 2>/dev/null || true)
 fi
-RELOAD_BODY=$(SHA="$SHA" HIGHLIGHTS="$HIGHLIGHTS" python3 -c \
-    "import json,os; body={'sha':os.environ['SHA']};"\
-    "hl=os.environ.get('HIGHLIGHTS','').strip();"\
-    "body.update({'highlights':hl} if hl else {}); print(json.dumps(body))")
+# ONE quoted argument, newlines inside it: a backslash-continued run of
+# separate "..." segments is NOT one argv word (verified across sh/dash/
+# bash/zsh), so python3 -c silently ran only the FIRST segment -- the rest
+# landed in sys.argv -- and printed nothing. RELOAD_BODY came out EMPTY, so
+# the proof POSTed an empty body, the daemon answered 400 "sha is
+# required", and the step warned and skipped on EVERY deploy. This is the
+# same idiom the touch probe below already uses (one quoted string with real
+# newlines); keep every python3 -c in this file that way.
+RELOAD_BODY=$(SHA="$SHA" HIGHLIGHTS="$HIGHLIGHTS" python3 -c '
+import json, os
+body = {"sha": os.environ["SHA"]}
+hl = os.environ.get("HIGHLIGHTS", "").strip()
+if hl:
+    body["highlights"] = hl
+print(json.dumps(body))
+')
+# An unbuildable body would otherwise become an empty POST and a vague
+# warning: that is the silent skip this step exists to prevent, so it is a
+# hard deploy failure instead of a skipped proof.
+if [ -z "$RELOAD_BODY" ]; then
+    echo "deploy.sh: could not build the /reload proof body (sha=$SHA)" >&2
+    restore_panel "$PRIOR"
+    exit 1
+fi
 if [ -n "$HIGHLIGHTS" ]; then
     echo "reload highlights: $(printf '%s' "$HIGHLIGHTS" | head -n 1)"
 else

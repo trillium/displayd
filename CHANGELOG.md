@@ -5,7 +5,36 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
-## 0.5.0
+## 0.6.0
+
+`deploy.sh` proved its build on every deploy again. The /reload proof step
+built its request body with a backslash-continued run of separately-quoted
+segments: a line continuation removes the newline but does NOT join two
+separately-quoted words into one argv entry (verified against sh, dash,
+bash 3.2, bash 5.3 and zsh), so `python3 -c` received only the FIRST segment
+as its program, the rest landed in sys.argv, and the segment it did run
+printed nothing. RELOAD_BODY came out EMPTY, the proof POSTed an empty body,
+the daemon correctly answered 400 "sha is required", and step 4 warned
+"reload proof failed; continuing" and skipped -- so the panel stopped
+proving which build it was running. Not consecutive-specific: it failed on
+every deploy, and the deploy still exited 0 because step 6 gates on other
+evidence. An unbuildable body is now a hard deploy failure rather than a
+silent skip, so this can never again pass as a skipped proof.
+
+The same idiom hid in two more places in the same script. The transient-view
+derivation (the set that decides whether the prior view is a transient) ran
+only `import sys,os` and lived on its `|| echo "notice reload"` fallback, so
+the repo-derived set its own comment promises was never computed; and
+PRE_TRANSIENT was always empty, so the documented "transient active" prior
+view fallback could never fire. Both are now single quoted programs; the
+derived set still evaluates to exactly `notice reload`, so the fix restores
+the documented behaviour rather than changing it.
+
+Every `python3 -c` in deploy.sh must now pass exactly one program argument.
+`tests/test_deploy_reload_proof.py` runs the real script against a headless
+daemon twice in a row (stubbed ssh/rsync, no live host) and fails if the
+proof is skipped or the deploy does not exit 0, plus a lexical guard that
+fails on the pre-fix script, so the defect class cannot return silently.
 
 New read-only POST /touch/resolve endpoint: it resolves a tap ({x,y}
 or {x_norm,y_norm}) against the current UI and returns the region and
