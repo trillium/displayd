@@ -12,6 +12,10 @@
 #   2. rsyncs this repo to ~/displayd on lnx-server (no --delete: the host
 #      holds host-local files the repo must never wipe -- touch.json,
 #      state/, backups/, policy.json, the feedback log).
+#   2b. Installs + verifies the optional html view's runtime set on the host
+#      (tools/install_html_runtime.sh). The engine is a Linux build, so it is
+#      produced ON the host by the shipped pinned build script rather than
+#      carried over from the Mac; the step is a fast no-op once built.
 #   3. Restarts the daemon (sudo systemctl restart displayd).
 #   4. Re-shows the prior view (restart blanks the screen), then POSTs
 #      /reload with the deployed SHA so the panel itself proves the build
@@ -156,6 +160,26 @@ rsync -az \
     --exclude '*_frames/' \
     "$HERE/" "$HOST:$REMOTE_DIR/"
 echo "rsync done"
+
+# 2b. The html view's runtime set, on the target.
+#
+# Not --strict on purpose: this step must never fail a deploy of a panel that
+# has been serving fine without the optional view, so a host with no C++
+# toolchain (or a build that fails) degrades to a loud warning instead. The
+# gap is not silent, though -- it is printed with the exact build command and
+# it is observable in GET /state's "html" key on the running daemon.
+#
+# timeout(1) bounds the build: it exists on coreutils Linux, and where it is
+# missing the call fails fast into the same warning path rather than hanging.
+HTML_LOG=$($SSH "$HOST" "timeout 1800 sh '$REMOTE_DIR/tools/install_html_runtime.sh' --prefix '$REMOTE_DIR'" 2>&1) || true
+printf '%s\n' "$HTML_LOG" | sed -n '/^install_html_runtime:/p' | sed 's/^/  /'
+if printf '%s' "$HTML_LOG" | grep -q '^complete:'; then
+    echo "html runtime: complete on $HOST"
+else
+    echo "warning: html runtime incomplete on $HOST -- the html view will draw a build card:" >&2
+    printf '%s\n' "$HTML_LOG" | grep '^missing:' | sed 's/^/  /' >&2
+    echo "  fix: ssh $HOST \"$REMOTE_DIR/tools/build_litehtml.sh\"" >&2
+fi
 
 # 3. Restart the daemon. -n fails fast instead of hanging on a password
 #    prompt; BatchMode fails fast on ssh approval walls.

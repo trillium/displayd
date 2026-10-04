@@ -122,7 +122,16 @@ class _Callbacks(ctypes.Structure):
     ]
 
 
-def _lib_path():
+def lib_path():
+    """The engine library the renderer would load, or None when unbuilt.
+
+    Searched in one place, in one order, so the installer
+    (tools/install_html_runtime.sh) can check the same contract the load
+    path uses: ``$DISPLAYD_HTML_LIB`` first, then ``renderers/native/``
+    beside this module. That second one is an installed-tree path derived
+    from ``__file__``, so an installed target needs no environment variable
+    and no developer-local checkout to find its runtime.
+    """
     override = os.environ.get("DISPLAYD_HTML_LIB")
     if override:
         return override
@@ -143,7 +152,7 @@ def lib():
     with _LIB_LOCK:
         if _LIB is not None:
             return _LIB
-        path = _lib_path()
+        path = lib_path()
         if not path:
             raise NativeMissing(
                 "html renderer: native library not built -- run "
