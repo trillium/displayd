@@ -3,8 +3,13 @@
 
 Usage: python3 tools/check-lines.py [--limit N]
 
-Budget: 250 lines per Python file. Excluded: tests/ (specs, not
-shipped code) and vendored third-party modules (renderers/_*).
+Budget: 250 lines per Python file.
+Classifications (precise):
+- Config files: pyproject.toml, *.toml, *.json, *.yaml, *.yml in repo root or config dirs
+  are treated as config (not checked by this Python line counter).
+- Test files: under tests/ are excluded (specs, not shipped authored code).
+- Vendored: files under renderers/_* (e.g. renderers/_qrcodegen.py) are excluded.
+- Authored shipped code: all other .py files are subject to the 250-line budget.
 Run from the repo root; exit non-zero listing offenders.
 """
 
@@ -17,7 +22,12 @@ EXCLUDE_PREFIXES = ("renderers/_",)
 
 
 def main(argv):
-    limit = int(argv[1]) if len(argv) > 1 else LIMIT
+    limit = LIMIT
+    if len(argv) > 1:
+        if argv[1].startswith("--limit"):
+            limit = int(argv[2]) if len(argv) > 2 else int(argv[1].split("=")[1]) if "=" in argv[1] else LIMIT
+        else:
+            limit = int(argv[1])
     root = pathlib.Path(".")
     bad = []
     for path in sorted(root.rglob("*.py")):
