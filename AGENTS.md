@@ -308,8 +308,11 @@ keeps running the old tick until the installer runs (`install-mac.sh
   (`5624e795be50f02c21c89985c374dcd659dbd74b`), built by
   `DISPLAYD_LITEHTML_BUILD="$PWD/build/litehtml" ./tools/build_litehtml.sh`;
   `--check` reports staleness, `--force` rebuilds. `build/` and
-  `renderers/native/liblitehtmlpil.{dylib,so}` are gitignored, so a fresh
-  checkout needs one build before the view draws.
+  `renderers/native/liblitehtmlpil.{dylib,so}` are gitignored, so the binary
+  is per-target: `tools/install_html_runtime.sh` (engine + native sources +
+  licences + templates + build script) owns that set, `--strict` from
+  `install.sh`, non-strict from `deploy.sh` (Linux build, so it builds ON the
+  host). `GET /state`'s `html` key answers the same question at runtime.
 - Loaded lazily in `_html_native.py`, so the view is ALWAYS discovered by
   `GET /renderers` and MCP even unbuilt, and shows a build hint instead of
   vanishing. Opt-in by a required `template` param, so it stays out of the

@@ -27,6 +27,35 @@ The library is loaded lazily, on first render, not at import. So a checkout
 without it still discovers the renderer, still lists it in `GET /renderers`, and
 shows a card explaining how to build it.
 
+## Installing
+
+A clean target needs five things for this view to work: the two licence
+notices, the three C++ sources, `tools/build_litehtml.sh`, at least one
+`html-templates/*.html`, and the built engine itself. One script owns that set,
+so "did it all arrive?" is one question with one answer:
+
+    ./tools/install_html_runtime.sh --prefix /opt/displayd   # install (builds if needed)
+    ./tools/install_html_runtime.sh --prefix /opt/displayd --check   # verify, never builds
+    DISPLAYD_HTML_LIB=/path/to/liblitehtmlpil.so            # override the library
+
+`install.sh` runs it `--strict` before it writes the unit file, so a panel that
+advertises the view cannot be installed without its runtime (`DISPLAYD_SKIP_HTML=1`
+opts out). `deploy.sh` runs the same script on the host after the rsync and
+before the restart, **without** `--strict`: the engine is a Linux build, so it is
+produced on the target by the shipped pinned build script, and a host with no
+C++ toolchain must degrade to a loud warning rather than fail a deploy of an
+otherwise healthy panel. Both are no-ops once the engine exists.
+
+The result is machine-readable on stdout in every mode:
+
+    complete: <prefix>        # every required artifact is in place
+    missing: <relative path>  # one line per gap, both modes
+    incomplete: <prefix>      # trailing verdict when anything was missing
+
+`GET /state` carries the same answer as the `html` key
+(`{"ok": true, "library": ..., "version": ..., "template_root": ..., "templates": [...]}`),
+so a deployed panel can be asked what it has without anybody reading logs.
+
 ## Templates
 
 Templates live in one directory, and the request never chooses it:
@@ -141,8 +170,10 @@ that only survives polite input is not a budget.
 | `renderers/native/displayd_html.h` | the C ABI between them |
 | `renderers/native/pil_container.cpp` | the litehtml container |
 | `tools/build_litehtml.sh` | pinned build |
+| `tools/install_html_runtime.sh` | the install/check set (engine, sources, licences, templates) |
 | `tools/bench_html.py` | the cost harness above |
-| `tests/test_html.py` | the whole contract |
+| `tests/test_html.py` | the whole rendering contract |
+| `tests/test_html_runtime_install.py` | the install/check/deploy contract |
 
 The renderer is not in the default picker or home screen: it needs a template
 name, so it is something to `POST /show` (or wire a touch region to), not

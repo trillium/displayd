@@ -56,6 +56,15 @@ elif "cat >" in cmd:
     with open(STAMP if name == "DEPLOYED"
               else os.path.join(os.path.dirname(STAMP), name), "wb") as fh:
         fh.write(data)
+elif "install_html_runtime" in cmd:
+    # The fixture host has no deployed tree, so answer the html-runtime step
+    # by really running the shipped installer in check mode against the repo.
+    # Check mode builds nothing: it answers the question deploy.sh asks --
+    # "is the set complete here" -- which for a bare checkout it is not,
+    # because no engine has been built. That is a truthful warning, and
+    # deploy.sh is expected to continue with it.
+    subprocess.run(["sh", os.path.join(REPO, "tools", "install_html_runtime.sh"),
+                    "--prefix", REPO, "--check"], check=False)
 elif "restart displayd" in cmd:
     try:
         os.kill(int(open(PIDF).read().strip()), signal.SIGTERM)

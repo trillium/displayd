@@ -40,7 +40,9 @@ through `GET /renderers`.
   renderers.
 * Optional, for the [`html` renderer](#html-renderer-optional-litehtml) only: a
   C++ toolchain, to build the bundled layout engine once with
-  `tools/build_litehtml.sh`. Nothing else here needs it.
+  `tools/build_litehtml.sh`. `install.sh` invokes it through
+  `tools/install_html_runtime.sh`; nothing else here needs a compiler
+  (`DISPLAYD_SKIP_HTML=1` opts out, and the view then draws a build card).
 * For screen power control: a `/sys/class/backlight/*` device is used when
   present. Without one, blanking still works but the panel backlight is not
   touched.
@@ -244,7 +246,10 @@ reference. Templates come from `$DISPLAYD_HTML_TEMPLATES` or
 
 The engine is optional and lazily loaded, so the daemon and `GET /renderers`
 work unchanged without it — the view explains how to build it instead of going
-missing. Build it once with:
+missing. `install.sh` and `deploy.sh` both run `tools/install_html_runtime.sh`,
+which delivers the engine, its sources and licences, and the templates, then
+verifies the set (`--check` never builds). The running daemon answers the same
+question from `GET /state`'s `html` key. Build it by hand with:
 
     DISPLAYD_LITEHTML_BUILD="$PWD/build/litehtml" ./tools/build_litehtml.sh
 

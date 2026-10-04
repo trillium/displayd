@@ -3193,7 +3193,29 @@ class DisplayDaemon:
             # Reload scan-confirm: pending window + expiry while the
             # reload view shows, else None. No history is kept.
             "reload_confirm": self.reload_confirm_state(),
+            # The optional html view's runtime: is the engine installed and
+            # loadable from this process, and which templates can it read.
+            # None when the renderer module failed to load at all.
+            "html": self.html_runtime(),
         }
+
+    def html_runtime(self):
+        """The html view's runtime status, or None when it is not loadable.
+
+        Asked of the renderer module rather than recomputed here, so /state
+        reports the paths that renderer really resolves instead of a second
+        copy of the same rules. Total by construction: a status probe that
+        can raise is not a status, and /state must never fail on one.
+        """
+        entry = self.renderers.get("html") or {}
+        module = entry.get("module")
+        probe = getattr(module, "runtime_status", None)
+        if probe is None:
+            return None
+        try:
+            return probe()
+        except Exception as err:  # a probe, not a dependency
+            return {"ok": False, "error": str(err)}
 
     def renderer_list(self):
         out = []

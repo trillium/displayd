@@ -13,7 +13,10 @@ remote URL, a script, or a file reference. See _html_templates.py.
 
 The native library is optional and lazily loaded, so this view always
 loads: without the library it shows what to build instead of going
-missing from /renderers. Build it with tools/build_litehtml.sh.
+missing from /renderers. Build it with tools/build_litehtml.sh, or
+install the whole runtime set (engine + trusted templates) onto a
+target with tools/install_html_runtime.sh, which is what install.sh
+and deploy.sh do.
 
 POST /show {"renderer": "html",
             "params": {"template": "status.html", "vars": {...}}}
@@ -122,6 +125,33 @@ def _key(template, variables, background):
                 tuple(background))
     except AttributeError:
         return None
+
+
+def runtime_status():
+    """Can this view actually draw, and from what? For GET /state.
+
+    Every path here is the one this renderer really uses, so the answer is
+    the install contract rather than a separate opinion about it: the engine
+    library this process would dlopen, the engine's own revision string, and
+    the template root the trust boundary will read. A target installed
+    without tools/install_html_runtime.sh answers ``ok: false`` here with
+    the exact path it looked in, instead of the panel discovering it one red
+    card at a time.
+
+    Never raises: /state has to stay total, and a status probe that can fail
+    is not a status.
+    """
+    status = {"ok": False, "library": None, "version": None,
+              "template_root": None, "templates": 0, "error": None}
+    try:
+        status["library"] = _html_native.lib_path()
+        status["template_root"] = templates.default_root()
+        status["templates"] = len(templates.available())
+        status["version"] = _html_native.version()
+        status["ok"] = bool(status["library"]) and status["templates"] > 0
+    except (_html_native.HtmlRenderError, OSError) as err:
+        status["error"] = str(err)
+    return status
 
 
 def run(screen, params, stop):
