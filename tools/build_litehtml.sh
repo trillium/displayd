@@ -109,6 +109,7 @@ actual="$(git -C "$SRC" rev-parse HEAD)"
 log "configuring litehtml (Release, testing off, lint off)"
 cmake -S "$SRC" -B "$BUILD_DIR/build" \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DLITEHTML_BUILD_TESTING=OFF \
     -DLITEHTML_ENABLE_LINT=OFF \
     -DEXTERNAL_GUMBO=OFF >/dev/null
