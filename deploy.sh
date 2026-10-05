@@ -176,9 +176,11 @@ printf '%s\n' "$HTML_LOG" | sed -n '/^install_html_runtime:/p' | sed 's/^/  /'
 if printf '%s' "$HTML_LOG" | grep -q '^complete:'; then
     echo "html runtime: complete on $HOST"
 else
-    echo "warning: html runtime incomplete on $HOST -- the html view will draw a build card:" >&2
+    echo "deploy.sh: html runtime incomplete on $HOST" >&2
     printf '%s\n' "$HTML_LOG" | grep '^missing:' | sed 's/^/  /' >&2
     echo "  fix: ssh $HOST \"$REMOTE_DIR/tools/build_litehtml.sh\"" >&2
+    restore_panel "$PRIOR"
+    exit 1
 fi
 
 # 3. Restart the daemon. -n fails fast instead of hanging on a password
