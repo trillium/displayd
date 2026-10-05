@@ -5,6 +5,29 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.6.1
+
+Deploying to the host works again. `deploy.sh` ran
+`tools/install_html_runtime.sh --prefix ~/displayd` on the box, and in that
+configuration the installer's own repo root IS the prefix, so every
+artifact copy was a copy of a file onto itself. GNU install refuses those
+-- `install: '.../renderers/native/displayd_html.h' and
+'.../renderers/native/displayd_html.h' are the same file` -- and the script
+exited 1 before printing its completion token, which the gate added in
+0.6.0 reads as an unusable LiteHTML renderer. The deploy therefore refused
+before its restart step and the live panel silently stopped receiving
+merged work, even though the engine was already built on the host.
+
+The three copies (tracked artifacts, templates, engine) now go through one
+`install_file()` helper that skips a copy whose destination already IS the
+source, decided on resolved identity rather than string equality -- so a
+relative or symlinked spelling of the prefix is handled too -- and never
+skips when the paths cannot be resolved. The gate itself is unchanged: a
+genuinely absent renderer is still reported `incomplete` and still fails
+`--strict`; only the self-copy no-op is now a success. An install run with
+the prefix equal to the source checkout is the case covered by the new
+tests.
+
 ## 0.6.0
 
 `deploy.sh` proved its build on every deploy again. The /reload proof step

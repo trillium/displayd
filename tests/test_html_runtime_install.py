@@ -21,6 +21,19 @@ these tests hold four properties:
   4. install.sh and deploy.sh both go through that script, so there is one
      path to a clean target rather than two that can drift.
 
+And a fifth, added with the fix for the host deploy that refused before its
+restart step:
+
+  5. an install whose --prefix resolves to the source tree itself completes.
+     deploy.sh installs into the checkout it just synced, so every copy is a
+     copy of a file onto itself; install(1) refuses those with "are the same
+     file", the script died before printing its success token, and deploy.sh
+     read that as an unusable renderer. The seam the fix lives on is
+     install_file() -- the single copy point -- which skips a copy whose
+     destination already IS the source, decided on resolved identity rather
+     than string equality so a relative or symlinked spelling of the prefix
+     works too.
+
 The engine is a real compiled artifact, so no test here builds one: the
 installer is driven against a synthetic source tree carrying a stand-in
 library, and the parts that would need a compiler are the parts that are
@@ -443,6 +456,72 @@ class TestInstallPathsGoThroughTheInstaller(unittest.TestCase):
     def test_deploy_sh_names_the_build_command_when_the_set_is_short(self):
         src = self._text("deploy.sh")
         self.assertIn("build_litehtml.sh", src)
+
+
+class TestInstallIntoItsOwnSourceTree(unittest.TestCase):
+    """deploy.sh installs into the tree it just synced: --prefix == the
+    checkout. Every tracked artifact is then its own destination, and
+    install(1) refuses to copy a file onto itself -- which killed the run
+    before its success token, so deploy.sh saw "incomplete" for a runtime
+    that was already there and refused to restart the panel."""
+
+    def setUp(self):
+        self.src = SourceTree()
+        self.addCleanup(self.src.clean)
+
+    def test_prefix_equal_to_the_repo_root_completes(self):
+        ran = run_installer(self.src, [], self.src.root)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertIn("complete: %s" % self.src.root, ran.stdout)
+        self.assertNotIn("same file", ran.stdout + ran.stderr)
+
+    def test_every_artifact_is_still_there_afterwards(self):
+        def slurp(rel):
+            with open(os.path.join(self.src.root, rel), "rb") as fh:
+                return fh.read()
+
+        before = {rel: slurp(rel) for rel in REQUIRED_SOURCES}
+        ran = run_installer(self.src, [], self.src.root)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        for rel, body in before.items():
+            self.assertEqual(slurp(rel), body, rel)
+
+    def test_relative_spelling_of_the_repo_root_also_completes(self):
+        # Resolved identity, not string equality: "./renderers/x" and
+        # "<root>/renderers/x" are the same file but not the same string.
+        ran = run_installer(self.src, [], ".")
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertIn("complete: .", ran.stdout)
+
+    def test_symlinked_spelling_of_the_repo_root_also_completes(self):
+        link = self.src.root + "-link"
+        os.symlink(self.src.root, link)
+        self.addCleanup(os.unlink, link)
+        ran = run_installer(self.src, [], link)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertIn("complete: %s" % link, ran.stdout)
+
+    def test_check_on_the_repo_root_still_reports_complete(self):
+        ran = run_installer(self.src, ["--check"], self.src.root)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertIn("complete: %s" % self.src.root, ran.stdout)
+
+    def test_a_genuinely_incomplete_same_root_is_still_incomplete(self):
+        # The skip must not turn a real gap into a success: with no engine
+        # and a build that fails, the same-prefix run still says so.
+        short = SourceTree(engine=False)
+        self.addCleanup(short.clean)
+        script = os.path.join(short.root, "tools", "build_litehtml.sh")
+        with open(script, "w") as fh:
+            fh.write("#!/bin/sh\necho 'cmake is required' >&2\nexit 1\n")
+        os.chmod(script, 0o755)
+        ran = run_installer(short, [], short.root)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertIn("incomplete: %s" % short.root, ran.stdout)
+        self.assertIn("missing: renderers/native/liblitehtmlpil.{so,dylib}",
+                      ran.stdout)
+        strict = run_installer(short, ["--strict"], short.root)
+        self.assertEqual(strict.returncode, 1, strict.stdout + strict.stderr)
 
 
 def _daemon_import_closure():
