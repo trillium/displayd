@@ -5,9 +5,10 @@ lines of HTML and CSS in a file, not a few hundred lines of PIL. The `html`
 renderer is that escape hatch. [litehtml](https://github.com/litehtml/litehtml)
 does the layout; Pillow still draws every pixel.
 
-It is **opt-in and optional**. The daemon runs exactly as before without it, and
-the view always loads even when the native library has never been built, because
-"not built yet" is something the panel should be able to say.
+It is **optional**: no other view depends on it, the daemon runs exactly as
+before without the engine, and the view always loads even when the native
+library has never been built, because "not built yet" is something the panel
+should be able to say.
 
 ## Build
 
@@ -75,6 +76,55 @@ example, not a stub.
                                     "note": "AIM review - last 7 days"}}}
 
     POST /feed/html/vars {"title": "...", "value": "..."}   # re-renders in place
+
+## layout.html: the shared panel chrome
+
+`html-templates/layout.html` is the shell the UI is built from: header,
+side gesture strips, content band, footer. It is the **default template**,
+so `template` is an ordinary optional param and this view is selectable,
+rotatable and tileable like any other -- a bare
+
+    POST /show {"renderer": "html"}
+
+draws the shell, and a later
+
+    POST /feed/html/vars {"eyebrow": "NOW", "title": "BUILD", ...}
+
+becomes its live content without a re-show. `template` and `vars` are
+otherwise unchanged, and the trust boundary below applies to this template
+exactly as it does to every other.
+
+### The variable contract
+
+All ten are **required**: a placeholder with no value is an error, not a
+blank, so a partial push names what is missing instead of drawing a shell
+that looks right and is wrong. An empty string is a real value and
+collapses its slot, so a caller hides a band by emptying it. The set is
+pinned by a test against the shipped `DEFAULT_VARS` in `renderers/html.py`,
+so the template and its defaults cannot drift apart.
+
+| Variable | Slot |
+| --- | --- |
+| `eyebrow` | short label above the title, dim |
+| `title` | the name of what is on screen, large |
+| `status` | right-hand state (clock, health), dim |
+| `lead` | the line that must read from across a room |
+| `body` | supporting detail under the lead |
+| `hint_left` | label in the left gesture strip |
+| `hint_right` | label in the right gesture strip |
+| `footer` | small bottom-left status |
+| `footer_right` | small bottom-right status |
+
+Authored at 1920x1080 for a panel read from across a room: type is large
+and bands are wide. litehtml lays the frame out to whatever viewport it is
+handed, so the same file also fills a smaller screen, but the type size is
+fixed in px -- litehtml has no viewport-relative units.
+
+One documented exception to "required": an **empty** variable set on the
+default template renders `DEFAULT_VARS` from `renderers/html.py`, because a
+tile that shows a red card the moment it is tapped is not a usable home
+tile. Every other template, and every partial push, still names its missing
+key.
 
 ## The trust boundary
 
@@ -164,7 +214,8 @@ that only survives polite input is not a budget.
 
 | File | Role |
 | --- | --- |
-| `renderers/html.py` | the view: params, the poll loop, error cards |
+| `renderers/html.py` | the view: params, defaults, the poll loop, error cards |
+| `html-templates/layout.html` | the shared panel chrome + its variable contract |
 | `renderers/_html_templates.py` | the trust boundary: name, root, escaping |
 | `renderers/_html_native.py` | ctypes + Pillow; fonts, images, clipping, tiling |
 | `renderers/native/displayd_html.h` | the C ABI between them |
@@ -175,6 +226,7 @@ that only survives polite input is not a budget.
 | `tests/test_html.py` | the whole rendering contract |
 | `tests/test_html_runtime_install.py` | the install/check/deploy contract |
 
-The renderer is not in the default picker or home screen: it needs a template
-name, so it is something to `POST /show` (or wire a touch region to), not
-something that appears on its own.
+The renderer carries the default template, so it appears on the picker and
+the merged home screen and rotates like any other view. It is still a
+template view -- it draws no tile grid of its own -- and every other file in
+the root is still one `POST /show` away.

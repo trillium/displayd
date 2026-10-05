@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<!--
+  The shared panel shell: header, side gesture strips, content band and
+  footer. Every UI surface built on litehtml starts from this file, so the
+  chrome is authored once instead of being recomputed in pixels per
+  renderer.
+
+  VARIABLE CONTRACT -- all ten are required, because a placeholder with no
+  value is an error, not a blank: the panel would show a wrong layout
+  rather than name the missing key. An empty string is a real value and
+  collapses its slot to nothing, so a caller hides a band by emptying it.
+
+      eyebrow      one short label above the title, dim, small
+      title        the name of what is on screen, large
+      status       right-hand state (clock, health), dim, small
+      lead         the one line that has to be readable from across a room
+      body         supporting detail under the lead
+      hint_left    label in the left gesture strip
+      hint_right   label in the right gesture strip
+      footer       small bottom-left status
+      footer_right small bottom-right status
+
+      POST /show {"renderer": "html", "params": {"template": "layout.html",
+                   "vars": {"eyebrow": "NOW", "title": "BUILD", ...}}}
+      POST /feed/html/vars {"title": "...", ...}   # re-renders in place
+
+  Sized for a 1920x1080 panel read from across a room: type is large, the
+  bands are wide, and nothing is closer together than the eye can pick out
+  at that distance. litehtml lays the frame out to whatever viewport it is
+  given, so the same file also fills a smaller screen; only the type size
+  is fixed, because litehtml has no viewport-relative units.
+
+  Keep the CSS to what litehtml supports: block and flex layout,
+  padding/margins, absolute positioning, borders, solid and rgba() colours,
+  and text. No grid, no gradients, no @import, no webfonts. Note that
+  litehtml drops `gap` on a flex row whose children grow, so spacing
+  between children here is margins, never `gap`.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { background: #07080c; color: #eef2fa; font-family: sans-serif;
+               height: 100%; }
+  .frame { display: flex; height: 100%; }
+  .strip { width: 160px; background: #0b0d13; }
+  .strip .hint { font-size: 26px; color: #5c6780; text-align: center;
+                 padding-top: 500px; }
+  .main { width: 1600px; display: flex; flex-direction: column;
+          padding: 40px 0 0 0; }
+  .head { display: flex; justify-content: space-between;
+          align-items: baseline; padding: 0 64px; }
+  .eyebrow { font-size: 30px; font-weight: bold; color: #7fd1ff; }
+  .status { font-size: 30px; color: #8b93a7; }
+  .title { font-size: 96px; font-weight: bold; color: #ffffff;
+           padding: 8px 64px 0 64px; }
+  .rule { height: 4px; background: #24405c; margin: 22px 64px 0 64px; }
+  .lead { font-size: 64px; font-weight: bold; color: #f4f7ff;
+          padding: 44px 64px 0 64px; }
+  .body { font-size: 38px; color: #b9c2d6; padding: 18px 64px 0 64px; }
+  .foot { margin-top: auto; display: flex; justify-content: space-between;
+          align-items: baseline; padding: 0 64px 64px 64px; }
+  .foot .left { font-size: 26px; color: #6f7b93; }
+  .foot .right { font-size: 26px; color: #6f7b93; }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="strip"><div class="hint">{{hint_left}}</div></div>
+    <div class="main">
+      <div class="head">
+        <div class="eyebrow">{{eyebrow}}</div>
+        <div class="status">{{status}}</div>
+      </div>
+      <div class="title">{{title}}</div>
+      <div class="rule"></div>
+      <div class="lead">{{lead}}</div>
+      <div class="body">{{body}}</div>
+      <div class="foot">
+        <div class="left">{{footer}}</div>
+        <div class="right">{{footer_right}}</div>
+      </div>
+    </div>
+    <div class="strip"><div class="hint">{{hint_right}}</div></div>
+  </div>
+</body>
+</html>

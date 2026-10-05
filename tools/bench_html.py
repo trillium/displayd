@@ -71,6 +71,24 @@ PANEL = (1920, 1080)
 VARS = {"title": "BUILD", "sub": "12:04", "value": "142", "unit": "taps",
         "note": "AIM review - last 7 days"}
 
+
+def vars_for(template):
+    """Values for `template`, preferring the renderer's own defaults.
+
+    A shipped template with a different contract (layout.html) is measured
+    against the variables it actually documents, so the bench reports a real
+    number for the default UI surface instead of a TemplateError.
+    """
+    if template == "layout.html":
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "renderers", "html.py")
+        spec = importlib.util.spec_from_file_location("bench_html_view", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return dict(mod.DEFAULT_VARS)
+    return dict(VARS)
+
 # The shapes the caps in _html_native.py and the container exist for. A
 # render budget that only survives polite input is not a budget.
 HOSTILE = [
@@ -126,7 +144,7 @@ def main():
     version = _html_native.version()
     print("engine: %s" % version)
 
-    document, root = templates.load(args.template, VARS)
+    document, root = templates.load(args.template, vars_for(args.template))
     report = {"engine": version, "width": args.width, "height": args.height,
               "template": args.template}
 

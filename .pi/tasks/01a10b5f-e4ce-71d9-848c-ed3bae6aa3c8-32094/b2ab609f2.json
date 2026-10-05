@@ -1,0 +1,28 @@
+{
+  "id": "b2ab609f2",
+  "name": "build litehtml engine",
+  "command": "cd /Users/mini1/code/displayd-gnhf-worktrees/objective-make-liteh-e9cc14 && ./tools/build_litehtml.sh 2>&1 | tail -40",
+  "status": "completed",
+  "outputPath": ".pi/tasks/01a10b5f-e4ce-71d9-848c-ed3bae6aa3c8-32094/b2ab609f2.output",
+  "cwd": "/Users/mini1/code/displayd-gnhf-worktrees/objective-make-liteh-e9cc14",
+  "startTime": 1791192238850,
+  "endTime": 1791192247220,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 42907,
+  "bytesWritten": 1534,
+  "isAgent": false,
+  "surviveReload": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 1800,
+  "shellPolicy": {
+    "policy": "inherit",
+    "executable": "/bin/zsh",
+    "argvPrefix": [
+      "-c"
+    ],
+    "dialect": "posix"
+  }
+}

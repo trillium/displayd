@@ -38,7 +38,7 @@ through `GET /renderers`.
 * Python 3.8+.
 * [Pillow](https://python-pillow.org/) — used by the daemon and by the bundled
   renderers.
-* Optional, for the [`html` renderer](#html-renderer-optional-litehtml) only: a
+* Optional, for the [`html` renderer](#html-renderer-litehtml) only: a
   C++ toolchain, to build the bundled layout engine once with
   `tools/build_litehtml.sh`. `install.sh` invokes it through
   `tools/install_html_runtime.sh`; nothing else here needs a compiler
@@ -226,17 +226,26 @@ evidence for later human-guided work, not a control loop.
 | `chat` | no | `title`, `lines` (default 7), `background` — inputs: `message`, `delete` |
 | `stream` | no | `url` (snapshot JPEG to poll), `fps` (0.5–5, default 2), `fit` (cover/contain/stretch), `background`, `label` — inputs: `frame` (`{data}` base64 or `{url}`) |
 | `retro_grid` | no | `boxes` (per-cell `label`/`text` or `image` file-or-URL + `color`/`text_color`/`text_size`), `columns`/`rows` (default 4/3), `gutter`, `border`, `background`, `flash_seconds` — input: `tap` (`{cell,label,id,region,x,y}`); tap wiring in `touch-retro-grid.json.example`, see TOUCH.md "Retro grid wiring" |
-| `html` | no | `template` (required, file name in the template root), `vars` (values for `{{placeholders}}`), `background` — input: `vars`; optional, needs the native engine built once, see [docs/HTML_RENDERER.md](docs/HTML_RENDERER.md) |
+| `html` | no | `template` (file name in the template root, default `layout.html`), `vars` (values for `{{placeholders}}`), `background` — input: `vars`; needs the native engine built once, see [docs/HTML_RENDERER.md](docs/HTML_RENDERER.md) |
 
 Static renderers draw one frame and return; that frame stays on screen.
 Animated renderers loop until the daemon stops them.
 
-## HTML renderer (optional, litehtml)
+## HTML renderer (litehtml)
 
 A view that needs real layout, hierarchy and typography can be a few dozen lines
 of HTML and CSS in a file instead of a few hundred lines of PIL. `POST /show
 {"renderer": "html", "params": {"template": "status.html", "vars": {...}}}`
 renders it, and `POST /feed/html/vars {...}` re-renders in place.
+
+`template` defaults to `html-templates/layout.html`, the shared panel chrome
+(header, side gesture strips, content band, footer). Because the default needs
+no params, `html` is offered on the picker and the merged home screen and
+rotates like any other view: a bare `POST /show {"renderer": "html"}` draws the
+shell, and a push to it becomes live content. Its ten variables (`eyebrow`,
+`title`, `status`, `lead`, `body`, `hint_left`, `hint_right`, `footer`,
+`footer_right`) are all required and documented in the template header and in
+`docs/HTML_RENDERER.md`.
 
 The trust boundary is the design: a caller names a template that already exists
 in the template root and passes only *data*, which is HTML-escaped on the way in.

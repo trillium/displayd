@@ -299,11 +299,25 @@ keeps running the old tick until the installer runs (`install-mac.sh
   headless daemon + real touch client: tap-1 warps into AIM, fresh zoom ->
   tap-2 200 + queued command, 490s-stale zoom -> 409 + nothing queued).
 
-## HTML renderer (optional litehtml template view)
+## HTML renderer (litehtml template view -- the UI's rendering layer)
 
 - `renderers/html.py` renders a named local template; the full contract is
   `docs/HTML_RENDERER.md` (trust boundary, supported CSS, cost). Start from
   `html-templates/status.html`, which is a working example.
+- `html-templates/layout.html` is the SHARED PANEL CHROME (header, side
+  gesture strips, content band, footer) and the default template, so `template`
+  is optional and `html` sits in the live picker/home set and rotates like
+  any other view. Its ten variables (`eyebrow`, `title`, `status`, `lead`,
+  `body`, `hint_left`, `hint_right`, `footer`, `footer_right`) are ALL
+  required -- a missing one names itself rather than drawing a wrong shell --
+  and the set is pinned to `DEFAULT_VARS` in `renderers/html.py` by
+  `TestLayoutChromeContract`. Only an EMPTY variable set on the default
+  template falls back to `DEFAULT_VARS`, because a tile that shows a red card
+  the instant it is tapped is not a usable home tile. Pushed values are
+  escaped exactly like any other template's; no markup, ever.
+- Rendering is fixed-px, authored at 1920x1080: litehtml fills whatever
+  viewport it is handed, but it has no viewport-relative units, so a
+  smaller panel gets the same type size.
 - The engine is NOT vendored. One pinned commit
   (`5624e795be50f02c21c89985c374dcd659dbd74b`), built by
   `DISPLAYD_LITEHTML_BUILD="$PWD/build/litehtml" ./tools/build_litehtml.sh`;
