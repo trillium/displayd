@@ -5,6 +5,49 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.6.1
+
+Deploying to the host works again. `deploy.sh`'s LiteHTML gate refused
+before its restart step, so merged work stopped reaching the live panel
+while the panel itself stayed up. That step held three defects; each one
+on its own stops the deploy, and each was reproduced against the real host.
+
+1. The reported one: the installer copies a file onto itself. deploy.sh runs
+   `tools/install_html_runtime.sh --prefix ~/displayd` on the box, and in
+   that configuration the installer's own repo root IS the prefix, so every
+   artifact copy was `install <file> <same file>`. GNU install refuses those
+   -- `install: '.../renderers/native/displayd_html.h' and
+   '.../renderers/native/displayd_html.h' are the same file` -- and the
+   script exited 1 before printing its completion token, which the 0.6.0
+   gate reads as an unusable renderer. The engine was already built on the
+   host; nothing was wrong with it.
+2. The prefix never reached the installer at all. REMOTE_DIR's default is
+   `~/displayd`, and the remote command was `sh '~/displayd/tools/...'`: a
+   quoted tilde is literal for the local shell and for the remote one, so
+   the step captured only `No such file or directory` (rc 127), saw no
+   completion token, and refused. The self-copy error in (1) was invisible
+   behind this one under the documented default invocation.
+3. rsync shipped a Mac-built engine to the Linux host. rsync knows nothing
+   about .gitignore, so a developer's checkout carried its Mach-O
+   `liblitehtmlpil.dylib` across; `_html_native.LIB_NAMES` tries `.dylib`
+   first, so that file shadowed the host's own working `.so` and the html
+   view died on a host whose real engine was fine.
+
+The installer's three copies now go through one `install_file()` helper
+that skips a copy whose destination already IS the source, decided on
+resolved identity (canonical path, or same device+inode) rather than string
+equality -- so a relative or symlinked spelling of the prefix is handled
+too -- and never skips when the paths cannot be resolved. deploy.sh hands
+the remote shell a `$HOME`-relative prefix, still double-quoted there so a
+remote dir with spaces survives, and its rsync list now holds back
+`liblitehtmlpil.*` and `build/`.
+
+The gate itself is unchanged: the installer's `complete:` token still
+decides, `--strict` is still not passed, and a genuinely absent renderer is
+still reported `incomplete`. Only the self-copy no-op and a path that never
+reached the tool are now successes. Patch bump: no API and no view
+behaviour changes -- the deploy path now does what it already documented.
+
 ## 0.6.0
 
 `deploy.sh` proved its build on every deploy again. The /reload proof step

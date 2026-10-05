@@ -142,6 +142,16 @@ fi
 # 2. Sync the repo. Host-state exclusions: DEPLOYED/policy.json/feedback
 #    logs are written on the host and must survive redeploys; AppleDouble
 #    (._*) and caches never cross to Linux.
+#
+#    The compiled engine and its build tree stay behind too, for the reason
+#    install_html_runtime.sh's header gives: the engine is built ON the
+#    target, never carried between machines. rsync knows nothing about
+#    .gitignore, so a developer's Mac checkout would otherwise ship its
+#    Mach-O liblitehtmlpil.dylib -- and _html_native.LIB_NAMES tries .dylib
+#    first, so that file shadows the host's own working .so and the html
+#    view dies on a host whose real engine is fine. The tracked native
+#    sources and templates still ship; only per-platform build output is
+#    held back.
 rsync -az \
     --exclude '.git/' \
     --exclude '.pi/' \
@@ -158,20 +168,35 @@ rsync -az \
     --exclude 'policy.json' \
     --exclude '*.jsonl' \
     --exclude '*_frames/' \
+    --exclude 'liblitehtmlpil.*' \
+    --exclude 'build/' \
     "$HERE/" "$HOST:$REMOTE_DIR/"
 echo "rsync done"
 
 # 2b. The html view's runtime set, on the target.
 #
-# Not --strict on purpose: this step must never fail a deploy of a panel that
-# has been serving fine without the optional view, so a host with no C++
-# toolchain (or a build that fails) degrades to a loud warning instead. The
-# gap is not silent, though -- it is printed with the exact build command and
-# it is observable in GET /state's "html" key on the running daemon.
+# A genuinely unusable renderer fails the deploy here (0.6.0). This step
+# keeps its contract: the installer's "complete: <prefix>" token decides,
+# --strict is not passed, and a host whose runtime set is short stops the
+# deploy with the exact build command to run by hand.
 #
 # timeout(1) bounds the build: it exists on coreutils Linux, and where it is
-# missing the call fails fast into the same warning path rather than hanging.
-HTML_LOG=$($SSH "$HOST" "timeout 1800 sh '$REMOTE_DIR/tools/install_html_runtime.sh' --prefix '$REMOTE_DIR'" 2>&1) || true
+# missing the call fails fast into the same failure path rather than hanging.
+#
+# The prefix goes to the REMOTE shell here, and the one thing that shell can
+# expand and this one cannot is a leading "~": REMOTE_DIR's default is
+# "~/displayd", a quoted tilde is literal for the local shell, and it was
+# literal for the remote one too -- so `sh '~/displayd/tools/...'` opened
+# nothing, the step captured only "No such file or directory" (rc 127), saw
+# no "complete:" token, and refused a deploy whose runtime was fine. Hand
+# the remote shell a $HOME-relative word instead, still inside double quotes
+# there so a remote dir with spaces survives.
+REMOTE_PREFIX=$REMOTE_DIR
+case "$REMOTE_DIR" in
+    '~') REMOTE_PREFIX='$HOME' ;;
+    '~/'*) REMOTE_PREFIX="\$HOME/${REMOTE_DIR#\~/}" ;;
+esac
+HTML_LOG=$($SSH "$HOST" "timeout 1800 sh \"$REMOTE_PREFIX/tools/install_html_runtime.sh\" --prefix \"$REMOTE_PREFIX\"" 2>&1) || true
 printf '%s\n' "$HTML_LOG" | sed -n '/^install_html_runtime:/p' | sed 's/^/  /'
 if printf '%s' "$HTML_LOG" | grep -q '^complete:'; then
     echo "html runtime: complete on $HOST"

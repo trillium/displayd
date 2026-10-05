@@ -22,6 +22,11 @@
 #   html-templates/*.html                         the trusted templates
 #   tools/build_litehtml.sh                       the reproducible rebuild
 #
+# --prefix may be the source checkout itself (deploy.sh installs into the
+# tree it just synced). Every copy is then a copy of a file onto itself;
+# those are skipped as no-ops rather than handed to install(1), which
+# refuses them.
+#
 # Those are exactly the paths _html_native.lib_path() and
 # _html_templates.default_root() resolve, both derived from the installed
 # renderers/ directory -- so an installed tree finds them with no environment
@@ -91,6 +96,42 @@ mode_for() {
     esac
 }
 
+# The canonical path of a file that may not exist yet: realpath(1) when the
+# platform has it, else the resolved parent directory plus the basename (the
+# parent always exists here -- install mode mkdir -p's it below). Two paths
+# that resolve to one file are the same file, which is the whole question
+# install_file() asks and the one string equality gets wrong for a symlinked
+# or otherwise non-identical spelling of the prefix.
+canonical() {
+    if command -v realpath >/dev/null 2>&1; then
+        realpath -- "$1" 2>/dev/null && return 0
+    fi
+    _parent=$(CDPATH= cd -- "$(dirname -- "$1")" 2>/dev/null && pwd -P) || return 1
+    printf '%s/%s\n' "${_parent%/}" "$(basename -- "$1")"
+}
+
+# install(1) refuses when the destination already IS the source -- "are the
+# same file" -- and deploy.sh runs this script with --prefix set to the very
+# checkout it just synced, so a self-copy would fail the run before its
+# success token and be read by the caller as an unusable renderer. Copying a
+# file onto itself is a no-op that already has the desired result, so it is
+# skipped, and the skip is decided on resolved identity (canonical path, or
+# the same device+inode when the destination exists) so a symlinked prefix is
+# handled too. An empty canonical (the resolver failed) never counts as a
+# match: a copy is only skipped when both paths resolved and agree.
+install_file() {
+    src=$1; dest=$2; mode=$3
+    if [ -e "$dest" ] && [ "$src" -ef "$dest" ]; then
+        return 0
+    fi
+    a=$(canonical "$src") || a=
+    b=$(canonical "$dest") || b=
+    if [ -n "$a" ] && [ "$a" = "$b" ]; then
+        return 0
+    fi
+    install -m "$mode" "$src" "$dest"
+}
+
 # The engine, whichever suffix this platform uses. Both are accepted because
 # _html_native.lib_path() tries both in the same order.
 lib_name() {
@@ -136,12 +177,12 @@ mkdir -p "$PREFIX/renderers/native" "$PREFIX/html-templates" "$PREFIX/tools"
 for rel in $(required_paths); do
     src=$REPO/$rel
     [ -f "$src" ] || die "source missing: $src (run this from a displayd checkout)"
-    install -m "$(mode_for "$rel")" "$src" "$PREFIX/$rel"
+    install_file "$src" "$PREFIX/$rel" "$(mode_for "$rel")"
 done
 
 for template in "$REPO"/html-templates/*.html; do
     [ -e "$template" ] || die "no templates to install in $REPO/html-templates"
-    install -m 0644 "$template" "$PREFIX/html-templates/"
+    install_file "$template" "$PREFIX/html-templates/$(basename -- "$template")" 0644
 done
 
 # The engine. Already built in this checkout, or build it here -- never copy
@@ -159,7 +200,7 @@ if ! built=$(lib_name "$REPO"); then
     fi
 fi
 if [ -n "$built" ]; then
-    install -m 0755 "$REPO/$built" "$PREFIX/$built"
+    install_file "$REPO/$built" "$PREFIX/$built" 0755
 fi
 
 misses=$(report_missing)
