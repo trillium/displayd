@@ -457,6 +457,52 @@ class TestInstallPathsGoThroughTheInstaller(unittest.TestCase):
         src = self._text("deploy.sh")
         self.assertIn("build_litehtml.sh", src)
 
+    def test_deploy_sh_does_not_ship_a_target_built_engine(self):
+        # The engine is built ON the target, for that platform (installer
+        # header; docs/HTML_RENDERER.md). rsync knows nothing about
+        # .gitignore, so a developer's Mac checkout otherwise ships its
+        # gitignored Mach-O .dylib, and _html_native.LIB_NAMES tries .dylib
+        # first -- the stray file shadows the host's own working .so and the
+        # html view dies on a host whose real engine is fine.
+        patterns = re.findall(r"--exclude '([^']+)'", self._text("deploy.sh"))
+        self.assertIn("liblitehtmlpil.*", patterns)
+        self.assertIn("build/", patterns)
+
+    def test_the_exclusions_keep_the_engine_and_build_tree_off_the_host(self):
+        # The patterns above, run for real: rsync -n over a source tree that
+        # looks like a developer checkout, using deploy.sh's own exclusion
+        # list (parsed, never retyped) so this cannot drift from the script.
+        if shutil.which("rsync") is None:
+            self.skipTest("rsync not installed")
+        block = self._text("deploy.sh").split("rsync -az", 1)[1]
+        block = block.split('"$HERE/"', 1)[0]
+        source = tempfile.mkdtemp(prefix="rsyncsrc-")
+        self.addCleanup(shutil.rmtree, source, True)
+        dest = tempfile.mkdtemp(prefix="rsyncdst-")
+        self.addCleanup(shutil.rmtree, dest, True)
+        for rel in ("renderers/native/liblitehtmlpil.dylib",
+                    "renderers/native/pil_container.cpp",
+                    "html-templates/status.html",
+                    "build/litehtml/libjunk.a"):
+            path = os.path.join(source, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as fh:
+                fh.write("x")
+        args = ["rsync", "-an", "--out-format=%n"]
+        for pattern in re.findall(r"--exclude '([^']+)'", block):
+            args += ["--exclude", pattern]
+        ran = subprocess.run(args + [source + "/", dest + "/"],
+                             capture_output=True, text=True)
+        self.assertEqual(ran.returncode, 0, ran.stderr)
+        listed = set(ran.stdout.split())
+        self.assertNotIn("renderers/native/liblitehtmlpil.dylib", listed,
+                         "a Mac-built engine would cross to the host")
+        self.assertFalse([n for n in listed if n.startswith("build")],
+                         "per-platform build output would cross to the host")
+        # ... and the runtime sources the target genuinely needs still ship.
+        self.assertIn("renderers/native/pil_container.cpp", listed)
+        self.assertIn("html-templates/status.html", listed)
+
 
 class TestInstallIntoItsOwnSourceTree(unittest.TestCase):
     """deploy.sh installs into the tree it just synced: --prefix == the
