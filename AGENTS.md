@@ -277,7 +277,9 @@ keeps running the old tick until the installer runs (`install-mac.sh
   slot names + dim/accent/alert/line + an empty-when-live `marker`), drawn
   by `unified_dock.draw_dock(img, ...)`, which pastes ONLY the dock rect and
   scales the authored `DESIGN` size to the rect it is given. So
-  `unified.py` and `unified_dock.py` are both Pillow-free; a dock failure
+  `unified.py` and `unified_dock.py` are both Pillow-free; `unified.py`
+  composes the picker document and the dock document and draws nothing
+  itself. A dock failure
   is a strip card from `_html_error.error_strip`, never a full-screen card
   and never a silent gap (litehtml has no border-radius, so the strip's
   corners are square).
@@ -360,6 +362,18 @@ keeps running the old tick until the installer runs (`install-mac.sh
   absolutely positioned child offsets from its positioned parent, so label
   offsets are tile-local. `unified.py` still calls `pk.draw()` for the grid and
   draws its dock with Pillow on top -- that is intended.
+- OPTIONS is a template surface too (`html-templates/options.html` +
+  `renderers/_options_grid.py`), and it shows what a geometry-driven layer
+  costs: the grid ALLOCATES a rect per name where the old Pillow loop only
+  shrank the row height, so `coerce_views` truncates at `MAX_CELLS` (48) to
+  keep the header count honest, and `grid_geometry` is total AND bounded on
+  any input (a huge count must never become a runaway allocation -- `10**9`
+  OOM-killed the suite before that bound). litehtml does not centre a label
+  like a browser, so `label_box()` measures the box from the real face.
+  `options_regions()` stays `[]` on purpose: options NAMES, the picker
+  SELECTS, so a per-name hit rect would be a behaviour change disguised as
+  migration. Only the persistent overlay chrome (`renderers/home_chrome.py`)
+  still draws in Pillow, and it is deliberately left for its own increment.
 - Three litehtml gotchas, all verified live, each of which silently renders
   WRONG rather than failing: `document::render()` returns natural WIDTH, not
   height (read `doc->height()`, and note this revision declares but never

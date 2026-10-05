@@ -213,6 +213,54 @@ had, and `tests/test_unified.py` pins it against rendered pixels, including
 that the strip only ever paints inside the rect the `apps-dock` tap region
 targets.
 
+## options.html: the selection surface
+
+`html-templates/options.html` is the tap-anywhere landing screen
+(`renderers/options.py`) -- the target of a tap that no configured touch region
+consumed, on every fullscreen view. It is the shared chrome from `layout.html`
+(its `eyebrow`/`status`/`title`/`subtitle`/strip/footer slots) plus **one**
+addition: a name layer. A two-column grid of view names cannot be expressed as
+ten text variables, so the renderer absolutely positions one div per name at the
+exact rects `renderers/_options_grid.grid_geometry()` hands out -- the drawn
+name and the geometry that places it are the same four numbers by construction,
+so they cannot drift.
+
+It deliberately carries **no per-name tap region**: options NAMES the picks and
+the way back, the picker SELECTS, and either can target the other without
+trapping the user. `options_regions()` returns `[]` explicitly, so "what does a
+tap here do?" has a documented answer rather than an `AttributeError`.
+
+| Variable | Slot |
+| --- | --- |
+| `eyebrow` | `DISPLAYD`, small label above the title |
+| `title` | the view's `title` param, the biggest type |
+| `status` | `N VIEWS`, the right-hand state |
+| `subtitle` | the `instructions` param, one dim line under the title |
+| `hint_left` / `hint_right` | labels in the two gesture strips |
+| `footer` / `footer_right` | small bottom status |
+| `background`, `color`, `dim`, `accent` | colours, `#rrggbb` strings the renderer parsed out of params, never raw caller text, so a style attribute cannot be injected |
+| `{{names|raw}}` | the name layer -- see below |
+
+`{{names|raw}}` is the one raw slot on this surface, and it is filled from a
+separate mapping the html view never passes: only `options.py` writes it, and
+what it writes is name divs generated in-process from `grid_geometry()` plus
+names that were escaped before they went in. A caller-supplied `views` entry can
+therefore never add markup -- it is the only value here that comes from outside
+the repo, and `tests/test_options.py` pins that it arrives escaped.
+
+Two bounds are deliberate. Names are truncated at `_options_grid.MAX_CELLS`
+(48) in `coerce_views()`, so the header's count and the drawn cells always
+agree; and `grid_geometry()` is total and bounded on *any* input, because it
+allocates a rect per name -- the old Pillow loop shrank the row height instead,
+so a huge list cost nothing there and would be a runaway allocation here. The
+label size shrinks to fit each cell (`label_px()`) and the label box is measured
+from the real face (`label_box()`), because litehtml does not centre a label
+the way a browser would.
+
+Failure here is the shared full-screen card, not a strip: options is a whole
+panel view, so a deleted template leaves the red rule and a message that names
+the missing key.
+
 
 ## The trust boundary
 
@@ -309,6 +357,9 @@ that only survives polite input is not a budget.
 | `renderers/_picker_tiles.py` | geometry -> tile markup + chrome variables |
 | `html-templates/dock.html` | the apps dock strip under the home screen |
 | `renderers/unified_dock.py` | dock feed state -> the strip's variables + composite |
+| `html-templates/options.html` | the selection screen: chrome plus one name layer |
+| `renderers/options.py` | the options view: params, the pinned picks, the card |
+| `renderers/_options_grid.py` | geometry -> name markup + the chrome variables |
 | `renderers/_html_templates.py` | the trust boundary: name, root, escaping, raw slots |
 | `renderers/_html_error.py` | the red rule and its message, shared by both views |
 | `renderers/_html_native.py` | ctypes + Pillow; fonts, images, clipping, tiling |

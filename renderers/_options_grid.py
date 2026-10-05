@@ -26,6 +26,14 @@ import _html_templates as templates
 
 MAX_NAME_PX = 84
 DEFAULT_COLS = 2
+# Hard ceiling on the number of name cells. The old Pillow loop drew every
+# name at a row height that shrank towards zero, so a caller could hand it
+# a thousand names and it cost nothing but an overlap. This geometry
+# function allocates a rect per name, so the count is bounded twice: once
+# at the parse boundary (options.coerce_views drops the overflow, so the
+# header's count stays honest) and once here, because grid_geometry is
+# public and must stay total and bounded on any input at all.
+MAX_CELLS = 48
 
 # Chrome slots the options surface draws that are not content: the
 # gesture-strip labels and the foot. Kept as constants so the template
@@ -59,13 +67,29 @@ def cols_for(count):
     return DEFAULT_COLS if count > 2 else 1
 
 
+def cell_count(value):
+    """A name count that is always an int in [1, MAX_CELLS]. Total: a
+    string, None, a float or a huge int all come back bounded, because
+    this function's callers feed it whatever a `views` param held."""
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(MAX_CELLS, count))
+
+
 def grid_geometry(rect, count, cols=None, gutter=None):
-    """Name rects row-major inside `rect`. Pure, and the one place a name
-    is placed -- the drawn cell and the geometry a caller would read are
-    the same four numbers by construction."""
-    count = max(1, int(count))
-    cols = max(1, min(DEFAULT_COLS, count)) if cols is None \
-        else max(1, int(cols))
+    """Name rects row-major inside `rect`. Pure, bounded and total -- the
+    one place a name is placed, so the drawn cell and the geometry a
+    caller would read are the same four numbers by construction."""
+    count = cell_count(count)
+    if cols is None:
+        cols = max(1, min(DEFAULT_COLS, count))
+    else:
+        try:
+            cols = max(1, min(DEFAULT_COLS, int(cols)))
+        except (TypeError, ValueError):
+            cols = 1
     rows = (count + cols - 1) // cols
     rx, ry, rw, rh = (int(v) for v in rect)
     g = max(8, min(rw, rh) // 45) if gutter is None else max(0, int(gutter))

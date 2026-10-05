@@ -46,7 +46,8 @@ PARAMS = {
                      "help": "sub-header, default 'tap reached options -- pick a view'"},
     "views": {"type": "array",
               "help": "view names to list, default the pinned four "
-                      "(clock, chat, row, stream); malformed entries skipped"},
+                      "(clock, chat, row, stream); malformed entries "
+                      "skipped, and only the first MAX_CELLS are shown"},
     "background": {"type": "string",
                    "help": "background colour, default near-black"},
     "color": {"type": "string",
@@ -67,8 +68,10 @@ def coerce_views(params):
     """Parse the views param into a clean list of names.
 
     Missing/empty falls back to DEFAULT_VIEWS; non-string, blank, and
-    slash-containing entries are skipped (feed/renderer names are plain).
-    Never raises on bad user input -- worst case is the default four."""
+    slash-containing entries are skipped (feed/renderer names are plain),
+    and the list is truncated at ``grid.MAX_CELLS`` so the drawn cells and
+    the count in the header always agree. Never raises on bad user input --
+    worst case is the default four."""
     try:
         raw = (params or {}).get("views")
     except AttributeError:
@@ -79,7 +82,7 @@ def coerce_views(params):
         return list(DEFAULT_VIEWS)
     cleaned = [v.strip() for v in raw
                if isinstance(v, str) and v.strip() and "/" not in v]
-    return cleaned or list(DEFAULT_VIEWS)
+    return (cleaned or list(DEFAULT_VIEWS))[:grid.MAX_CELLS]
 
 
 def options_regions(views=None):

@@ -302,8 +302,13 @@ class OptionsTemplateTest(unittest.TestCase):
         markup = grid.name_markup([hostile], [(0, 0, 800, 200)],
                                   (255, 255, 255))
         self.assertNotIn("<img", markup)
-        self.assertNotIn("onerror=alert", markup.replace("&quot;", ""))
+        # The payload survives as TEXT: escaped, not dropped, so a caller
+        # cannot make the name vanish either. (The escaped literal still
+        # contains the substring "onerror=alert" -- what matters is that
+        # no tag delimiter reaches the engine.)
         self.assertIn("&lt;img", markup)
+        self.assertNotIn("</div><img", markup)
+        self.assertNotIn("<script", markup)
 
     def test_geometry_stays_inside_its_rect(self):
         rect = grid.grid_rect(1920, 1080)
@@ -326,10 +331,31 @@ class OptionsTemplateTest(unittest.TestCase):
         self.assertEqual(len(rows), 2, "four names lay out as two rows")
 
     def test_garbage_geometry_never_raises(self):
+        # Total AND bounded: a huge count used to mean one rect allocated
+        # per name, which hung the test process (OOM) instead of failing.
         rect = grid.grid_rect(1920, 1080)
-        for bad in (None, "nope", 0, -4, 10 ** 9):
+        for bad in (None, "nope", 0, -4, 10 ** 9, 3.5, True):
             with self.subTest(bad=bad):
-                self.assertTrue(grid.grid_geometry(rect, bad or 1))
+                cells = grid.grid_geometry(rect, bad or 1)
+                self.assertTrue(cells)
+                self.assertLessEqual(len(cells), grid.MAX_CELLS)
+        self.assertEqual(len(grid.grid_geometry(rect, 10 ** 9)),
+                         grid.MAX_CELLS)
+
+    def test_the_parsed_list_is_bounded_and_honest(self):
+        # The header count and the drawn cells must agree, so the overflow
+        # is dropped at the parse boundary rather than silently at paint.
+        many = ["v%d" % i for i in range(grid.MAX_CELLS + 20)]
+        self.assertEqual(len(OPT.coerce_views({"views": many})),
+                         grid.MAX_CELLS)
+        rect = grid.grid_rect(1920, 1080)
+        names = OPT.coerce_views({"views": many})
+        cells = grid.grid_geometry(rect, len(names))
+        self.assertEqual(len(cells), len(names))
+        self.assertEqual(grid.chrome(names, (0, 0, 0), (255, 255, 255),
+                                     (0, 0, 0), (0, 0, 0), "t", "s",
+                                     "f")["status"],
+                         "%d VIEWS" % grid.MAX_CELLS)
 
     def test_the_view_declares_no_per_view_touch_regions(self):
         # Options NAMES picks; the picker SELECTS. A tap here re-shows
@@ -386,7 +412,7 @@ class OptionsPixelsTest(unittest.TestCase):
                                            "activity", "options"]})
         self.assertEqual(len(geo), 6)
         for name, (x, y, cw, ch) in zip(views, geo):
-            with self.subView(name):
+            with self.subTest(name=name):
                 inner = (x + 4, y + 4, x + cw - 4, y + ch - 4)
                 self.assertGreater(self.bright(frame, inner), 200,
                                    "%r drew nothing in its cell" % name)
@@ -425,29 +451,27 @@ class OptionsPixelsTest(unittest.TestCase):
         self.assertGreater(non_bg_count(frame), 20)
 
     def test_a_broken_template_is_a_card_not_a_blank(self):
+        # The real break, not a simulated one: point the renderer at a
+        # template that is not there, so the load raises TemplateError the
+        # way a deleted file would. The panel must say so -- never blank.
         screen = self.screen()
-        original = grid.__name__  # noqa: F841 - documentation of intent
-        import _options_grid
-        real = _options_grid.chrome
-
-        def boom(*_args, **_kwargs):
-            raise RuntimeError("synthetic failure")
-
-        OPT.templates = OPT.templates  # module identity is unchanged
-        import _html_templates as templates_mod
-        saved = templates_mod.TemplateError
+        saved = OPT.TEMPLATE
+        OPT.TEMPLATE = "no_such_template.html"
         try:
-            # A template error is the realistic break: the file is gone
-            # or a variable is missing. The panel must say so.
-            OPT.run(screen, {}, threading.Event())
-            frame = screen.fb.frames[-1]
-            # Red rule across the top: the shared failure card.
-            self.assertGreater(self.bright(frame, (0, 0, self.W, 40),
-                                           threshold=300), 500)
+            stop = threading.Event()
+            stop.set()
+            OPT.run(screen, {}, stop)
         finally:
-            self.assertIs(saved, templates_mod.TemplateError)
-            self.assertTrue(callable(real))
-            self.assertEqual(original, grid.__name__)
+            OPT.TEMPLATE = saved
+        frame = screen.fb.frames[-1]
+        self.assertEqual(frame.size, (self.W, self.H))
+        # The shared failure card: a red rule across the top, red title
+        # text under it, and no name cells anywhere.
+        rule = frame.crop((0, 0, self.W, 40)).convert("RGB")
+        self.assertGreater(
+            sum(1 for pixel in rule.getdata() if pixel == (214, 74, 74)),
+            self.W * 20)
+        self.assertEqual(frame.getpixel((300, 700)), (28, 10, 14))
 
 
 if __name__ == "__main__":

@@ -267,6 +267,13 @@ its `apps-dock` tap region covers. It is authored once at the standard dock
 size and scaled to the rect it is given, and a dock that cannot draw says so
 inside its own rect rather than over the tiles.
 
+The tap-anywhere selection screen (`options`) is the same chrome plus one name
+layer (`html-templates/options.html`, geometry in
+`renderers/_options_grid.py`), drawn by litehtml rather than Pillow. It NAMES
+the picks and the way back; the picker SELECTS. Its single `{{names|raw}}` slot
+is renderer-filled, and every caller-supplied view name is escaped before it
+goes in.
+
 The engine is optional and lazily loaded, so the daemon and `GET /renderers`
 work unchanged without it — the view explains how to build it instead of going
 missing. `install.sh` and `deploy.sh` both run `tools/install_html_runtime.sh`,
