@@ -512,3 +512,28 @@ class TestCleanTargetCanImportTheDaemon(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestDeployGatesOnHtmlUsability(unittest.TestCase):
+    def test_deploy_fails_when_html_runtime_incomplete(self):
+        src = SourceTree(engine=False)
+        self.addCleanup(src.clean)
+        # Make build fail fast
+        script = os.path.join(src.root, "tools", "build_litehtml.sh")
+        with open(script, "w") as fh:
+            fh.write("#!/bin/sh\necho 'cmake is required' >&2\nexit 1\n")
+        os.chmod(script, 0o755)
+        prefix = src.target()
+        self.addCleanup(shutil.rmtree, prefix, True)
+        ran = run_installer(src, [], prefix)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertIn("incomplete:", ran.stdout)
+        self.assertIn("missing: renderers/native/liblitehtmlpil.{so,dylib}", ran.stdout)
+
+    def test_deploy_succeeds_when_html_runtime_complete(self):
+        src = SourceTree()
+        self.addCleanup(src.clean)
+        prefix = src.target()
+        self.addCleanup(shutil.rmtree, prefix, True)
+        ran = run_installer(src, [], prefix)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertIn("complete: %s" % prefix, ran.stdout)
