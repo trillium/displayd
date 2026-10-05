@@ -5,9 +5,10 @@ lines of HTML and CSS in a file, not a few hundred lines of PIL. The `html`
 renderer is that escape hatch. [litehtml](https://github.com/litehtml/litehtml)
 does the layout; Pillow still draws every pixel.
 
-It is **opt-in and optional**. The daemon runs exactly as before without it, and
-the view always loads even when the native library has never been built, because
-"not built yet" is something the panel should be able to say.
+It is **optional**: no other view depends on it, the daemon runs exactly as
+before without the engine, and the view always loads even when the native
+library has never been built, because "not built yet" is something the panel
+should be able to say.
 
 ## Build
 
@@ -75,6 +76,191 @@ example, not a stub.
                                     "note": "AIM review - last 7 days"}}}
 
     POST /feed/html/vars {"title": "...", "value": "..."}   # re-renders in place
+
+## layout.html: the shared panel chrome
+
+`html-templates/layout.html` is the shell the UI is built from: header,
+side gesture strips, content band, footer. It is the **default template**,
+so `template` is an ordinary optional param and this view is selectable,
+rotatable and tileable like any other -- a bare
+
+    POST /show {"renderer": "html"}
+
+draws the shell, and a later
+
+    POST /feed/html/vars {"eyebrow": "NOW", "title": "BUILD", ...}
+
+becomes its live content without a re-show. `template` and `vars` are
+otherwise unchanged, and the trust boundary below applies to this template
+exactly as it does to every other.
+
+### The variable contract
+
+All ten are **required**: a placeholder with no value is an error, not a
+blank, so a partial push names what is missing instead of drawing a shell
+that looks right and is wrong. An empty string is a real value and
+collapses its slot, so a caller hides a band by emptying it. The set is
+pinned by a test against the shipped `DEFAULT_VARS` in `renderers/html.py`,
+so the template and its defaults cannot drift apart.
+
+| Variable | Slot |
+| --- | --- |
+| `eyebrow` | short label above the title, dim |
+| `title` | the name of what is on screen, large |
+| `status` | right-hand state (clock, health), dim |
+| `lead` | the line that must read from across a room |
+| `body` | supporting detail under the lead |
+| `hint_left` | label in the left gesture strip |
+| `hint_right` | label in the right gesture strip |
+| `footer` | small bottom-left status |
+| `footer_right` | small bottom-right status |
+
+Authored at 1920x1080 for a panel read from across a room: type is large
+and bands are wide. litehtml lays the frame out to whatever viewport it is
+handed, so the same file also fills a smaller screen, but the type size is
+fixed in px -- litehtml has no viewport-relative units.
+
+One documented exception to "required": an **empty** variable set on the
+default template renders `DEFAULT_VARS` from `renderers/html.py`, because a
+tile that shows a red card the moment it is tapped is not a usable home
+tile. Every other template, and every partial push, still names its missing
+key.
+
+## picker.html: the tile grid
+
+`html-templates/picker.html` is the same chrome (header, side strips, bottom
+band) plus the one thing the chrome cannot express as ten text variables: a
+tile grid. `renderers/picker.py` no longer draws in Pillow. It fills the chrome
+slots from the screen geometry and emits **one absolutely positioned tile div
+per view**, at exactly the rects `picker.grid_geometry()` hands
+`picker_regions()` -- so a drawn tile and the region that taps it are the same
+four numbers by construction, not by two copies of a constant. The touch
+contract is untouched: the regions, `touch-picker.json.example`, the CLI
+generator and `tests/test_picker.py` all still call the same functions.
+
+Two litehtml facts the tile layer depends on, both verified live:
+
+- a declared `width`/`height` is the **content** box, so a tile declares its
+  rect minus the frame; without that every tile is 12px wider than the region
+  that taps it;
+- an absolutely positioned child offsets from its positioned parent, so a tile
+  label is placed in tile-local pixels, measured with the same face the
+  document text uses.
+
+`background` and `color` reach the document as `#rrggbb` strings built from the
+colours the screen already parsed, never as the caller's own text, so the
+template can take them in a style attribute without opening a CSS injection.
+
+### The raw slot: `{{name|raw}}`
+
+A tile grid is markup, so `picker.html` declares one slot marked `raw`. It is
+filled from a **separate `raw` mapping** that `load()` takes as its own
+argument, and the html renderer never has one: a caller of `POST /show` or
+`POST /feed/html/vars` supplies `variables`, which are escaped, so a value
+named `tiles` lands in that slot as escaped text. A raw slot nobody filled is a
+missing variable like any other and names itself the same way. Raw values are
+refused if they carry a placeholder of their own, are not strings, or exceed
+`MAX_RAW_CHARS`. `templates.RAW_RE` finds the slots; a test asserts no shipped
+template declares more than one.
+
+The only raw value the panel ever passes is `renderers/_picker_tiles.py`'s tile
+markup: fixed palette, fixed arithmetic, and a view name escaped before it
+reaches the document.
+
+### The picker now needs the engine
+
+The picker was a pure-Pillow view; it is now a template surface, so on a target
+with no built engine it shows the red "build it: tools/build_litehtml.sh" card
+instead of tiles. That is the same deal as the `html` view and the same
+mitigation: `install.sh` refuses to install without the runtime
+(`install_html_runtime.sh --strict`) and `deploy.sh` builds it on the host. A
+host with no C++ toolchain therefore degrades loudly rather than silently --
+which is worth knowing before a deploy lands on a fresh machine, because the
+home screen is the first thing anyone taps.
+
+## dock.html: the apps dock
+
+`html-templates/dock.html` is the strip `renderers/unified_dock.py` composites
+under the merged home screen. It is a document in its own right rather than a
+chrome template, because a strip is a strip: a head row (live dot + `MAC APPS`,
+mode line at the right), one dim subtitle, one big line, one tail row (the
+LEFT/RIGHT split, the tap hint at the right). The slot names are the shared
+chrome's anyway -- `eyebrow`, `status`, `subtitle`, `title`, `body`,
+`footer_right` -- so the file reads like `layout.html`. Five more carry the
+colours: `background`, `color`, `dim`, `accent` (live green), `alert` (stale
+amber), `line`, plus `marker`, the stale marker in front of the title, which is
+**empty** when the feed is live so it collapses instead of leaving a gutter.
+All thirteen are required, and there is no `{{name|raw}}` here at all.
+
+Two things differ from the other templates, both deliberate:
+
+- **it is not drawn at panel size.** It is authored at `dock.DESIGN`
+  (1760x230, the rect `unified.default_dock()` derives at 1920x1080) and the
+  renderer scales the rendered strip to whatever rect the caller passed, so a
+  custom dock keeps the same type at the same relative size instead of
+  overflowing the way a fixed-px document would.
+- **its failure is a strip, not a card.** The dock is pasted into a finished
+  frame, so `error_strip()` in `renderers/_html_error.py` draws the red rule
+  and the message *inside the dock rect only* -- a full-screen card would hide
+  the tiles around it, and a silently missing strip would be indistinguishable
+  from a home screen that simply has no apps.
+
+litehtml has no `border-radius`, so the strip's corners are square rather than
+rounded, and the head "dot" is a 20px square. Everything else -- three states
+(no payload yet / live / quiet past `STALE_AFTER`), the count, the focused app,
+the overflow, the split, the mode line -- is the behaviour the Pillow version
+had, and `tests/test_unified.py` pins it against rendered pixels, including
+that the strip only ever paints inside the rect the `apps-dock` tap region
+targets.
+
+## options.html: the selection surface
+
+`html-templates/options.html` is the tap-anywhere landing screen
+(`renderers/options.py`) -- the target of a tap that no configured touch region
+consumed, on every fullscreen view. It is the shared chrome from `layout.html`
+(its `eyebrow`/`status`/`title`/`subtitle`/strip/footer slots) plus **one**
+addition: a name layer. A two-column grid of view names cannot be expressed as
+ten text variables, so the renderer absolutely positions one div per name at the
+exact rects `renderers/_options_grid.grid_geometry()` hands out -- the drawn
+name and the geometry that places it are the same four numbers by construction,
+so they cannot drift.
+
+It deliberately carries **no per-name tap region**: options NAMES the picks and
+the way back, the picker SELECTS, and either can target the other without
+trapping the user. `options_regions()` returns `[]` explicitly, so "what does a
+tap here do?" has a documented answer rather than an `AttributeError`.
+
+| Variable | Slot |
+| --- | --- |
+| `eyebrow` | `DISPLAYD`, small label above the title |
+| `title` | the view's `title` param, the biggest type |
+| `status` | `N VIEWS`, the right-hand state |
+| `subtitle` | the `instructions` param, one dim line under the title |
+| `hint_left` / `hint_right` | labels in the two gesture strips |
+| `footer` / `footer_right` | small bottom status |
+| `background`, `color`, `dim`, `accent` | colours, `#rrggbb` strings the renderer parsed out of params, never raw caller text, so a style attribute cannot be injected |
+| `{{names|raw}}` | the name layer -- see below |
+
+`{{names|raw}}` is the one raw slot on this surface, and it is filled from a
+separate mapping the html view never passes: only `options.py` writes it, and
+what it writes is name divs generated in-process from `grid_geometry()` plus
+names that were escaped before they went in. A caller-supplied `views` entry can
+therefore never add markup -- it is the only value here that comes from outside
+the repo, and `tests/test_options.py` pins that it arrives escaped.
+
+Two bounds are deliberate. Names are truncated at `_options_grid.MAX_CELLS`
+(48) in `coerce_views()`, so the header's count and the drawn cells always
+agree; and `grid_geometry()` is total and bounded on *any* input, because it
+allocates a rect per name -- the old Pillow loop shrank the row height instead,
+so a huge list cost nothing there and would be a runaway allocation here. The
+label size shrinks to fit each cell (`label_px()`) and the label box is measured
+from the real face (`label_box()`), because litehtml does not centre a label
+the way a browser would.
+
+Failure here is the shared full-screen card, not a strip: options is a whole
+panel view, so a deleted template leaves the red rule and a message that names
+the missing key.
+
 
 ## The trust boundary
 
@@ -164,8 +350,18 @@ that only survives polite input is not a budget.
 
 | File | Role |
 | --- | --- |
-| `renderers/html.py` | the view: params, the poll loop, error cards |
-| `renderers/_html_templates.py` | the trust boundary: name, root, escaping |
+| `renderers/html.py` | the view: params, defaults, the poll loop, error cards |
+| `html-templates/layout.html` | the shared panel chrome + its variable contract |
+| `html-templates/picker.html` | the chrome plus the tile layer (one raw slot) |
+| `renderers/picker.py` | the picker view: params, views, touch geometry |
+| `renderers/_picker_tiles.py` | geometry -> tile markup + chrome variables |
+| `html-templates/dock.html` | the apps dock strip under the home screen |
+| `renderers/unified_dock.py` | dock feed state -> the strip's variables + composite |
+| `html-templates/options.html` | the selection screen: chrome plus one name layer |
+| `renderers/options.py` | the options view: params, the pinned picks, the card |
+| `renderers/_options_grid.py` | geometry -> name markup + the chrome variables |
+| `renderers/_html_templates.py` | the trust boundary: name, root, escaping, raw slots |
+| `renderers/_html_error.py` | the red rule and its message, shared by both views |
 | `renderers/_html_native.py` | ctypes + Pillow; fonts, images, clipping, tiling |
 | `renderers/native/displayd_html.h` | the C ABI between them |
 | `renderers/native/pil_container.cpp` | the litehtml container |
@@ -175,6 +371,13 @@ that only survives polite input is not a budget.
 | `tests/test_html.py` | the whole rendering contract |
 | `tests/test_html_runtime_install.py` | the install/check/deploy contract |
 
-The renderer is not in the default picker or home screen: it needs a template
-name, so it is something to `POST /show` (or wire a touch region to), not
-something that appears on its own.
+The renderer carries the default template, so it appears on the picker and
+the merged home screen and rotates like any other view. It is still a
+template view -- it draws no tile grid of its own -- and every other file in
+the root is still one `POST /show` away.
+
+The picker itself is now a template surface too: `picker.html` is the same
+chrome plus a tile layer, and `renderers/picker.py` holds the view contract
+while `renderers/_picker_tiles.py` turns geometry into that layer. Nothing
+draws in Pillow on that path any more, which is also why the failure card lives
+in `renderers/_html_error.py`: both views share one.

@@ -1,9 +1,15 @@
 """Tests for the unified home screen (picker tiles + live apps dock).
 
-Run from the repo root:  python3 -m pytest tests/test_unified.py -v
+The dock is a litehtml document (html-templates/dock.html), so these
+tests also pin the two things that migration can silently break: the
+strip must be drawn *inside* the rect the apps-dock tap region targets,
+and a dock that gains, loses or breaks its feed must not move a tile.
+
+Run from the repo root:  python3 -m unittest tests.test_unified -v
 """
 
 import os
+import re
 import sys
 import threading
 import time
@@ -15,10 +21,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
 
 from PIL import Image, ImageChops
 
+import _html_native
 import touch_audit
 from renderers import home_chrome
 from renderers import unified as un
 from renderers import unified_dock as dock
+
+native_built = unittest.skipUnless(
+    any(os.path.exists(os.path.join(_html_native.NATIVE_DIR, name))
+        for name in _html_native.LIB_NAMES),
+    "native library not built (tools/build_litehtml.sh)")
 
 W, H = 1920, 1080
 VIEWS_18 = ["activity", "beads", "beads-detail", "chat", "clock",
@@ -146,15 +158,31 @@ class DockSummaryTest(unittest.TestCase):
                          "one screen: split")
 
 
+def grid_frame():
+    """The tile grid on its own, i.e. the frame with no dock composited."""
+    from renderers import picker as pk
+    screen = FakeScreen()
+    grid = un.coerce_grid({}, W, H)
+    views = un.tile_views({"views": list(VIEWS_18)})
+    return pk.draw(screen, views, pk.grid_geometry(grid, len(views)),
+                   grid, pk.PALETTE, (8, 10, 16), (255, 255, 255),
+                   (140, 160, 190))
+
+
+def frame_with_dock(state, stale, dock_rect=None):
+    """The whole merged home frame: tiles plus the live apps dock."""
+    from renderers import picker as pk
+    screen = FakeScreen()
+    grid = un.coerce_grid({}, W, H)
+    views = un.tile_views({"views": list(VIEWS_18)})
+    return un.draw(screen, views, pk.grid_geometry(grid, len(views)),
+                   grid, un.coerce_dock({}, W, H) if dock_rect is None
+                   else dock_rect, state, stale, (8, 10, 16), (255, 255, 255))
+
+
 class FramesTest(unittest.TestCase):
     def _frame(self, state, stale):
-        from renderers import picker as pk
-        screen = FakeScreen()
-        grid = un.coerce_grid({}, W, H)
-        views = un.tile_views({"views": list(VIEWS_18)})
-        return un.draw(screen, views, pk.grid_geometry(grid, len(views)),
-                       grid, un.coerce_dock({}, W, H), state, stale,
-                       (8, 10, 16), (255, 255, 255))
+        return frame_with_dock(state, stale)
 
     def test_all_states_render_at_panel_size(self):
         for state, stale in ((live_state(), False), (None, False),
@@ -179,6 +207,162 @@ class FramesTest(unittest.TestCase):
         diff = ImageChops.difference(empty.crop(dock_zone),
                                      stale.crop(dock_zone))
         self.assertIsNotNone(diff.getbbox())
+
+
+class DockTemplateTest(unittest.TestCase):
+    """The migration, stated as an invariant on the shipped source.
+
+    Pure, no engine: a drifted template or a re-grown Pillow path must
+    fail on any checkout, built engine or not.
+    """
+
+    def source(self):
+        with open(os.path.join(os.path.dirname(__file__), os.pardir,
+                               "renderers", "unified_dock.py"),
+                  encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_no_pillow_drawing_left_in_the_dock(self):
+        # The oracle for this increment. A stray ImageDraw here means the
+        # Pillow path is still live and the template path is decoration.
+        self.assertNotIn("ImageDraw", self.source())
+        self.assertNotIn("ImageFont", self.source())
+
+    def test_the_dock_renders_through_the_template(self):
+        self.assertIn(dock.TEMPLATE, self.source())
+        self.assertTrue(os.path.isfile(os.path.join(
+            os.path.dirname(__file__), os.pardir, "html-templates",
+            "dock.html")), "html-templates/dock.html is the shipped strip")
+
+    def test_unified_composes_without_pillow(self):
+        # The caller hands over an image now, not a draw context.
+        with open(un.__file__, encoding="utf-8") as handle:
+            self.assertNotIn("ImageDraw", handle.read())
+        self.assertNotIn("ImageDraw.Draw", self.source())
+
+    def declared(self):
+        with open(os.path.join(os.path.dirname(__file__), os.pardir,
+                               "html-templates", "dock.html"),
+                  encoding="utf-8") as handle:
+            text = handle.read()
+        text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+        return set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)", text)), text
+
+    def test_the_shipped_template_matches_the_rendered_variables(self):
+        # Every placeholder the file declares is a key dock_variables()
+        # fills, and vice versa: a half-filled strip is a red card on the
+        # panel, which is exactly what a drift here would cost.
+        declared, text = self.declared()
+        for state, stale in ((live_state(), False), (None, False),
+                             (live_state(ts=time.time() - 99), True)):
+            with self.subTest(state=state is None, stale=stale):
+                supplied = set(dock.dock_variables(state, stale))
+                self.assertEqual(declared, supplied)
+        self.assertNotIn("|raw", text, "the dock strip takes no markup")
+
+    def test_no_javascript_and_no_remote_resources(self):
+        _declared, text = self.declared()
+        lowered = text.lower()
+        for banned in ("<script", "javascript:", "@import", "http://",
+                       "https://"):
+            self.assertNotIn(banned, lowered)
+
+    def test_the_three_states_name_themselves(self):
+        live = dock.dock_variables(live_state(), False)
+        self.assertIn("apps (20)", live["title"])
+        self.assertIn("Google Chrome", live["title"])
+        self.assertIn("11 left / 9 right", live["body"])
+        self.assertEqual(live["status"], "left=D1 right=other")
+        self.assertEqual(live["marker"], "", "a live feed shows no marker")
+        empty = dock.dock_variables(None, False)
+        self.assertIn("waiting for talon feed", empty["title"])
+        self.assertNotIn("apps (", empty["title"])
+        stale = dock.dock_variables(live_state(ts=time.time() - 99), True)
+        self.assertTrue(stale["marker"].startswith("STALE"))
+        self.assertIn("apps (20)", stale["title"], "stale keeps last known")
+        self.assertEqual(stale["alert"], "#ffb450")
+
+    def test_garbage_never_raises(self):
+        for bad in (None, "nope", 42, {"apps": "no"}, {"apps": [None, 3]}):
+            with self.subTest(bad=type(bad).__name__):
+                self.assertTrue(dock.dock_variables(bad, False)["title"])
+
+
+@native_built
+class DockPixelsTest(unittest.TestCase):
+    """What the panel actually shows, in the rect the tap targets."""
+
+    DOCK = (80, 770, 1760, 230)
+
+    def count(self, frame, colour, box=None):
+        crop = frame.crop(box) if box else frame
+        return sum(1 for pixel in crop.convert("RGB").getdata()
+                   if pixel == colour)
+
+    def lit(self, frame, box):
+        return max(sum(pixel) for pixel in
+                   frame.crop(box).convert("RGB").getdata())
+
+    def test_the_dock_only_touches_its_own_rect(self):
+        # The dock is a strip pasted into a finished frame: if it ever
+        # paints anywhere else, a feed change could move a tile.
+        healthy = frame_with_dock(live_state(), False)
+        box = ImageChops.difference(healthy, grid_frame()).getbbox()
+        self.assertIsNotNone(box)
+        x0, y0, x1, y1 = box
+        self.assertGreaterEqual(x0, self.DOCK[0])
+        self.assertGreaterEqual(y0, self.DOCK[1])
+        self.assertLessEqual(x1, self.DOCK[0] + self.DOCK[2])
+        self.assertLessEqual(y1, self.DOCK[1] + self.DOCK[3])
+
+    def test_the_strip_draws_its_summary(self):
+        frame = frame_with_dock(live_state(), False)
+        for label, box in (("head", (100, 780, 700, 830)),
+                           ("subtitle", (100, 830, 900, 870)),
+                           ("main line", (100, 860, 1200, 940)),
+                           ("tail row", (100, 940, 700, 990))):
+            with self.subTest(band=label):
+                self.assertGreater(self.lit(frame, box), 300)
+
+    def test_the_live_dot_and_tap_hint_are_accent(self):
+        frame = frame_with_dock(live_state(), False)
+        self.assertGreater(self.count(frame, dock.ACCENT,
+                                     (80, 770, 1840, 1000)), 0)
+
+    def test_stale_marks_the_dock_in_amber(self):
+        live = frame_with_dock(live_state(), False)
+        stale = frame_with_dock(live_state(ts=time.time() - 99), True)
+        zone = (80, 770, 1840, 1000)
+        self.assertEqual(self.count(live, dock.ALERT, zone), 0)
+        self.assertGreater(self.count(stale, dock.ALERT, zone), 0)
+
+    def test_a_custom_dock_rect_gets_its_own_strip(self):
+        # The strip is authored once and scaled to the rect it is given,
+        # so a custom dock is drawn -- not clipped and not empty.
+        rect = [0, 960, 960, 120]
+        frame = frame_with_dock(live_state(), False, rect)
+        self.assertGreater(self.lit(frame, (10, 975, 940, 1070)), 300)
+        box = ImageChops.difference(frame, grid_frame()).getbbox()
+        self.assertIsNotNone(box)
+        self.assertGreaterEqual(box[1], rect[1])
+
+    def test_a_broken_template_is_a_card_inside_the_strip(self):
+        # Never a blank strip and never a full-screen card: the tiles
+        # around it have to survive a dock that cannot draw. Patched
+        # through unified's own reference, because renderers/unified.py
+        # imports the dock as a top-level module -- a different module
+        # object than `from renderers import unified_dock`.
+        saved = un.dock_mod.TEMPLATE
+        un.dock_mod.TEMPLATE = "no_such_template.html"
+        try:
+            frame = frame_with_dock(live_state(), False)
+        finally:
+            un.dock_mod.TEMPLATE = saved
+        self.assertGreater(self.count(frame, (214, 74, 74),
+                                      (80, 770, 1840, 1000)), 0)
+        outside = frame.crop((0, 0, W, 740))
+        self.assertIsNone(ImageChops.difference(
+            outside, grid_frame().crop((0, 0, W, 740))).getbbox())
 
 
 class RunLoopTest(unittest.TestCase):

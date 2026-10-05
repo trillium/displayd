@@ -21,6 +21,7 @@ Run from the repo root:  python3 -m unittest tests.test_html -v
 
 import importlib.util
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -239,6 +240,7 @@ class TestTemplateValues(TempRoot):
         self.assertIn("42", text)
         self.assertIn("3.5", text)
 
+
     def test_none_is_empty_not_the_word_none(self):
         text, _ = self.load("t.html", {"a": None, "b": "x"})
         self.assertIn("|x", text)
@@ -268,6 +270,62 @@ class TestTemplateValues(TempRoot):
                        "<p>" + "{{" * 200 + "</p>")
         with self.assertRaises(templates.TemplateError):
             self.load("bomb.html")
+
+
+class TestRawSlots(TempRoot):
+    """{{name|raw}}: the one markup slot, and who may fill it.
+
+    It exists because a tile grid cannot be ten text variables. It is a
+    SEPARATE mapping, so the html renderer -- the only thing a caller can
+    reach -- cannot fill it, and a pushed value lands escaped instead.
+    """
+
+    def setUp(self):
+        super().setUp()
+        write_template(self.dir.name, "t.html", "<div>{{tiles|raw}}</div>")
+
+    def load(self, name, variables=None, root=None, raw=None):
+        return templates.load(name, variables, root=root or self.root,
+                              raw=raw)
+
+    def test_a_raw_value_is_filled_verbatim(self):
+        text, _ = self.load("t.html", raw={"tiles": '<b class="x">hi</b>'})
+        self.assertEqual(text, '<div><b class="x">hi</b></div>')
+
+    def test_a_caller_cannot_reach_the_raw_slot(self):
+        # Same template, same key, no raw mapping: the value is escaped
+        # like any other, so /show and /feed/html/vars cannot inject.
+        text, _ = self.load("t.html", {"tiles": "<script>alert(1)</script>"})
+        self.assertNotIn("<script>", text)
+        self.assertIn("&lt;script&gt;", text)
+
+    def test_an_unfilled_raw_slot_is_an_error_naming_it(self):
+        with self.assertRaises(templates.TemplateError) as caught:
+            self.load("t.html")
+        self.assertIn("'tiles'", str(caught.exception))
+
+    def test_raw_values_must_be_renderable_markup(self):
+        for bad in ("{{t}}", 42, "x" * (templates.MAX_RAW_CHARS + 1)):
+            with self.subTest(bad=type(bad).__name__):
+                with self.assertRaises(templates.TemplateError):
+                    self.load("t.html", raw={"tiles": bad})
+
+    def test_a_raw_slot_is_never_invented_by_the_caller(self):
+        # A template that declares no raw slot gets no markup either way.
+        write_template(self.dir.name, "plain.html", "<p>{{a}}</p>")
+        text, _ = self.load("plain.html", {"a": "x"}, raw={"tiles": "<b>"})
+        self.assertEqual(text, "<p>x</p>")
+
+    def test_the_shipped_picker_template_only_has_one(self):
+        names = templates.available(SHIPPED_ROOT)
+        self.assertIn("picker.html", names)
+        for name in names:
+            with open(os.path.join(SHIPPED_ROOT, name),
+                      encoding="utf-8") as handle:
+                body = re.sub(r"<!--.*?-->", "", handle.read(),
+                              flags=re.DOTALL)
+            with self.subTest(template=name):
+                self.assertLessEqual(len(templates.RAW_RE.findall(body)), 1)
 
 
 @requires_native
@@ -592,25 +650,31 @@ class TestViewAdvertised(unittest.TestCase):
                               "html.%s.%s has unknown type %r"
                               % (section, pname, spec.get("type")))
 
-    def test_template_is_required(self):
-        with self.assertRaises(ValueError):
-            displayd.validate_params({}, self.entry["params"])
+    def test_template_is_optional_and_defaults_to_the_shared_chrome(self):
+        # No required params, or this view could never appear as a picker
+        # or home tile and "the UI is a template" would stay opt-in.
+        displayd.validate_params({}, self.entry["params"])
         displayd.validate_params({"template": "status.html"},
                                  self.entry["params"])
         displayd.validate_params({"template": "s.html", "vars": {"a": "b"}},
                                  self.entry["params"])
+        self.assertEqual(HTML.DEFAULT_TEMPLATE, "layout.html")
+        self.assertIn(HTML.DEFAULT_TEMPLATE, self.entry["params"]["template"]["help"])
 
     def test_vars_must_be_an_object(self):
         with self.assertRaises(ValueError):
             displayd.validate_params({"template": "s.html", "vars": "nope"},
                                      self.entry["params"])
 
-    def test_not_in_the_default_live_view_set(self):
-        # The opt-in claim: a required-param view stays out of the picker
-        # and the merged home screen until a caller asks for it.
+    def test_in_the_default_live_view_set(self):
+        # Selectable like any other view: no required params means it is
+        # offered on the picker and the merged home screen.
         import picker
         live = picker.live_views(displayd.load_renderers(displayd.RENDERER_DIR))
-        self.assertNotIn("html", live)
+        self.assertIn("html", live)
+        import unified
+        self.assertIn("html", unified.live_tile_views(
+            displayd.load_renderers(displayd.RENDERER_DIR)))
 
     def test_declares_a_vars_input(self):
         self.assertIn("vars", self.entry["inputs"])
@@ -788,6 +852,160 @@ class TestViewFailuresAreVisible(unittest.TestCase):
         thread.join(1.0)
         self.assertGreaterEqual(len(screen.fb.frames), 2)
         self.assert_recovered(screen.fb.frames[-1])
+
+
+class TestLayoutChromeContract(unittest.TestCase):
+    """html-templates/layout.html: the shell the UI is built from.
+
+    The contract is fixed and documented, so the shipped defaults and the
+    template itself must never drift apart -- these run without the native
+    library on purpose: a drifted contract should fail on any checkout.
+    """
+
+    def setUp(self):
+        self.path = os.path.join(SHIPPED_ROOT, "layout.html")
+
+    def placeholders(self):
+        with open(self.path, encoding="utf-8") as handle:
+            raw = handle.read()
+        # Comments are dropped before placeholders are read, so a
+        # documented example in the header comment costs no variable.
+        raw = templates.COMMENT_RE.sub("", raw)
+        return set(templates.PLACEHOLDER_RE.findall(raw))
+
+    def test_the_shell_is_discoverable(self):
+        self.assertIn("layout.html", templates.available(SHIPPED_ROOT))
+
+    def test_placeholders_are_exactly_the_documented_set(self):
+        self.assertEqual(self.placeholders(), set(HTML.DEFAULT_VARS))
+
+    def test_defaults_fill_it_with_no_leftovers(self):
+        text, _root = templates.load("layout.html", HTML.DEFAULT_VARS,
+                                     root=SHIPPED_ROOT)
+        self.assertNotIn("{{", text)
+        for key, value in HTML.DEFAULT_VARS.items():
+            self.assertIn(templates.escape(value), text)
+
+    def test_every_contract_key_is_documented_in_the_template(self):
+        with open(self.path, encoding="utf-8") as handle:
+            head = handle.read(4000)
+        for key in HTML.DEFAULT_VARS:
+            self.assertIn(key, head,
+                          "%s is used but not documented in the header" % key)
+
+    def test_no_javascript_and_no_remote_resources(self):
+        with open(self.path, encoding="utf-8") as handle:
+            # Comments go first, by the same rule the trust boundary uses:
+            # the header comment documents that these are unsupported.
+            text = templates.COMMENT_RE.sub("", handle.read()).lower()
+        for banned in ("<script", "javascript:", "@import", "http://", "https://"):
+            self.assertNotIn(banned, text)
+
+    def test_pushed_values_are_escaped_in_the_shell_too(self):
+        text, _root = templates.load(
+            "layout.html",
+            dict(HTML.DEFAULT_VARS, title="<img src=x onerror=alert(1)>"),
+            root=SHIPPED_ROOT)
+        self.assertNotIn("<img", text)
+        self.assertIn("&lt;img", text)
+
+    def test_a_short_push_names_the_missing_key(self):
+        # The contract is not softened for the default template: a partial
+        # push still names what is missing rather than drawing a wrong
+        # shell, which is what makes a push reviewable.
+        with self.assertRaises(templates.TemplateError) as caught:
+            templates.load("layout.html", {"title": "T"}, root=SHIPPED_ROOT)
+        message = str(caught.exception)
+        self.assertIn("needs variable", message)
+        named = message.split("'")[1] if "'" in message else ""
+        self.assertIn(named, set(HTML.DEFAULT_VARS) - {"title"})
+
+
+@requires_native
+class TestLayoutRenders(unittest.TestCase):
+    """A real 1920x1080 render of the shell, the way a tile reaches it."""
+
+    def test_bare_tile_shows_the_shell_not_a_card(self):
+        frames = run_view(make_screen(1920, 1080), {})
+        self.assertTrue(frames, "no frame presented")
+        frame = frames[-1]
+        self.assertEqual(frame.size, (1920, 1080))
+        self.assertFalse(_is_error_card(frame), "empty params drew an error")
+        self.assertGreater(lit_pixels(frame), 20)
+
+    def test_side_strips_and_content_band_are_where_they_are_documented(self):
+        # The strips and the main band are different surfaces; if the frame
+        # ever stops laying out, a tap aimed at a region lands on nothing.
+        frame = run_view(make_screen(1920, 1080), {})[-1]
+        strip = frame.getpixel((80, 540))
+        main = frame.getpixel((960, 540))
+        self.assertEqual(strip, (11, 13, 19), "left strip moved or vanished")
+        self.assertEqual(main, (7, 8, 12), "content band moved or vanished")
+        self.assertEqual(frame.getpixel((1900, 540)), strip,
+                         "right strip missing (not mirrored)")
+        self.assertNotEqual(strip, main, "the shell lost its chrome")
+
+    def test_a_pushed_shell_re_renders_in_place(self):
+        class Store:
+            def __init__(self):
+                self.payloads = []
+
+            def get(self, renderer, name):
+                return self.payloads
+
+        screen = make_screen(640, 360)
+        store = Store()
+        screen.feeds = store
+        stop = threading.Event()
+        thread = threading.Thread(target=HTML.run, args=(screen, {}, stop))
+        thread.daemon = True
+        thread.start()
+        thread.join(1.5)
+        first = screen.fb.frames[-1] if screen.fb.frames else None
+        store.payloads = [dict(HTML.DEFAULT_VARS, title="PUSHED")]
+        deadline = time.time() + 4.0
+        while time.time() < deadline and len(screen.fb.frames) < 2:
+            time.sleep(0.05)
+        stop.set()
+        thread.join(1.0)
+        self.assertGreaterEqual(len(screen.fb.frames), 2, "push did not draw")
+        self.assertFalse(_is_error_card(screen.fb.frames[-1]))
+        self.assertNotEqual(first.tobytes(), screen.fb.frames[-1].tobytes())
+
+    def test_a_short_push_draws_a_card_and_recovers(self):
+        class Store:
+            def __init__(self):
+                self.payloads = []
+
+            def get(self, renderer, name):
+                return self.payloads
+
+        screen = make_screen(640, 360)
+        store = Store()
+        screen.feeds = store
+        stop = threading.Event()
+        thread = threading.Thread(target=HTML.run, args=(screen, {}, stop))
+        thread.daemon = True
+        thread.start()
+        thread.join(1.5)
+        store.payloads = [{"title": "HALF"}]
+        deadline = time.time() + 4.0
+        while time.time() < deadline:
+            frames = screen.fb.frames
+            if frames and _is_error_card(frames[-1]):
+                break
+            time.sleep(0.05)
+        stop.set()
+        thread.join(1.0)
+        self.assertTrue(_is_error_card(screen.fb.frames[-1]),
+                        "a half-filled push drew a shell instead of naming it")
+
+    def test_idle_shell_does_not_re_render(self):
+        # The change detector is what keeps a non-STATIC view off the CPU
+        # when nothing is pushed; the shell is the default case for it.
+        frames = run_view(make_screen(1920, 1080), {}, seconds=3.0)
+        self.assertEqual(len(frames), 1,
+                         "idle shell re-rendered %d times" % len(frames))
 
 
 if __name__ == "__main__":

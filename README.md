@@ -38,7 +38,7 @@ through `GET /renderers`.
 * Python 3.8+.
 * [Pillow](https://python-pillow.org/) — used by the daemon and by the bundled
   renderers.
-* Optional, for the [`html` renderer](#html-renderer-optional-litehtml) only: a
+* Optional, for the [`html` renderer](#html-renderer-litehtml) only: a
   C++ toolchain, to build the bundled layout engine once with
   `tools/build_litehtml.sh`. `install.sh` invokes it through
   `tools/install_html_runtime.sh`; nothing else here needs a compiler
@@ -226,23 +226,53 @@ evidence for later human-guided work, not a control loop.
 | `chat` | no | `title`, `lines` (default 7), `background` — inputs: `message`, `delete` |
 | `stream` | no | `url` (snapshot JPEG to poll), `fps` (0.5–5, default 2), `fit` (cover/contain/stretch), `background`, `label` — inputs: `frame` (`{data}` base64 or `{url}`) |
 | `retro_grid` | no | `boxes` (per-cell `label`/`text` or `image` file-or-URL + `color`/`text_color`/`text_size`), `columns`/`rows` (default 4/3), `gutter`, `border`, `background`, `flash_seconds` — input: `tap` (`{cell,label,id,region,x,y}`); tap wiring in `touch-retro-grid.json.example`, see TOUCH.md "Retro grid wiring" |
-| `html` | no | `template` (required, file name in the template root), `vars` (values for `{{placeholders}}`), `background` — input: `vars`; optional, needs the native engine built once, see [docs/HTML_RENDERER.md](docs/HTML_RENDERER.md) |
+| `html` | no | `template` (file name in the template root, default `layout.html`), `vars` (values for `{{placeholders}}`), `background` — input: `vars`; needs the native engine built once, see [docs/HTML_RENDERER.md](docs/HTML_RENDERER.md) |
 
 Static renderers draw one frame and return; that frame stays on screen.
 Animated renderers loop until the daemon stops them.
 
-## HTML renderer (optional, litehtml)
+## HTML renderer (litehtml)
 
 A view that needs real layout, hierarchy and typography can be a few dozen lines
 of HTML and CSS in a file instead of a few hundred lines of PIL. `POST /show
 {"renderer": "html", "params": {"template": "status.html", "vars": {...}}}`
 renders it, and `POST /feed/html/vars {...}` re-renders in place.
 
+`template` defaults to `html-templates/layout.html`, the shared panel chrome
+(header, side gesture strips, content band, footer). Because the default needs
+no params, `html` is offered on the picker and the merged home screen and
+rotates like any other view: a bare `POST /show {"renderer": "html"}` draws the
+shell, and a push to it becomes live content. Its ten variables (`eyebrow`,
+`title`, `status`, `lead`, `body`, `hint_left`, `hint_right`, `footer`,
+`footer_right`) are all required and documented in the template header and in
+`docs/HTML_RENDERER.md`.
+
 The trust boundary is the design: a caller names a template that already exists
 in the template root and passes only *data*, which is HTML-escaped on the way in.
 So a feed payload can never add a style, a remote URL, a script, or a file
 reference. Templates come from `$DISPLAYD_HTML_TEMPLATES` or
 `html-templates/`; the request cannot change that.
+
+The `picker` view is the same chrome plus a tile grid
+(`html-templates/picker.html`), drawn by litehtml rather than Pillow. Each tile
+is positioned at exactly the rect its touch region uses, so what is drawn and
+what is tappable cannot drift apart. The one markup slot it needs
+(`{{tiles|raw}}`) is filled from a separate mapping only a renderer can pass,
+so a caller still cannot put markup on the panel — see
+`docs/HTML_RENDERER.md`.
+
+The apps dock under the merged home screen is a template too
+(`html-templates/dock.html`), composited into the picker frame inside the rect
+its `apps-dock` tap region covers. It is authored once at the standard dock
+size and scaled to the rect it is given, and a dock that cannot draw says so
+inside its own rect rather than over the tiles.
+
+The tap-anywhere selection screen (`options`) is the same chrome plus one name
+layer (`html-templates/options.html`, geometry in
+`renderers/_options_grid.py`), drawn by litehtml rather than Pillow. It NAMES
+the picks and the way back; the picker SELECTS. Its single `{{names|raw}}` slot
+is renderer-filled, and every caller-supplied view name is escaped before it
+goes in.
 
 The engine is optional and lazily loaded, so the daemon and `GET /renderers`
 work unchanged without it — the view explains how to build it instead of going

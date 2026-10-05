@@ -1,8 +1,10 @@
-"""Render a panel view from a local HTML/CSS template (optional, litehtml).
+"""Render a panel view from a local HTML/CSS template (litehtml).
 
 The point is authoring power: a view that needs real layout, hierarchy and
 typography should be a few dozen lines of HTML+CSS in a file, not a few
 hundred lines of PIL. litehtml does the layout; PIL does the pixels.
+``html-templates/layout.html`` is the shared panel chrome this and the
+other UI surfaces are built from; it is the default template.
 
 The trust boundary is the whole design. This view never takes markup from
 a caller. ``template`` names a file that already exists in the template
@@ -21,6 +23,14 @@ and deploy.sh do.
 POST /show {"renderer": "html",
             "params": {"template": "status.html", "vars": {...}}}
 POST /feed/html/vars {"title": "...", ...}  re-renders in place
+
+``template`` defaults to html-templates/layout.html, the shared panel
+chrome, so this view is selectable and rotatable like any other: a tile
+with no params shows the shell, and a push to it becomes live content.
+An empty variable set on that default template renders DEFAULT_VARS --
+the shell has to say something the moment a tile is tapped, and the
+contract stays "a missing variable is an error" for every other
+template. See html-templates/layout.html and docs/HTML_RENDERER.md.
 """
 
 import os
@@ -28,8 +38,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PIL import Image, ImageDraw
-
+import _html_error
 import _html_native
 import _html_templates as templates
 
@@ -37,9 +46,28 @@ NAME = "html"
 DESCRIPTION = ("Render a local HTML/CSS template (litehtml); "
                "template files only, no remote or inline markup")
 STATIC = False
+
+# No required params: this view must stay in the live picker/home set, or
+# "the UI is a template" would be true only of views nobody can reach.
+# The default template is the shared chrome, whose contract is fixed and
+# documented; DEFAULT_VARS is what an empty variable set draws.
+DEFAULT_TEMPLATE = "layout.html"
+DEFAULT_VARS = {
+    "eyebrow": "DISPLAYD",
+    "title": "PANEL",
+    "status": "TEMPLATE",
+    "lead": "Shared panel chrome",
+    "body": "layout.html - header, strips, content band, footer",
+    "hint_left": "ON",
+    "hint_right": "NEXT",
+    "footer": "POST /feed/html/vars to fill it in place",
+    "footer_right": "litehtml",
+}
+
 PARAMS = {
-    "template": {"type": "string", "required": True,
-                 "help": "template file name in the template root, e.g. status.html"},
+    "template": {"type": "string",
+                 "help": "template file name in the template root, "
+                         "default %s" % DEFAULT_TEMPLATE},
     "vars": {"type": "object", "help": "values for {{placeholders}}, escaped"},
     "background": {"type": "string", "help": "colour under the document, default black"},
 }
@@ -53,54 +81,8 @@ MISSING_LIBRARY_HINT = "build it: tools/build_litehtml.sh"
 
 
 def _error_frame(screen, title, detail):
-    """Loud, readable failure on the panel -- never a blank and never a crash.
-
-    A view that silently shows nothing is indistinguishable from a dead
-    panel, and every failure here (no template root, missing native
-    library, unknown variable) is operator-fixable, so each one says what
-    to do about it instead of just what went wrong.
-    """
-    img = screen.new_image((28, 10, 14))
-    draw = ImageDraw.Draw(img)
-    margin = max(20, screen.W // 26)
-    title_font = _html_native.ui_font(max(20, screen.H // 18), bold=True)
-    body_font = _html_native.ui_font(max(16, screen.H // 30), bold=False)
-    draw.rectangle([0, 0, screen.W, max(8, screen.H // 48)], fill=(214, 74, 74))
-    y = margin
-    for line in _wrap(title, _columns(screen, margin, title_font))[:3]:
-        draw.text((margin, y), line, font=title_font, fill=(255, 196, 196))
-        y += _line_height(title_font) + 6
-    y += 8
-    for line in _wrap(detail, _columns(screen, margin, body_font))[:5]:
-        draw.text((margin, y), line, font=body_font, fill=(226, 216, 220))
-        y += _line_height(body_font) + 4
-    return img
-
-
-def _columns(screen, margin, font):
-    """Rough character budget per line, from a probe of the real face."""
-    probe = font.getbbox("M")[2] - font.getbbox("M")[0]
-    return max(12, (screen.W - 2 * margin) // max(1, probe))
-
-
-def _line_height(font):
-    box = font.getbbox("Ay")
-    return (box[3] - box[1]) + 4
-
-
-def _wrap(text, columns):
-    """Greedy whitespace wrap: these strings are short and read by a human."""
-    lines, current = [], ""
-    for word in str(text).split():
-        candidate = (current + " " + word).strip()
-        if len(candidate) > columns and current:
-            lines.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        lines.append(current)
-    return lines
+    """Loud, readable failure on the panel -- never a blank and never a crash."""
+    return _html_error.error_frame(screen, title, detail)
 
 
 def _compose(screen, document, background):
@@ -155,9 +137,11 @@ def runtime_status():
 
 
 def run(screen, params, stop):
-    name = str(params.get("template") or "")
+    name = str(params.get("template") or DEFAULT_TEMPLATE)
     variables = params.get("vars")
     variables = dict(variables) if isinstance(variables, dict) else {}
+    if not variables and name == DEFAULT_TEMPLATE:
+        variables = dict(DEFAULT_VARS)
     background = tuple(screen.color(params.get("background"), (0, 0, 0)))
 
     # A bad first paint is the case that matters: report it, then keep the

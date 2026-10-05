@@ -273,6 +273,16 @@ keeps running the old tick until the installer runs (`install-mac.sh
   live apps dock; dock drawing split into `renderers/unified_dock.py` per
   the 250-line budget). Home badge/region target it
   (`home_chrome.HOME_VIEW`, suppressed there); `picker` stays selectable.
+- The dock is a litehtml strip (`html-templates/dock.html`, shared chrome
+  slot names + dim/accent/alert/line + an empty-when-live `marker`), drawn
+  by `unified_dock.draw_dock(img, ...)`, which pastes ONLY the dock rect and
+  scales the authored `DESIGN` size to the rect it is given. So
+  `unified.py` and `unified_dock.py` are both Pillow-free; `unified.py`
+  composes the picker document and the dock document and draws nothing
+  itself. A dock failure
+  is a strip card from `_html_error.error_strip`, never a full-screen card
+  and never a silent gap (litehtml has no border-radius, so the strip's
+  corners are square).
 - The dock reads the `talon_apps` feed in place (no second feed path);
   empty/stale render dock-only, tiles never move. Tile list defaults to
   the live set minus `unified` (daemon fills it, like picker).
@@ -299,11 +309,25 @@ keeps running the old tick until the installer runs (`install-mac.sh
   headless daemon + real touch client: tap-1 warps into AIM, fresh zoom ->
   tap-2 200 + queued command, 490s-stale zoom -> 409 + nothing queued).
 
-## HTML renderer (optional litehtml template view)
+## HTML renderer (litehtml template view -- the UI's rendering layer)
 
 - `renderers/html.py` renders a named local template; the full contract is
   `docs/HTML_RENDERER.md` (trust boundary, supported CSS, cost). Start from
   `html-templates/status.html`, which is a working example.
+- `html-templates/layout.html` is the SHARED PANEL CHROME (header, side
+  gesture strips, content band, footer) and the default template, so `template`
+  is optional and `html` sits in the live picker/home set and rotates like
+  any other view. Its ten variables (`eyebrow`, `title`, `status`, `lead`,
+  `body`, `hint_left`, `hint_right`, `footer`, `footer_right`) are ALL
+  required -- a missing one names itself rather than drawing a wrong shell --
+  and the set is pinned to `DEFAULT_VARS` in `renderers/html.py` by
+  `TestLayoutChromeContract`. Only an EMPTY variable set on the default
+  template falls back to `DEFAULT_VARS`, because a tile that shows a red card
+  the instant it is tapped is not a usable home tile. Pushed values are
+  escaped exactly like any other template's; no markup, ever.
+- Rendering is fixed-px, authored at 1920x1080: litehtml fills whatever
+  viewport it is handed, but it has no viewport-relative units, so a
+  smaller panel gets the same type size.
 - The engine is NOT vendored. One pinned commit
   (`5624e795be50f02c21c89985c374dcd659dbd74b`), built by
   `DISPLAYD_LITEHTML_BUILD="$PWD/build/litehtml" ./tools/build_litehtml.sh`;
@@ -324,6 +348,32 @@ keeps running the old tick until the installer runs (`install-mac.sh
   placeholders are read (a commented-out example must not demand a variable).
   Image refs go through `allow_root()` + `resolve_local()`: local-only, no
   URL/data/absolute/home/UNC, symlink escape refused, `?`/`#` stripped.
+- `{{name|raw}}` is the ONE markup slot, filled from `load()`'s separate
+  `raw` mapping, which the html renderer never passes -- so a caller value
+  named after a raw slot still arrives escaped. Only `renderers/picker.py`
+  uses it, for the tile layer; an unfilled raw slot is a missing variable that
+  names itself. Never add a second one.
+- The PICKER is a template surface: `renderers/picker.py` holds the view
+  contract (params, `live_views`, `grid_geometry`, `picker_regions`) and draws
+  NO Pillow (a source test asserts it); `renderers/_picker_tiles.py` turns that
+  geometry into tile divs at exactly the region rects, minus the border
+  compensation litehtml needs (declared width is the CONTENT box, so an
+  uncompensated tile is 12px wider than the region that taps it). An
+  absolutely positioned child offsets from its positioned parent, so label
+  offsets are tile-local. `unified.py` still calls `pk.draw()` for the grid and
+  draws its dock with Pillow on top -- that is intended.
+- OPTIONS is a template surface too (`html-templates/options.html` +
+  `renderers/_options_grid.py`), and it shows what a geometry-driven layer
+  costs: the grid ALLOCATES a rect per name where the old Pillow loop only
+  shrank the row height, so `coerce_views` truncates at `MAX_CELLS` (48) to
+  keep the header count honest, and `grid_geometry` is total AND bounded on
+  any input (a huge count must never become a runaway allocation -- `10**9`
+  OOM-killed the suite before that bound). litehtml does not centre a label
+  like a browser, so `label_box()` measures the box from the real face.
+  `options_regions()` stays `[]` on purpose: options NAMES, the picker
+  SELECTS, so a per-name hit rect would be a behaviour change disguised as
+  migration. Only the persistent overlay chrome (`renderers/home_chrome.py`)
+  still draws in Pillow, and it is deliberately left for its own increment.
 - Three litehtml gotchas, all verified live, each of which silently renders
   WRONG rather than failing: `document::render()` returns natural WIDTH, not
   height (read `doc->height()`, and note this revision declares but never
@@ -345,6 +395,11 @@ keeps running the old tick until the installer runs (`install-mac.sh
   per-tile walk with a count cap: the cap truncates in raster order and paints
   the panel's bottom-right corner black. Verified 1px-tile-over-full-HD in
   ~2ms.
+- The failure card lives in `renderers/_html_error.py`, NOT in either view:
+  `renderers/picker.py` must not import `ImageDraw`, so the html view and the
+  picker share one `error_frame`. A view composited INTO a bigger frame (the
+  home screen's dock) shares the other one, `error_strip`, which confines the
+  same red rule and message to that view's own rect.
 - Cost (`python3 tools/bench_html.py`, 1920x1080 `status.html`): ~7ms cold,
   ~5.6ms warm median, and RSS per render falls 9.6 -> 4.3 -> 0.6 -> 0.2 KiB as
   the font/image caches fill, i.e. flat in steady state. A leak holds a

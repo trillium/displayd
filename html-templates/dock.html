@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<!--
+  The apps dock: the live strip composited under the merged home screen
+  (renderers/unified_dock.py). It is a document in its own right rather
+  than a chrome template, because the strip is a strip -- a head row, one
+  big line, one tail row -- and the shared chrome's bands and side strips
+  have nothing to say here. The slot names are the shared panel chrome's
+  anyway (eyebrow/title/status/body/footer_right), so a reader who knows
+  layout.html knows this file.
+
+  Unlike the other templates this one is NOT drawn at panel size: it is
+  authored at DESIGN (1760x230, the dock rect default_dock() derives at
+  1920x1080) and the renderer scales the rendered strip to whatever rect
+  the caller passed, so a custom dock keeps the same type at the same
+  relative size instead of overflowing.
+
+  VARIABLE CONTRACT -- all thirteen are required (a placeholder with no
+  value is an error that names itself, never a blank strip). Only the
+  renderer ever fills this template; the html view never passes it a raw
+  slot, and there is no {{name|raw}} here at all.
+
+      eyebrow      the head label, bold, after the live dot
+      status       the mode line, right of the head row
+      subtitle     the one dim line under the head
+      title        the big line: count, focused app, overflow
+      body         the tail row's left half (the LEFT/RIGHT split)
+      footer_right the tail row's right half (the tap hint)
+      marker       the stale marker in front of the title; EMPTY when the
+                   feed is live, so it collapses instead of shifting the
+                   title by a fixed gutter
+
+      background   the strip colour behind the text
+      color        primary text colour
+      dim          secondary text colour (status, subtitle, tail row)
+      accent       the live colour: the head dot and the tap hint
+      alert        the stale colour, for {{marker}}
+      line         the strip outline
+
+  background/color/dim/accent/alert/line are #rrggbb strings built by the
+  renderer from colours the screen already parsed, never from caller text,
+  so taking them in a style attribute cannot inject CSS -- the same rule
+  picker.html follows.
+
+  litehtml notes: no grid, no gradients, no border-radius (so the strip's
+  corners are square, not rounded), and `gap` is dropped on a flex row
+  whose children grow -- spacing here is padding and margins.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { background: {{background}}; color: {{color}};
+               font-family: sans-serif; }
+  body { border: 2px solid {{line}}; padding: 14px 22px 0 22px; }
+  .head { display: flex; justify-content: space-between;
+          align-items: baseline; }
+  .brand { font-size: 36px; font-weight: bold; color: {{color}}; }
+  .dot { display: inline-block; width: 20px; height: 20px;
+         background: {{accent}}; margin-right: 16px; }
+  .status { font-size: 30px; color: {{dim}}; }
+  .subtitle { font-size: 30px; color: {{dim}}; padding-top: 8px; }
+  .main { font-size: 54px; font-weight: bold; color: {{color}};
+          padding-top: 6px; }
+  .alert { color: {{alert}}; }
+  .tail { display: flex; justify-content: space-between;
+          align-items: baseline; padding-top: 4px; }
+  .tail .l { font-size: 30px; color: {{dim}}; }
+  .tail .r { font-size: 30px; color: {{accent}}; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="brand"><span class="dot"></span>{{eyebrow}}</div>
+    <div class="status">{{status}}</div>
+  </div>
+  <div class="subtitle">{{subtitle}}</div>
+  <div class="main"><span class="alert">{{marker}}</span>{{title}}</div>
+  <div class="tail">
+    <div class="l">{{body}}</div>
+    <div class="r">{{footer_right}}</div>
+  </div>
+</body>
+</html>
