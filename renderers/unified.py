@@ -15,8 +15,6 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PIL import ImageDraw
-
 import picker as pk
 import sleep_chrome
 import talon_apps as ta
@@ -133,11 +131,16 @@ def audit_exact(w=1920, h=1080, views=None, params=None):
 
 def draw(screen, views, geometry, grid, dock, state, stale, bg, fg,
          title="PICK A VIEW"):
-    """One complete frame: picker grid via picker.draw, dock below."""
+    """One complete frame: picker grid via picker.draw, dock below.
+
+    Both halves are litehtml documents now (picker.html, dock.html), so
+    this composes two rendered strips and no longer owns a pixel: the
+    dock paste touches only the dock rect, which is what keeps a dock
+    that gained or lost its feed from moving a tile.
+    """
     img = pk.draw(screen, views, geometry, grid, pk.PALETTE,
                   bg, fg, (140, 160, 190), title)
-    dock_mod.draw_dock(ImageDraw.Draw(img), screen, dock, state, stale)
-    return img
+    return dock_mod.draw_dock(img, screen, dock, state, stale, bg, fg)
 
 
 def _latest(screen):

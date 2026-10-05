@@ -43,6 +43,39 @@ def _wrap(text, columns):
     return lines
 
 
+def error_strip(screen, rect, title, detail):
+    """The same failure card, confined to a strip of the panel.
+
+    A sub-view that is composited into a bigger frame (the home screen's
+    dock) has no business painting a full-screen card: that would hide the
+    tiles around it. This draws the red rule and the message inside
+    `rect` only, so the rest of the frame is untouched and the failure is
+    still loud where the user is already looking.
+    """
+    x, y, w, h = (int(v) for v in rect)
+    img = screen.new_image((28, 10, 14))
+    draw = ImageDraw.Draw(img)
+    rule = max(4, h // 24)
+    draw.rectangle([x, y, x + w, y + rule], fill=(214, 74, 74))
+    margin = max(8, w // 74)
+    title_font = _html_native.ui_font(max(14, h // 8), bold=True)
+    body_font = _html_native.ui_font(max(11, h // 12), bold=False)
+    probe = body_font.getbbox("M")
+    columns = max(12, (w - 2 * margin) // max(1, probe[2] - probe[0]))
+    line_y = y + rule + max(6, h // 32)
+    for line in _wrap(title, columns)[:2]:
+        draw.text((x + margin, line_y), line, font=title_font,
+                  fill=(255, 196, 196))
+        line_y += _line_height(title_font)
+    for line in _wrap(detail, columns)[:2]:
+        if line_y > y + h:
+            break
+        draw.text((x + margin, line_y), line, font=body_font,
+                  fill=(226, 216, 220))
+        line_y += _line_height(body_font)
+    return img
+
+
 def error_frame(screen, title, detail):
     """Loud, readable failure on the panel -- never a blank, never a crash."""
     img = screen.new_image((28, 10, 14))

@@ -261,6 +261,12 @@ what is tappable cannot drift apart. The one markup slot it needs
 so a caller still cannot put markup on the panel — see
 `docs/HTML_RENDERER.md`.
 
+The apps dock under the merged home screen is a template too
+(`html-templates/dock.html`), composited into the picker frame inside the rect
+its `apps-dock` tap region covers. It is authored once at the standard dock
+size and scaled to the rect it is given, and a dock that cannot draw says so
+inside its own rect rather than over the tiles.
+
 The engine is optional and lazily loaded, so the daemon and `GET /renderers`
 work unchanged without it — the view explains how to build it instead of going
 missing. `install.sh` and `deploy.sh` both run `tools/install_html_runtime.sh`,

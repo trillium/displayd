@@ -273,6 +273,14 @@ keeps running the old tick until the installer runs (`install-mac.sh
   live apps dock; dock drawing split into `renderers/unified_dock.py` per
   the 250-line budget). Home badge/region target it
   (`home_chrome.HOME_VIEW`, suppressed there); `picker` stays selectable.
+- The dock is a litehtml strip (`html-templates/dock.html`, shared chrome
+  slot names + dim/accent/alert/line + an empty-when-live `marker`), drawn
+  by `unified_dock.draw_dock(img, ...)`, which pastes ONLY the dock rect and
+  scales the authored `DESIGN` size to the rect it is given. So
+  `unified.py` and `unified_dock.py` are both Pillow-free; a dock failure
+  is a strip card from `_html_error.error_strip`, never a full-screen card
+  and never a silent gap (litehtml has no border-radius, so the strip's
+  corners are square).
 - The dock reads the `talon_apps` feed in place (no second feed path);
   empty/stale render dock-only, tiles never move. Tile list defaults to
   the live set minus `unified` (daemon fills it, like picker).
@@ -375,7 +383,9 @@ keeps running the old tick until the installer runs (`install-mac.sh
   ~2ms.
 - The failure card lives in `renderers/_html_error.py`, NOT in either view:
   `renderers/picker.py` must not import `ImageDraw`, so the html view and the
-  picker share one `error_frame`.
+  picker share one `error_frame`. A view composited INTO a bigger frame (the
+  home screen's dock) shares the other one, `error_strip`, which confines the
+  same red rule and message to that view's own rect.
 - Cost (`python3 tools/bench_html.py`, 1920x1080 `status.html`): ~7ms cold,
   ~5.6ms warm median, and RSS per render falls 9.6 -> 4.3 -> 0.6 -> 0.2 KiB as
   the font/image caches fill, i.e. flat in steady state. A leak holds a

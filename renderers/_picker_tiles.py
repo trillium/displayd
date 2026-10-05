@@ -30,8 +30,11 @@ TITLE = "PICK A VIEW"
 
 
 def hex_colour(color):
-    """Palette tuple -> CSS colour. The table is trusted and constant."""
-    return "#%02x%02x%02x" % tuple(int(v) for v in color[:3])
+    """Palette tuple -> CSS colour. Lives in the trust boundary because a
+    template that takes colours in a style attribute needs one rule for
+    it: the colour came from a screen that already parsed it, never from
+    caller text."""
+    return templates.hex_colour(color)
 
 
 def content_size(rect):

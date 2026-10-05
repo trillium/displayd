@@ -178,6 +178,41 @@ host with no C++ toolchain therefore degrades loudly rather than silently --
 which is worth knowing before a deploy lands on a fresh machine, because the
 home screen is the first thing anyone taps.
 
+## dock.html: the apps dock
+
+`html-templates/dock.html` is the strip `renderers/unified_dock.py` composites
+under the merged home screen. It is a document in its own right rather than a
+chrome template, because a strip is a strip: a head row (live dot + `MAC APPS`,
+mode line at the right), one dim subtitle, one big line, one tail row (the
+LEFT/RIGHT split, the tap hint at the right). The slot names are the shared
+chrome's anyway -- `eyebrow`, `status`, `subtitle`, `title`, `body`,
+`footer_right` -- so the file reads like `layout.html`. Five more carry the
+colours: `background`, `color`, `dim`, `accent` (live green), `alert` (stale
+amber), `line`, plus `marker`, the stale marker in front of the title, which is
+**empty** when the feed is live so it collapses instead of leaving a gutter.
+All thirteen are required, and there is no `{{name|raw}}` here at all.
+
+Two things differ from the other templates, both deliberate:
+
+- **it is not drawn at panel size.** It is authored at `dock.DESIGN`
+  (1760x230, the rect `unified.default_dock()` derives at 1920x1080) and the
+  renderer scales the rendered strip to whatever rect the caller passed, so a
+  custom dock keeps the same type at the same relative size instead of
+  overflowing the way a fixed-px document would.
+- **its failure is a strip, not a card.** The dock is pasted into a finished
+  frame, so `error_strip()` in `renderers/_html_error.py` draws the red rule
+  and the message *inside the dock rect only* -- a full-screen card would hide
+  the tiles around it, and a silently missing strip would be indistinguishable
+  from a home screen that simply has no apps.
+
+litehtml has no `border-radius`, so the strip's corners are square rather than
+rounded, and the head "dot" is a 20px square. Everything else -- three states
+(no payload yet / live / quiet past `STALE_AFTER`), the count, the focused app,
+the overflow, the split, the mode line -- is the behaviour the Pillow version
+had, and `tests/test_unified.py` pins it against rendered pixels, including
+that the strip only ever paints inside the rect the `apps-dock` tap region
+targets.
+
 
 ## The trust boundary
 
@@ -272,6 +307,8 @@ that only survives polite input is not a budget.
 | `html-templates/picker.html` | the chrome plus the tile layer (one raw slot) |
 | `renderers/picker.py` | the picker view: params, views, touch geometry |
 | `renderers/_picker_tiles.py` | geometry -> tile markup + chrome variables |
+| `html-templates/dock.html` | the apps dock strip under the home screen |
+| `renderers/unified_dock.py` | dock feed state -> the strip's variables + composite |
 | `renderers/_html_templates.py` | the trust boundary: name, root, escaping, raw slots |
 | `renderers/_html_error.py` | the red rule and its message, shared by both views |
 | `renderers/_html_native.py` | ctypes + Pillow; fonts, images, clipping, tiling |

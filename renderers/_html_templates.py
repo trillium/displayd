@@ -63,6 +63,18 @@ class TemplateError(Exception):
     """Anything that makes a template unusable. The view shows the text."""
 
 
+def hex_colour(color):
+    """A palette tuple -> a CSS colour, for a template that takes colours
+    in a style attribute.
+
+    The inputs are colours a screen already parsed (or constants in this
+    tree), never a caller's own text, so this cannot become a CSS
+    injection point: the escaping rule below is about *data* reaching a
+    document, and a colour that has been through here is not data.
+    """
+    return "#%02x%02x%02x" % tuple(int(v) for v in tuple(color)[:3])
+
+
 def default_root():
     """The one directory templates may come from, symlinks resolved."""
     configured = os.environ.get(ENV_ROOT)
