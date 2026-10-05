@@ -21,6 +21,7 @@ Run from the repo root:  python3 -m unittest tests.test_html -v
 
 import importlib.util
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -239,6 +240,7 @@ class TestTemplateValues(TempRoot):
         self.assertIn("42", text)
         self.assertIn("3.5", text)
 
+
     def test_none_is_empty_not_the_word_none(self):
         text, _ = self.load("t.html", {"a": None, "b": "x"})
         self.assertIn("|x", text)
@@ -268,6 +270,62 @@ class TestTemplateValues(TempRoot):
                        "<p>" + "{{" * 200 + "</p>")
         with self.assertRaises(templates.TemplateError):
             self.load("bomb.html")
+
+
+class TestRawSlots(TempRoot):
+    """{{name|raw}}: the one markup slot, and who may fill it.
+
+    It exists because a tile grid cannot be ten text variables. It is a
+    SEPARATE mapping, so the html renderer -- the only thing a caller can
+    reach -- cannot fill it, and a pushed value lands escaped instead.
+    """
+
+    def setUp(self):
+        super().setUp()
+        write_template(self.dir.name, "t.html", "<div>{{tiles|raw}}</div>")
+
+    def load(self, name, variables=None, root=None, raw=None):
+        return templates.load(name, variables, root=root or self.root,
+                              raw=raw)
+
+    def test_a_raw_value_is_filled_verbatim(self):
+        text, _ = self.load("t.html", raw={"tiles": '<b class="x">hi</b>'})
+        self.assertEqual(text, '<div><b class="x">hi</b></div>')
+
+    def test_a_caller_cannot_reach_the_raw_slot(self):
+        # Same template, same key, no raw mapping: the value is escaped
+        # like any other, so /show and /feed/html/vars cannot inject.
+        text, _ = self.load("t.html", {"tiles": "<script>alert(1)</script>"})
+        self.assertNotIn("<script>", text)
+        self.assertIn("&lt;script&gt;", text)
+
+    def test_an_unfilled_raw_slot_is_an_error_naming_it(self):
+        with self.assertRaises(templates.TemplateError) as caught:
+            self.load("t.html")
+        self.assertIn("'tiles'", str(caught.exception))
+
+    def test_raw_values_must_be_renderable_markup(self):
+        for bad in ("{{t}}", 42, "x" * (templates.MAX_RAW_CHARS + 1)):
+            with self.subTest(bad=type(bad).__name__):
+                with self.assertRaises(templates.TemplateError):
+                    self.load("t.html", raw={"tiles": bad})
+
+    def test_a_raw_slot_is_never_invented_by_the_caller(self):
+        # A template that declares no raw slot gets no markup either way.
+        write_template(self.dir.name, "plain.html", "<p>{{a}}</p>")
+        text, _ = self.load("plain.html", {"a": "x"}, raw={"tiles": "<b>"})
+        self.assertEqual(text, "<p>x</p>")
+
+    def test_the_shipped_picker_template_only_has_one(self):
+        names = templates.available(SHIPPED_ROOT)
+        self.assertIn("picker.html", names)
+        for name in names:
+            with open(os.path.join(SHIPPED_ROOT, name),
+                      encoding="utf-8") as handle:
+                body = re.sub(r"<!--.*?-->", "", handle.read(),
+                              flags=re.DOTALL)
+            with self.subTest(template=name):
+                self.assertLessEqual(len(templates.RAW_RE.findall(body)), 1)
 
 
 @requires_native

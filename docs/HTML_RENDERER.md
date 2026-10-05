@@ -126,6 +126,59 @@ tile that shows a red card the moment it is tapped is not a usable home
 tile. Every other template, and every partial push, still names its missing
 key.
 
+## picker.html: the tile grid
+
+`html-templates/picker.html` is the same chrome (header, side strips, bottom
+band) plus the one thing the chrome cannot express as ten text variables: a
+tile grid. `renderers/picker.py` no longer draws in Pillow. It fills the chrome
+slots from the screen geometry and emits **one absolutely positioned tile div
+per view**, at exactly the rects `picker.grid_geometry()` hands
+`picker_regions()` -- so a drawn tile and the region that taps it are the same
+four numbers by construction, not by two copies of a constant. The touch
+contract is untouched: the regions, `touch-picker.json.example`, the CLI
+generator and `tests/test_picker.py` all still call the same functions.
+
+Two litehtml facts the tile layer depends on, both verified live:
+
+- a declared `width`/`height` is the **content** box, so a tile declares its
+  rect minus the frame; without that every tile is 12px wider than the region
+  that taps it;
+- an absolutely positioned child offsets from its positioned parent, so a tile
+  label is placed in tile-local pixels, measured with the same face the
+  document text uses.
+
+`background` and `color` reach the document as `#rrggbb` strings built from the
+colours the screen already parsed, never as the caller's own text, so the
+template can take them in a style attribute without opening a CSS injection.
+
+### The raw slot: `{{name|raw}}`
+
+A tile grid is markup, so `picker.html` declares one slot marked `raw`. It is
+filled from a **separate `raw` mapping** that `load()` takes as its own
+argument, and the html renderer never has one: a caller of `POST /show` or
+`POST /feed/html/vars` supplies `variables`, which are escaped, so a value
+named `tiles` lands in that slot as escaped text. A raw slot nobody filled is a
+missing variable like any other and names itself the same way. Raw values are
+refused if they carry a placeholder of their own, are not strings, or exceed
+`MAX_RAW_CHARS`. `templates.RAW_RE` finds the slots; a test asserts no shipped
+template declares more than one.
+
+The only raw value the panel ever passes is `renderers/_picker_tiles.py`'s tile
+markup: fixed palette, fixed arithmetic, and a view name escaped before it
+reaches the document.
+
+### The picker now needs the engine
+
+The picker was a pure-Pillow view; it is now a template surface, so on a target
+with no built engine it shows the red "build it: tools/build_litehtml.sh" card
+instead of tiles. That is the same deal as the `html` view and the same
+mitigation: `install.sh` refuses to install without the runtime
+(`install_html_runtime.sh --strict`) and `deploy.sh` builds it on the host. A
+host with no C++ toolchain therefore degrades loudly rather than silently --
+which is worth knowing before a deploy lands on a fresh machine, because the
+home screen is the first thing anyone taps.
+
+
 ## The trust boundary
 
 This is the whole design, so it is worth being precise about.
@@ -216,7 +269,11 @@ that only survives polite input is not a budget.
 | --- | --- |
 | `renderers/html.py` | the view: params, defaults, the poll loop, error cards |
 | `html-templates/layout.html` | the shared panel chrome + its variable contract |
-| `renderers/_html_templates.py` | the trust boundary: name, root, escaping |
+| `html-templates/picker.html` | the chrome plus the tile layer (one raw slot) |
+| `renderers/picker.py` | the picker view: params, views, touch geometry |
+| `renderers/_picker_tiles.py` | geometry -> tile markup + chrome variables |
+| `renderers/_html_templates.py` | the trust boundary: name, root, escaping, raw slots |
+| `renderers/_html_error.py` | the red rule and its message, shared by both views |
 | `renderers/_html_native.py` | ctypes + Pillow; fonts, images, clipping, tiling |
 | `renderers/native/displayd_html.h` | the C ABI between them |
 | `renderers/native/pil_container.cpp` | the litehtml container |
@@ -230,3 +287,9 @@ The renderer carries the default template, so it appears on the picker and
 the merged home screen and rotates like any other view. It is still a
 template view -- it draws no tile grid of its own -- and every other file in
 the root is still one `POST /show` away.
+
+The picker itself is now a template surface too: `picker.html` is the same
+chrome plus a tile layer, and `renderers/picker.py` holds the view contract
+while `renderers/_picker_tiles.py` turns geometry into that layer. Nothing
+draws in Pillow on that path any more, which is also why the failure card lives
+in `renderers/_html_error.py`: both views share one.

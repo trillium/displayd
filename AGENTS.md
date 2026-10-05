@@ -338,6 +338,20 @@ keeps running the old tick until the installer runs (`install-mac.sh
   placeholders are read (a commented-out example must not demand a variable).
   Image refs go through `allow_root()` + `resolve_local()`: local-only, no
   URL/data/absolute/home/UNC, symlink escape refused, `?`/`#` stripped.
+- `{{name|raw}}` is the ONE markup slot, filled from `load()`'s separate
+  `raw` mapping, which the html renderer never passes -- so a caller value
+  named after a raw slot still arrives escaped. Only `renderers/picker.py`
+  uses it, for the tile layer; an unfilled raw slot is a missing variable that
+  names itself. Never add a second one.
+- The PICKER is a template surface: `renderers/picker.py` holds the view
+  contract (params, `live_views`, `grid_geometry`, `picker_regions`) and draws
+  NO Pillow (a source test asserts it); `renderers/_picker_tiles.py` turns that
+  geometry into tile divs at exactly the region rects, minus the border
+  compensation litehtml needs (declared width is the CONTENT box, so an
+  uncompensated tile is 12px wider than the region that taps it). An
+  absolutely positioned child offsets from its positioned parent, so label
+  offsets are tile-local. `unified.py` still calls `pk.draw()` for the grid and
+  draws its dock with Pillow on top -- that is intended.
 - Three litehtml gotchas, all verified live, each of which silently renders
   WRONG rather than failing: `document::render()` returns natural WIDTH, not
   height (read `doc->height()`, and note this revision declares but never
@@ -359,6 +373,9 @@ keeps running the old tick until the installer runs (`install-mac.sh
   per-tile walk with a count cap: the cap truncates in raster order and paints
   the panel's bottom-right corner black. Verified 1px-tile-over-full-HD in
   ~2ms.
+- The failure card lives in `renderers/_html_error.py`, NOT in either view:
+  `renderers/picker.py` must not import `ImageDraw`, so the html view and the
+  picker share one `error_frame`.
 - Cost (`python3 tools/bench_html.py`, 1920x1080 `status.html`): ~7ms cold,
   ~5.6ms warm median, and RSS per render falls 9.6 -> 4.3 -> 0.6 -> 0.2 KiB as
   the font/image caches fill, i.e. flat in steady state. A leak holds a

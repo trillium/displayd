@@ -28,3 +28,8 @@ renderers/native/liblitehtmlpil.so
 .DS_Store
 .idea/
 .vscode/
+
+# Agent harness scratch (task transcripts, run receipts). Never part of
+# the panel: nothing under here is source, and a scratch .output file can
+# run to a thousand lines of somebody else's tool output.
+/.pi/

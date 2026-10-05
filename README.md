@@ -253,6 +253,14 @@ So a feed payload can never add a style, a remote URL, a script, or a file
 reference. Templates come from `$DISPLAYD_HTML_TEMPLATES` or
 `html-templates/`; the request cannot change that.
 
+The `picker` view is the same chrome plus a tile grid
+(`html-templates/picker.html`), drawn by litehtml rather than Pillow. Each tile
+is positioned at exactly the rect its touch region uses, so what is drawn and
+what is tappable cannot drift apart. The one markup slot it needs
+(`{{tiles|raw}}`) is filled from a separate mapping only a renderer can pass,
+so a caller still cannot put markup on the panel — see
+`docs/HTML_RENDERER.md`.
+
 The engine is optional and lazily loaded, so the daemon and `GET /renderers`
 work unchanged without it — the view explains how to build it instead of going
 missing. `install.sh` and `deploy.sh` both run `tools/install_html_runtime.sh`,

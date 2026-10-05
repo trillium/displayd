@@ -6,6 +6,13 @@ panel tap reroutes the displayed view with no phone in hand. Hit rects
 for ``touch.json`` come from ``picker_regions()`` -- generate, never
 hand-compute (TOUCH.md has the live-set command).
 
+The tiles are drawn by the litehtml engine from
+``html-templates/picker.html``: the renderer emits one absolutely
+positioned tile div per slot, at exactly the rects ``grid_geometry()``
+hands the touch regions, so a drawn tile and its tap target are the same
+numbers by construction. The chrome (strips, title band, footer) is the
+shared panel chrome -- see docs/HTML_RENDERER.md.
+
 A sibling of ``options.py``: options NAMES the picks, the picker
 SELECTS; either can target the other without trapping.
 
@@ -18,7 +25,15 @@ the cap drops the alphabetically-last names. Membership is enforced where
 the set lives: ``show()`` rejects unknown renderers, current view kept.
 """
 
-from PIL import ImageDraw, ImageFont
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import _html_error
+import _html_native
+import _html_templates as templates
+import _picker_tiles
 
 NAME = "picker"
 DESCRIPTION = ("Tappable view picker: tile grid rerouting the panel "
@@ -53,7 +68,9 @@ PALETTE = (
     (255, 140, 60),
     (255, 130, 180),
 )
-INK = (18, 12, 32)
+INK = (18, 12, 32)  # tile frame + label ink; the template owns the CSS
+TEMPLATE = "picker.html"
+BUILD_HINT = "build it: tools/build_litehtml.sh"
 
 
 def default_rect(w, h):
@@ -146,74 +163,37 @@ def picker_regions(w=1920, h=1080, views=None, rect=None, gutter=None):
                                                     gutter=gutter))]
 
 
-def _font(screen, size):
+def draw(screen, views, geometry, rect, fills, bg, fg, dim,
+         title=_picker_tiles.TITLE):
+    """One complete frame: the chrome plus the tile layer, rendered by
+    litehtml from html-templates/picker.html. `dim` stays in the
+    signature because the sibling callers (unified) pass the old
+    side-hint colour; the template owns that colour now.
+    Never raises: a failure here is a card, never a blank."""
     try:
-        path = screen.font_path("DejaVuSans-Bold")
-    except Exception:
-        return None
-    if path is None:
-        return None
-    try:
-        return ImageFont.truetype(path, max(8, int(size)))
-    except Exception:
-        return None
-
-
-def _tile_font(screen, d, name, cw, size):
-    """Biggest font for `name` fitting tile width `cw` (None when the
-    screen has no fonts). Never raises."""
-    while size > 12:
-        font = _font(screen, size)
-        if font is None:
-            return None
-        try:
-            fits = d.textbbox((0, 0), name, font=font)[2] <= cw - 16
-        except Exception:
-            fits = True
-        if fits:
-            return font
-        size -= 4
-    return font
-
-
-def draw(screen, views, geometry, rect, fills, bg, fg, dim, title="PICK A VIEW"):
-    """One complete frame: header, tiles, side-hint labels. Pure."""
-    img = screen.new_image(bg)
-    d = ImageDraw.Draw(img)
-    w, h = screen.W, screen.H
-    rx, ry, rw, rh = rect
-    hint_font = _font(screen, min(h // 30, 36))
-
-    # Header in the top margin; skipped when the rect leaves no room.
-    if ry >= 28:
-        title_font = _font(screen, min(ry - 12, h // 24, 44))
-        if title_font is not None:
-            d.text((w // 2, ry // 2), title, font=title_font,
-                   fill=fg, anchor="mm")
-
-    for i, (name, (x, y, cw, ch)) in enumerate(zip(views, geometry)):
-        fill = fills[i % len(fills)]
-        d.rectangle([x, y, x + cw, y + ch], fill=fill,
-                    outline=INK, width=max(3, min(w, h) // 270))
-        shown = _tile_font(screen, d, name, cw, min(h // 14, 84))
-        if shown is not None:
-            d.text((x + cw // 2 + 2, y + ch // 2 + 3), name,
-                   font=shown, fill=(90, 70, 110), anchor="mm")
-            d.text((x + cw // 2, y + ch // 2), name,
-                   font=shown, fill=INK, anchor="mm")
-        else:
-            d.text((x + 8, y + 8), name, fill=INK)
-
-    # Side hints name the host gesture strips (both have live regions);
-    # no bottom-bar hint -- that bar has no touch region by design.
-    if hint_font is not None:
-        if rx >= 80:
-            d.text((rx // 2, h // 2), "ON", font=hint_font,
-                   fill=dim, anchor="mm")
-        if w - (rx + rw) >= 80:
-            d.text((rx + rw + (w - rx - rw) // 2, h // 2), "NEXT",
-                   font=hint_font, fill=dim, anchor="mm")
-    return img
+        document, root = templates.load(
+            TEMPLATE,
+            _picker_tiles.chrome(screen, rect, views, bg, fg, title),
+            raw={"tiles": _picker_tiles.tile_markup(
+                views, geometry, fills,
+                min(_picker_tiles.MAX_LABEL_PX, max(12, screen.H // 14)))})
+        image, _height = _html_native.render(
+            document, screen.W, screen.H, background=tuple(bg), root=root)
+        canvas = screen.new_image(bg)
+        canvas.paste(image, (0, 0))
+        return canvas
+    except templates.TemplateError as err:
+        return _html_error.error_frame(screen, "picker: " + str(err),
+                                       "fix the template, then re-show")
+    except _html_native.NativeMissing as err:
+        return _html_error.error_frame(screen, "picker: " + str(err),
+                                       BUILD_HINT)
+    except _html_native.HtmlRenderError as err:
+        return _html_error.error_frame(screen, "picker: " + str(err),
+                                       "template parsed but would not draw")
+    except Exception as err:  # never a blank panel, whatever happens
+        return _html_error.error_frame(screen, "picker: %s" % err,
+                                       "the picker could not draw")
 
 
 def run(screen, params, stop):
@@ -225,7 +205,8 @@ def run(screen, params, stop):
     geometry = grid_geometry(rect, len(views))
     screen.present(draw(screen, views, geometry, rect, PALETTE,
                         bg, fg, (140, 160, 190),
-                        str(params.get("title") or "PICK A VIEW")))
+                        str(params.get("title")
+                            or _picker_tiles.TITLE)))
 
 
 if __name__ == "__main__":

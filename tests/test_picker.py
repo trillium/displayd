@@ -1,10 +1,17 @@
 """Tests for the picker renderer. No framebuffer or touch hardware needed.
 
+The picker is drawn by litehtml from html-templates/picker.html, so these
+tests also pin the thing that migration can silently break: a drawn tile
+and its touch region must be the SAME four numbers. TileMarkupTest and
+TilePixelsTest check that against real rendered pixels, not against the
+geometry function that produced them.
+
 Run from the repo root:  python3 -m pytest tests/test_picker.py -v
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -12,14 +19,27 @@ import threading
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
+                                "renderers"))
 
 import touch
 from PIL import Image
 
 from renderers import picker as pk
+import _html_native
+import _picker_tiles as tiles
 
 W, H = 1920, 1080
 VIEWS = ["clock", "chat", "row", "stream", "activity", "options"]
+PICKER_PY = os.path.join(os.path.dirname(__file__), os.pardir,
+                         "renderers", "picker.py")
+TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), os.pardir,
+                             "html-templates", "picker.html")
+
+native_built = unittest.skipUnless(
+    any(os.path.exists(os.path.join(_html_native.NATIVE_DIR, name))
+        for name in _html_native.LIB_NAMES),
+    "native library not built (tools/build_litehtml.sh)")
 
 
 class FakeScreen:
@@ -206,6 +226,165 @@ class DrawTest(unittest.TestCase):
         pk.run(screen, {"views": "nope", "rect": [0, 0, -1, -1],
                         "background": "nope"}, threading.Event())
         self.assertEqual(len(screen.frames), 1)
+
+
+class SourceTest(unittest.TestCase):
+    """The migration, stated as an invariant on the shipped source."""
+
+    def source(self):
+        with open(PICKER_PY, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_no_pillow_drawing_left_in_the_picker(self):
+        # The oracle for this increment. A stray ImageDraw here means the
+        # Pillow path is still live and the template path is decoration.
+        self.assertNotIn("ImageDraw", self.source())
+        self.assertNotIn("ImageFont", self.source())
+
+    def test_the_picker_renders_through_the_template(self):
+        source = self.source()
+        self.assertIn(pk.TEMPLATE, source)
+        self.assertTrue(os.path.isfile(TEMPLATE_PATH),
+                        "html-templates/picker.html is the shipped surface")
+
+    def test_the_shipped_template_matches_the_rendered_variables(self):
+        # The template and chrome() cannot drift: every placeholder the
+        # file declares is a key chrome() fills, and vice versa.
+        with open(TEMPLATE_PATH, encoding="utf-8") as handle:
+            text = handle.read()
+        text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+        declared = set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)",
+                                  text))
+        self.assertIn("tiles", declared)
+        supplied = set(tiles.chrome(FakeScreen(), pk.default_rect(W, H),
+                                    VIEWS, (8, 10, 16), (255, 255, 255)))
+        self.assertEqual(declared - {"tiles"}, supplied)
+        self.assertEqual(supplied - declared, set())
+        self.assertEqual(text.count("|raw"), 1)
+
+
+class TileMarkupTest(unittest.TestCase):
+    """Pure, no engine: the markup the picker hands the document."""
+
+    def rects(self):
+        return pk.grid_geometry(pk.default_rect(W, H), len(VIEWS))
+
+    def test_one_tile_per_view_at_the_region_rect(self):
+        markup = tiles.tile_markup(VIEWS, self.rects(), pk.PALETTE)
+        self.assertEqual(markup.count('class="tile"'), len(VIEWS))
+        for (name, (x, y, cw, ch)) in zip(VIEWS, self.rects()):
+            self.assertIn("left:%dpx; top:%dpx" % (x, y), markup)
+            self.assertIn(name, markup)
+
+    def test_a_tile_is_never_wider_than_its_touch_region(self):
+        # litehtml puts the border outside the declared width: a tile that
+        # forgot the compensation is 12px wider than the region that taps
+        # it, on every side.
+        for x, y, cw, ch in self.rects():
+            icw, ich = tiles.content_size((x, y, cw, ch))
+            self.assertEqual(cw - icw, 2 * tiles.BORDER_PX)
+            self.assertEqual(ch - ich, 2 * tiles.BORDER_PX)
+            self.assertGreater(icw, 0)
+            self.assertGreater(ich, 0)
+
+    def test_view_names_are_escaped_into_the_markup(self):
+        # The one untrusted string in the tile layer is the name, and the
+        # markup only exists because this escapes it first.
+        markup = tiles.tile_markup(["<script>x</script>"],
+                                   [(0, 0, 400, 200)], pk.PALETTE)
+        self.assertNotIn("<script>", markup)
+        self.assertIn("&lt;script&gt;", markup)
+
+    def test_label_shrinks_to_fit_a_narrow_tile(self):
+        wide = tiles.label_px("touch_confidence", 508)
+        narrow = tiles.label_px("touch_confidence", 120)
+        self.assertGreater(wide, narrow)
+        self.assertGreaterEqual(narrow, 12)
+
+    def test_chrome_collapses_bands_a_tight_rect_has_no_room_for(self):
+        roomy = tiles.chrome(FakeScreen(), pk.default_rect(W, H), VIEWS,
+                             (8, 10, 16), (255, 255, 255))
+        self.assertEqual(roomy["hint_left"], "ON")
+        self.assertEqual(roomy["hint_right"], "NEXT")
+        tight = tiles.chrome(FakeScreen(), [0, 0, W, H], VIEWS,
+                             (8, 10, 16), (255, 255, 255))
+        self.assertEqual(tight["title"], "")
+        self.assertEqual(tight["hint_left"], "")
+        self.assertEqual(tight["hint_right"], "")
+        self.assertEqual(tight["footer"], "")
+
+
+@native_built
+class TilePixelsTest(unittest.TestCase):
+    """What the panel actually shows, against what a tap would hit."""
+
+    def frame(self, views=VIEWS):
+        rect = pk.default_rect(W, H)
+        geometry = pk.grid_geometry(rect, len(views))
+        return pk.draw(FakeScreen(), views, geometry, rect, pk.PALETTE,
+                       (8, 10, 16), (255, 255, 255), (140, 160, 190))
+
+    def test_every_region_lands_on_its_own_coloured_tile(self):
+        # Before the migration this could not hold: the Pillow path drew
+        # a rectangle at the same numbers but nothing tied the two.
+        frame = self.frame()
+        regions = pk.picker_regions(W, H, VIEWS)
+        for index, region in enumerate(regions):
+            x, y, w, h = region["rect"]
+            fill = pk.PALETTE[index % len(pk.PALETTE)]
+            with self.subTest(tile=region["id"]):
+                # inside the tile: the palette colour, never the panel
+                self.assertEqual(frame.getpixel((x + 24, y + 24)), fill)
+                # and the tile does not spill outside its own region
+                self.assertNotEqual(frame.getpixel((x - 2, y + 24)), fill)
+                self.assertNotEqual(frame.getpixel((x + w + 2, y + 24)), fill)
+                self.assertNotEqual(frame.getpixel((x + 24, y + h + 2)), fill)
+
+    def test_the_label_is_drawn_inside_its_tile(self):
+        frame = self.frame()
+        for region, (x, y, w, h) in zip(pk.picker_regions(W, H, VIEWS),
+                                        pk.grid_geometry(
+                                            pk.default_rect(W, H),
+                                            len(VIEWS))):
+            band = frame.crop((x + 8, y + h // 2 - 30, x + w - 8,
+                               y + h // 2 + 30)).convert("L")
+            darkest = min(band.getdata())
+            with self.subTest(tile=region["id"]):
+                # dark label ink on a bright tile, not a blank rectangle
+                self.assertLess(darkest, 80)
+
+    def test_the_chrome_bands_are_drawn(self):
+        frame = self.frame()
+
+        def lit(box):
+            return max(sum(pixel)
+                       for pixel in frame.crop(box).convert("RGB").getdata())
+
+        self.assertGreater(lit((700, 870, 1220, 950)), 600)   # PICK A VIEW
+        self.assertGreater(lit((40, 460, 130, 515)), 200)     # ON
+        self.assertGreater(lit((1790, 460, 1880, 515)), 200)  # NEXT
+
+    def test_a_custom_background_param_reaches_the_panel(self):
+        rect = pk.default_rect(W, H)
+        geometry = pk.grid_geometry(rect, len(VIEWS))
+        frame = pk.draw(FakeScreen(), VIEWS, geometry, rect, pk.PALETTE,
+                        (30, 0, 40), (255, 255, 255), (140, 160, 190))
+        # the gutter between two tiles is bare document, not a hardcoded
+        # panel colour: the background param really is honoured
+        self.assertEqual(frame.getpixel((170, 150)), (30, 0, 40))
+
+    def test_a_broken_template_is_a_card_not_a_blank(self):
+        rect = pk.default_rect(W, H)
+        geometry = pk.grid_geometry(rect, len(VIEWS))
+        saved = pk.TEMPLATE
+        pk.TEMPLATE = "no_such_template.html"
+        try:
+            frame = pk.draw(FakeScreen(), VIEWS, geometry, rect, pk.PALETTE,
+                            (8, 10, 16), (255, 255, 255), (140, 160, 190))
+        finally:
+            pk.TEMPLATE = saved
+        self.assertEqual(frame.size, (W, H))
+        self.assertEqual(frame.getpixel((W // 2, 1)), (214, 74, 74))
 
 
 if __name__ == "__main__":

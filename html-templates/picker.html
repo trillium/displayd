@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<!--
+  The picker surface: the shared panel chrome from layout.html (header
+  bands, side gesture strips, bottom status band) plus ONE addition --
+  a tile layer, because a tile grid cannot be expressed as ten text
+  variables. Tiles are absolutely positioned by the renderer at the very
+  rectangles the touch regions are generated from (picker.grid_geometry),
+  so what is drawn and what is tappable cannot drift apart.
+
+  VARIABLE CONTRACT -- the chrome slots this surface actually draws.
+  Same names and same "empty collapses the slot" rule as layout.html,
+  minus the two that are content rather than chrome ({{lead}} and
+  {{body}} are the layout template's text bands; a tile grid has no use
+  for them). Pinned against _picker_tiles.chrome() by a test, so the file
+  and the renderer cannot drift apart:
+
+      eyebrow      small dim label above the title (may be empty)
+      title        the big band under the grid: PICK A VIEW
+      status       right-hand state, e.g. the tile count (may be empty)
+      hint_left    label in the left gesture strip (empty hides it)
+      hint_right   label in the right gesture strip (empty hides it)
+      footer       small bottom-left status (may be empty)
+      footer_right small bottom-right status (may be empty)
+
+      background   panel colour behind everything (a #rrggbb string the
+                   renderer parsed out of the params, never raw caller
+                   text -- so a style attribute here cannot be injected)
+      color        primary text colour, same rule
+      subtitle     one small dim line under the title
+
+  plus ONE raw slot:
+
+      {{tiles|raw}}   the tile markup, built by renderers/picker.py
+
+  The raw slot is the one place a document receives markup, and it is
+  reachable only from a renderer, never from a caller: /show and
+  /feed/html/vars always escape every value, and the only raw values the
+  panel ever passes are the tile divs this repo generates from
+  grid_geometry() plus an already-escaped view name. Nothing else in the
+  tree may pass a raw value. See renderers/_html_templates.py.
+
+  Sized for a 1920x1080 panel read from across a room: tile type is large,
+  the title band is the biggest type on the screen, and the grid sits
+  between two dim 160px gesture strips. Note litehtml drops `gap` on a
+  flex row whose children grow -- spacing here is margins, never `gap`.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { background: #07080c; color: #eef2fa; font-family: sans-serif;
+               height: 100%; }
+  .frame { display: flex; height: 100%; }
+  .strip { width: 160px; background: #0b0d13; }
+  .strip .hint { font-size: 30px; color: #5c6780; text-align: center;
+                 padding-top: 470px; }
+  .main { width: 1600px; display: flex; flex-direction: column; }
+  .head { display: flex; justify-content: space-between; align-items: baseline;
+          padding: 0 0 0 64px; }
+  .head .eyebrow { font-size: 26px; font-weight: bold; color: #7fd1ff; }
+  .head .status { font-size: 26px; color: #8b93a7; }
+  .band { margin-top: auto; padding: 0 40px 54px 40px; }
+  .band .title { font-size: 62px; font-weight: bold; color: #ffffff;
+                 text-align: center; }
+  .band .subtitle { font-size: 28px; color: #8b93a7; text-align: center;
+                    padding-top: 8px; }
+  .band .foot { display: flex; justify-content: space-between;
+                align-items: baseline; padding-top: 16px; }
+  .band .foot .l { font-size: 24px; color: #6f7b93; }
+  .band .foot .r { font-size: 24px; color: #6f7b93; }
+  .layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+  .tile { position: absolute; border: 6px solid #120c20; }
+  .tile .lab { position: absolute; font-weight: bold; color: #120c20; }
+  .tile .shade { position: absolute; font-weight: bold; color: #5a4670; }
+</style>
+</head>
+<body style="background: {{background}}; color: {{color}};">
+  <div class="frame">
+    <div class="strip"><div class="hint">{{hint_left}}</div></div>
+    <div class="main">
+      <div class="head">
+        <div class="eyebrow">{{eyebrow}}</div>
+        <div class="status">{{status}}</div>
+      </div>
+      <div class="band">
+        <div class="title">{{title}}</div>
+        <div class="subtitle">{{subtitle}}</div>
+        <div class="foot">
+          <div class="l">{{footer}}</div>
+          <div class="r">{{footer_right}}</div>
+        </div>
+      </div>
+    </div>
+    <div class="strip"><div class="hint">{{hint_right}}</div></div>
+  </div>
+  <div class="layer">{{tiles|raw}}</div>
+</body>
+</html>
