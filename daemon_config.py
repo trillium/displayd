@@ -23,4 +23,4 @@ BIND = os.environ.get("DISPLAYD_BIND", "127.0.0.1")
 # a [project] table. Bump per CHANGELOG.md's convention on every change;
 # the daemon reports it via GET /version, GET /state's "version" key,
 # and the startup log line in main().
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.7.0"
