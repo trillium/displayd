@@ -33,6 +33,7 @@ import _html_error
 import _html_native
 import _html_templates as templates
 import _options_grid as grid
+from ui import tile as ui_tile
 
 NAME = "options"
 DESCRIPTION = ("View selection: tap-anywhere landing screen naming the "
@@ -108,9 +109,10 @@ def draw(screen, views, geometry, bg, fg,
         document, root = templates.load(
             TEMPLATE,
             grid.chrome(views, bg, fg, title, instructions, FOOTER),
-            raw={"names": grid.name_markup(
-                views, geometry, fg,
-                min(grid.MAX_NAME_PX, max(12, screen.H // 12)))})
+            raw={"names": ui_tile.layer(
+                views, geometry, ink=fg, border=0,
+                box_cls="cell", label_cls="name",
+                start=min(ui_tile.LABEL_MAX, max(12, screen.H // 12)))})
         image, _height = _html_native.render(
             document, screen.W, screen.H, background=tuple(bg), root=root)
         canvas = screen.new_image(bg)

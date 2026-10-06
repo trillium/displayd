@@ -56,14 +56,68 @@ drawing primitive may appear (rule enforced by the gate below).
   `ui.base.chain`. `daemon_core.py` now wires one dependency
   (`system_buttons_module.system_overlay(self.screen, self.screen.overlay)`)
   instead of three chained calls across two modules.
+- `renderers/ui/tile.py` — the **tile**: a bounded box with a label, built in
+  this increment. One definition of the declared-box rule (`content_size`: a
+  declared width is the CONTENT box, so a tile declares its rect minus the
+  frame), the label fit (`fit_size`) and the centring (`label_box`), plus
+  both a markup half (`cell`/`layer`, what the picker and options fill their
+  raw slot with) and a drawing half (`draw`, used by the touch-confidence
+  region map). Its look is authored once in the shared stylesheet
+  (`_chrome.html`): `.tile`/`.lab`/`.shade` for a filled tile,
+  `.cell`/`.name` for a plain one, every colour a token (`--on-accent`,
+  `--label-shade`). See §2b.
+
+### 2b. The tile component (this increment)
+
+`_picker_tiles.py` and `_options_grid.py` each carried the same four
+helpers — `content_size` (border compensation), `label_px`
+(shrink-until-it-fits), `label_box` (measured centring) and `hex_colour` —
+plus their own cell builder. They were the same component twice, because
+nothing owned “a tile”. They now call `renderers/ui/tile.py`:
+
+| owner | what it owns now |
+| --- | --- |
+| `ui/tile.py` | the box rule, the fit rule, the centring, the markup half (`cell`/`layer`), the drawing half (`draw`) |
+| `_chrome.html` (the `css` section) | the look: `.layer`, `.tile`/`.lab`/`.shade`, `.cell`/`.name`, all `var(--…)` |
+| `_picker_tiles.py` | the picker's chrome variables + its title |
+| `_options_grid.py` | the name grid's arithmetic + the chrome variables |
+
+The look moved into the one shared stylesheet, which also deleted the
+`.layer` rule that picker, options and chat had each restated (3 copies →
+1). Two palette roles were added for it: `on-accent` (`#120c20`, the ink and
+frame on a bright fill — it was `picker.INK` and
+`retro_grid_draw.DEFAULT_INK` as well) and `label-shade` (`#5a4670`, the
+offset copy behind a label). `picker.html` and `options.html` have no CSS of
+their own left at all, and `picker.html` is now in
+test_theme's no-literal list, so a colour literal in a panel template fails
+the suite.
+
+What the tests pin:
+
+- **the cross-language constant**: `_chrome.html`'s `border-width` must
+equal `ui.tile.BORDER` (`tests/test_tile.py`), so the drawn tile stays the
+same size as the region that taps it;
+- **the anti-drift rule**: no panel template may restate `.tile`/`.cell`/
+`.layer` (same test), and the shared stylesheet's tile rules carry tokens
+only;
+- **one fit rule**: `fit_size` / `label_box` are the only implementations
+(`tests/test_picker.py` no longer reaches a private picker copy);
+- **the trust boundary**: a hostile label is escaped inside `cell`, and a
+hostile *colour* string is refused by `css_colour` (hex only) rather than
+reaching a style attribute;
+- **the palette really resolves**: `test_theme` renders a tile-styled document
+  and asserts the frame pixel is `on-accent` and its fill `label-shade`, plus
+  a picker render whose tile frame is `on-accent`.
+
+Both halves keep the layer's obligation: `draw` returns the frame unchanged
+on any failure, and `cell`/`layer`/`content_size` are total on garbage.
 
 ### Which views migrated, which are left
 
 Migrated: the persistent overlay chrome (both system buttons) — the
-always-on furniture that every view wears. It is the highest-leverage
-component because it is the one surface that is *not* a view, and because
-folding the pair removes a duplicate by construction rather than by
-convention.
+always-on furniture that every view wears — and, in this increment, the
+panel's two tile layers (the picker's tile grid and the options name grid),
+which are now one component with two halves.
 
 Deliberately left (still Pillow, still drawing by hand): the other 24
 modules in the gate's exemption list — `beads`, `row`, `resources`,
@@ -71,9 +125,12 @@ modules in the gate's exemption list — `beads`, `row`, `resources`,
 `notice`, `text`, `retro_grid`, `touch_confidence`, `sleep`,
 `feed_health`, `life`, the `*_draw` helpers, `playlist`/`playlist_bar`
 (daemon-side progress bar), and `_html_error`/`_html_native`. Reason: the
-component vocabulary they need (`tile`, `panel`, `stat`/list row, `shell`)
-does not exist yet, and inventing it view-by-view would re-create the
-duplication this run is deleting. The gate holds the line meanwhile.
+component vocabulary they need (`shell`, `panel`, `stat`/list row) does not
+exist yet, and inventing it view-by-view would re-create the duplication
+this run is deleting. `touch_confidence_draw` is partly migrated (its region
+boxes are `ui.tile.draw` now) but it keeps its own accent bar, title and
+diagnostics lines, so it stays on the list until `shell`/`stat` exist — a
+half-migrated file must not claim to have left the ratchet.
 
 ### 3. The shared chrome, composed at load time — `html-templates/_chrome.html`
 
@@ -98,7 +155,10 @@ into a template at load time by `_html_compose.expand()`:
 **Measured:** the four surfaces' stylesheets went from 98 lines of CSS to 19
 (picker 25→4, options 24→3, chat 26→12, layout 23→0) plus ONE chrome
 definition of 43 lines; the chrome rules restated per template went 8/11/9/14
-→ 0/0/0/0.
+→ 0/0/0/0. After the tile component landed (`2b`) the per-template residue
+is smaller still: picker 25→0, options 24→0 (their whole stylesheet is the
+include), chat 26→10, and the tile's own look (8 rules) lives in the same
+`css` section, so all four surfaces are styled from one file.
 
 A partial is `_`-prefixed: `available()` never lists it, `load()`/`source()`
 refuse the name, and it ships by the same `html-templates/*.html` install
@@ -138,11 +198,10 @@ Left, each with a reason:
   home screen; it has no chrome bands to share.
 - `status.html` — the copy-me example: it shows the minimal template contract
   (tokens + variables), not the shell.
-- `picker.html`'s **tile layer** still has two colour literals
-  (`#120c20` tile ink, `#5a4670` shadow). They belong to the `tile` component
-  that does not exist yet, so picker is deliberately NOT in the
-  "no colour literal" test list (`tests/test_theme.py`): adding a token only
-  picker means, or hiding the gap, would both be worse.
+- `picker.html`’s tile layer is no longer a reason to leave it out: the two
+  literals became the tile component’s palette roles (`on-accent`,
+  `label-shade`), so `picker.html` is in the “no colour literal” list and
+  the tile rules are shared (see `2b`).
 
 ### 4. The structural gate — `tools/check-components.py`
 
@@ -187,7 +246,9 @@ Wired into `tools/check-repo-health.py` as step 3.
      restates one of its rules or invents a variant;
    - a Pillow view needs a component in `renderers/ui/` — and if the
      component it needs does not exist, that is the next component to
-     write, not a reason to draw by hand.
+     write, not a reason to draw by hand. A labelled box is `ui.tile.draw`;
+     a grid of them is `ui.tile.layer` (markup) with the look from the
+     shared stylesheet.
 4. Never let a draw raise: return the frame unchanged. If the view
    composes several layers, compose them with `ui.base.chain`.
 5. Remove the view's path from `EXEMPTIONS` in
@@ -276,9 +337,12 @@ the pre-change tree (red instead of the badge fill at the badge tile).
 
 ## Still owed (with the reason)
 
-- **The remaining components** (`shell`, `tile`, `panel`, `stat`) and the
-  migration of the views listed above. The `tile` component is the next one
-  with a concrete pull: `picker.html`'s tile ink is still a literal.
+- **The remaining components** (`shell`, `panel`, `stat`) and the
+  migration of the views listed above. The `tile` component landed this
+  increment; `notice` (a titled region with a body) and the list views
+  (`services`, `resources`, `beads`) are the pull for the next two, and
+  migrating `touch_confidence_draw`'s bar/title/diagnostics off ImageDraw
+  is what takes it off the exemption list.
 - **Per-view colour constants** — `ACCENT = "#rrggbb"` still lives in
   ~12 renderer modules, and `playlist_color.accent_for` reads a renderer's
   `ACCENT` attribute by name. Folding that into `theme.ACCENT_SLOTS` (the
@@ -289,9 +353,10 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   phone page has no style picker and no per-slot view selects. That is the
   operator surface for the “offered per style” rule and the next UI step.
 - **A narrow-band application column.** `picker` in a 288px band reflows but
-  is cramped (3 columns of ~69px tiles); a `cols` param (or a dedicated
-  narrow band renderer) is the fix, and it belongs with the `tile`
-  component. The presets are already honest about it: the band is the
+  is cramped (3 columns of ~69px tiles); a `cols` param is the fix and it is
+  now a one-place change in `ui.tile.layer` (the tile component owns the
+  grid's label fit); a dedicated narrow-band renderer would be the
+  alternative. The presets are already honest about it: the band is the
   tappable application list, just not yet a pretty one.
 - **Layout-mode taps.** While a layout owns the panel the touch service
   evaluates global regions only (view-scoped regions are skipped), so a
@@ -310,7 +375,7 @@ Full objective suite (the stop-condition command), after this increment:
         tests.test_html_runtime_install tests.test_control tests.test_options \
         tests.test_layout && python3 tools/check-lines.py
     component layer ok: 24 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 326 tests in 52.357s
+    Ran 326 tests in 52.323s
     OK
     line budget ok: all source files within 250 lines
     rc=0
@@ -487,14 +552,98 @@ and `test_no_shorthand_carries_a_var` catches the trap that cost this
 increment a debugging round (the intermediate chrome used the shorthand
 form and every band silently lost its inset).
 
+### The tile component, both paths (this increment)
+
+    $ python3 tools/check-components.py
+    component layer ok: 24 shipped module(s) still draw by hand; all exempt, none stale
+
+    $ python3 -m unittest tests.test_tile -v          -> Ran 23 tests, OK
+    $ python3 -m unittest tests.test_picker tests.test_options tests.test_theme \
+        tests.test_components tests.test_html tests.test_unified tests.test_chat
+      -> OK (96 + 182 tests respectively across the two sweeps)
+    $ python3 -m unittest tests.test_touch_confidence tests.test_retro_grid
+      -> Ran 57 tests, OK
+
+    $ python3 tools/check-repo-health.py               -> rc=0
+    (line budget, no tracked generated artifacts, component layer)
+
+`python3 /tmp/tile_evidence.py` — real daemon on a loopback ephemeral port,
+`DISPLAYD_FAKE_FB=1`, temp policy/feedback/deploy paths, 1920x1080:
+
+    daemon: DISPLAYD_FAKE_FB=1 http://127.0.0.1:63566
+
+    POST /show picker -> snapshot (1920, 1080)          # the MARKUP half
+      6 tiles, first rect=(179, 59, 508, 401)
+      tile frame pixel == on-accent  : True (18, 12, 32)
+      tile fill pixel  == palette[0] : True (90, 200, 255)
+      gutter pixel     == the bg param: True (8, 10, 16)
+
+    POST /show touch_confidence -> snapshot (1920, 1080) # the DRAWING half
+      region outlines from ui.tile.draw: [(80, 220, 120), (90, 200, 255)]
+
+    POST /layout preset=full -> 200, regions=[('view', …)]
+      colours=4199  on-accent px=227213  first_pixel_ms=2.4  badges=True
+    POST /layout preset=split-50-50 -> 200
+      colours=4231  on-accent px=144415  first_pixel_ms=2.3  badges=True
+    POST /layout preset=split-50-50-columns -> 200
+      colours=4898  on-accent px=130143  first_pixel_ms=4.9  badges=True
+    POST /layout preset=15-70-15 -> 200
+      colours=2655  on-accent px=25785   first_pixel_ms=3.4  badges=True
+
+    ui.tile.BORDER = 6  content_size((0,0,300,150)) = (288, 138)
+
+So the tile's frame is the palette's `on-accent` token on the template path,
+the region map is drawn by the same component on the Pillow path, and the
+tile frame is still present when the picker is put in a 288px band (25,785
+`on-accent` pixels in `15-70-15`) — with both system buttons and every style
+painting its first pixel in 2-5ms (budget 100ms). Frames saved at
+`/tmp/tile-evidence-picker-1920x1080.png`,
+`/tmp/tile-evidence-touch-confidence-1920x1080.png` and
+`/tmp/tile-evidence-<style>-1920x1080.png`.
+
+### The tile rules fail before, pass after (this increment)
+
+Deterministic pre-change probes (`git show HEAD:<file>`), against the four
+new assertions:
+
+    $ git show HEAD:html-templates/picker.html | grep -n '#120c20\|#5a4670\|\.layer'
+    55:  .layer { … }
+    56:  .tile { position: absolute; border: 6px solid #120c20; }
+    57:  .tile .lab { … color: #120c20; }
+    58:  .tile .shade { … color: #5a4670; }
+
+    $ git show HEAD:html-templates/options.html | grep -n '\.layer\|\.cell\|\.name'
+    64:  .layer { … }
+    65:  .cell { position: absolute; }
+    66:  .cell .name { position: absolute; font-weight: bold; }
+
+    $ git show HEAD:html-templates/chat.html | grep -n '\.layer'
+    69:  .layer { … }                      # the same rule, a third copy
+
+    $ git show HEAD:html-templates/_chrome.html | grep -c border-width
+    0                                    # the tile look was not shared at all
+
+    $ git show HEAD:renderers/_picker_tiles.py | grep -n '^def content_size\|^def label_px\|^def label_box'
+    40:def content_size(rect):
+    47:def label_px(name, cw, start=…):
+    72:def label_box(name, rect, size):   # all three also existed in _options_grid.py
+
+So, with the newly added assertions evaluated against those pre-change
+sources (that is what "fails before" means for a structural test):
+`test_no_colour_literal_in_a_migrated_style` (picker had two literals),
+`test_the_tile_rules_live_in_the_one_shared_stylesheet` and
+`test_the_stylesheet_frame_is_the_component_border` (no tile rule in the shared
+sheet), `test_no_surface_restates_the_tile_look` (four restatements above) and
+`test_the_tile_tokens_resolve_on_the_panel` (no such token or rule) all fail on
+the old sources and pass now.
+
 ## Note on the stop condition
 
 The command above exits zero, but that is a **floor, not the finish line**:
 the gate is a ratchet with 24 exemptions, most views still hand-draw, and the
-component vocabulary has only two of its five components (`system_buttons`
-and `ui.base.chain`). The layout presets and the capability vocabulary landed
-in this increment; what is left is the components themselves (`shell`,
-`tile`, `panel`, `stat`) and the migration of the views that need them. The
-stop condition became reachable because the gate exists and the health gate
-stays green while the migration is in flight — which is exactly what it was
-designed to allow.
+component vocabulary has three of its five components (`system_buttons`,
+`ui.tile`, and the `ui.base.chain` primitive; `shell`, `panel` and `stat`
+are still owed). What is left is those components and the migration of the
+views that need them. The stop condition became reachable because the gate
+exists and the health gate stays green while the migration is in flight —
+which is exactly what it was designed to allow.

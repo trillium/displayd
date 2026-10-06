@@ -1026,10 +1026,12 @@ class TestChromeComposition(unittest.TestCase):
     def test_no_shorthand_carries_a_var(self):
         # litehtml DROPS a shorthand whose value contains var(), so
         # `padding: 44px var(--inset) 0 var(--inset)` silently pads
-        # nothing at all. The declaration has to be written as longhands.
-        # Verified live; a bundle of silently-padded bands is the cost of
-        # forgetting, and this is the only cheap place to catch it.
-        pattern = re.compile(r"(?:^|[;{\s])(padding|margin)\s*:\s*[^;{}]*var\(")
+        # nothing at all -- verified live, at the cost of a debugging
+        # round. The declaration has to be written as longhands. The guard
+        # covers `border` too: the tile frame takes a var(), a dropped
+        # frame is just as invisible, and the longhand form costs nothing.
+        pattern = re.compile(
+            r"(?:^|[;{\s])(padding|margin|border)\s*:\s*[^;{}]*var\(")
         for label, css in ([("the chrome partial", self.css_section())]
                            + [(name, self.local_style(name))
                               for name in self.PANEL]):

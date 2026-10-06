@@ -272,6 +272,13 @@ what is tappable cannot drift apart. The one markup slot it needs
 so a caller still cannot put markup on the panel — see
 `docs/HTML_RENDERER.md`.
 
+A **tile** — a bounded box with a label — is one component,
+`renderers/ui/tile.py`: the declared-box rule, the label fit, the centring,
+and both a markup half (the picker's grid, the options name layer) and a
+drawing half (a Pillow view's labelled box). Its look is authored once in the
+shared stylesheet with palette tokens, and the component layer is the only
+place a renderer may draw by hand (`tools/check-components.py`).
+
 The apps dock under the merged home screen is a template too
 (`html-templates/dock.html`), composited into the picker frame inside the rect
 its `apps-dock` tap region covers. It is authored once at the standard dock

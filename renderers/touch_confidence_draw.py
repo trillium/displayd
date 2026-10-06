@@ -13,6 +13,7 @@ from PIL import ImageDraw, ImageFont
 
 from touch_confidence_regions import REGION_COLORS, format_label
 from touch_confidence_taps import _last_line
+from ui import tile as ui_tile
 
 
 def font_for(screen, name, size):
@@ -79,17 +80,13 @@ def draw(screen, title, instructions, regions, summary, bg, accent=None):
             by = max(map_top, min(map_bottom - 8, by))
             bh = max(8, min(map_bottom - by, bh))
             bx, bw = x, w  # horizontal: rects already span the panel width
-            draw.rectangle(
-                [bx, by, bx + bw - 1, by + bh - 1], outline=color, width=max(2, screen.W // 320)
-            )
-            label = format_label(rid, action)
-            try:
-                tw = draw.textlength(label, font=box_font or plain)
-                if tw > bw - 12 and tw > 0:
-                    label = label[: max(4, int(len(label) * (bw - 12) / tw) - 1)] + "\u2026"
-            except Exception:
-                pass
-            draw.text((bx + 8, by + 6), label, font=box_font or plain, fill=color)
+            # A region box is a tile: a bounded box with a label. Same
+            # component (and so the same label fit and truncation) as the
+            # picker's tiles, drawn unfilled because the map stays a map.
+            ui_tile.draw(img, [bx, by, bw, bh], format_label(rid, action),
+                         ink=color, font=box_font or plain, outline=color,
+                         width=max(2, screen.W // 320),
+                         place=ui_tile.TOPLEFT, pad=(8, 6), border=0)
     else:
         draw.text(
             (screen.W // 2, (map_top + map_bottom) // 2),

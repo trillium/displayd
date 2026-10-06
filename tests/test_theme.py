@@ -175,7 +175,8 @@ class MigratedTemplateTest(unittest.TestCase):
     does), so a per-literal check on the fragment would prove nothing.
     """
 
-    MIGRATED = ("layout.html", "options.html", "chat.html", "status.html")
+    MIGRATED = ("layout.html", "picker.html", "options.html",
+                "chat.html", "status.html")
 
     def source(self, name):
         if name == "_chrome.html":
@@ -185,11 +186,10 @@ class MigratedTemplateTest(unittest.TestCase):
         return templates.source(name, SHIPPED_ROOT)
 
     def test_no_colour_literal_in_a_migrated_style(self):
-        # NOT picker.html yet: its tile layer still carries the dark tile ink
-        # and its shadow as literals (#120c20 / #5a4670), which belong to the
-        # `tile` component that does not exist yet. That is the next
-        # increment, and leaving picker in this list would either hide the
-        # gap or force a token that no other surface means.
+        # Every panel surface is here, picker.html included: its tile frame
+        # and its label's offset copy were the last two literals, and they
+        # are the tile component's palette roles now (on-accent,
+        # label-shade), worn through the shared stylesheet.
         for name in self.MIGRATED + ("_chrome.html",):
             text = templates.COMMENT_RE.sub("", self.source(name))
             with self.subTest(template=name):
@@ -259,6 +259,28 @@ class TokenPixelTest(unittest.TestCase):
         image = self.render(self.DOC.replace("var(--accent)",
                                              "var(--accent-clock)"))
         self.assertEqual(image.getpixel((50, 30)), theme.accent_rgb("clock"))
+
+    # The tile's two roles, and the one landmine that decides whether the
+    # tile keeps its frame: the border is a var() in the shared stylesheet,
+    # so it has to be written as longhands (litehtml drops a multi-value
+    # shorthand containing a var(), which would silently delete the frame).
+    TILE_DOC = """<html><head><style>
+      html, body { background: var(--page); }
+      .t { position: absolute; left: 20px; top: 30px; width: 120px;
+           height: 80px; background: var(--label-shade);
+           border-width: 6px; border-style: solid;
+           border-color: var(--on-accent); }
+      </style></head><body><div class="t"></div></body></html>"""
+
+    def test_the_tile_tokens_resolve_on_the_panel(self):
+        image = self.render(self.TILE_DOC)
+        # the frame: a longhand border taking a var(), drawn OUTSIDE the
+        # declared box (which is why renderers/ui/tile.py compensates it)
+        self.assertEqual(image.getpixel((22, 35)), theme.rgb("on-accent"),
+                         "the tile frame did not draw")
+        # and the fill, the label's offset copy
+        self.assertEqual(image.getpixel((80, 60)), theme.rgb("label-shade"),
+                         "var(--label-shade) did not resolve")
 
 
 class PillowConsumerTest(unittest.TestCase):

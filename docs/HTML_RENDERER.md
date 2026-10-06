@@ -252,6 +252,17 @@ four numbers by construction, not by two copies of a constant. The touch
 contract is untouched: the regions, `touch-picker.json.example`, the CLI
 generator and `tests/test_picker.py` all still call the same functions.
 
+The tile itself is a COMPONENT, not a picker detail:
+`renderers/ui/tile.py` owns "a bounded box with a label" -- the declared-box
+compensation, the shrink-until-it-fits rule, the measured centring, and both a
+markup half (`cell`/`layer`, what the picker and options fill their raw slot
+with) and a drawing half (`draw`, which a Pillow view such as
+`renderers/touch_confidence_draw.py` uses for its region map). Its look is
+authored once in the shared stylesheet (`_chrome.html`): `.tile`/`.lab`/`.shade`
+for a filled tile, `.cell`/`.name` for a plain one, every colour a token
+(`on-accent`, `label-shade`), and the frame width pinned to `tile.BORDER` by
+`tests/test_tile.py`. A surface that restates a tile rule fails that test.
+
 Two litehtml facts the tile layer depends on, both verified live:
 
 - a declared `width`/`height` is the **content** box, so a tile declares its
@@ -277,9 +288,9 @@ refused if they carry a placeholder of their own, are not strings, or exceed
 `MAX_RAW_CHARS`. `templates.RAW_RE` finds the slots; a test asserts no shipped
 template declares more than one.
 
-The only raw value the panel ever passes is `renderers/_picker_tiles.py`'s tile
-markup: fixed palette, fixed arithmetic, and a view name escaped before it
-reaches the document.
+The only raw value the panel ever passes is `renderers/ui/tile.py`'s tile
+markup (the picker builds it with `cell()` / `layer()`): fixed palette, fixed
+arithmetic, and a view name escaped before it reaches the document.
 
 ### The picker now needs the engine
 
@@ -367,9 +378,10 @@ Two bounds are deliberate. Names are truncated at `_options_grid.MAX_CELLS`
 agree; and `grid_geometry()` is total and bounded on *any* input, because it
 allocates a rect per name -- the old Pillow loop shrank the row height instead,
 so a huge list cost nothing there and would be a runaway allocation here. The
-label size shrinks to fit each cell (`label_px()`) and the label box is measured
-from the real face (`label_box()`), because litehtml does not centre a label
-the way a browser would.
+label size shrinks to fit each cell and the label box is measured from the
+real face (`fit_size()` / `label_box()` in `renderers/ui/tile.py`, the tile
+component options and the picker share), because litehtml does not centre a
+label the way a browser would.
 
 Failure here is the shared full-screen card, not a strip: options is a whole
 panel view, so a deleted template leaves the red rule and a message that names
@@ -391,7 +403,7 @@ one raw slot, `{{panes|raw}}`, and it holds both pane divs: a document gets one
 raw slot, so the panes' boxes and rows are generated together by
 `renderers/chat_panes.py`, which measures each line with the same face the
 document draws with (`renderers/chat_fit.py`) and places it at panel pixels,
-the way `_picker_tiles.py` places tiles. Every display name and every message
+the way `renderers/ui/tile.py` places tiles. Every display name and every message
 body is escaped before it reaches that markup, and the only colours in it are
 `#rrggbb` strings built from palette tuples the screen already parsed, so a
 pushed chat payload can never add markup or a style.
@@ -513,12 +525,13 @@ that only survives polite input is not a budget.
 | `html-templates/layout.html` | the shared panel chrome + its variable contract |
 | `html-templates/picker.html` | the chrome plus the tile layer (one raw slot) |
 | `renderers/picker.py` | the picker view: params, views, touch geometry |
-| `renderers/_picker_tiles.py` | geometry -> tile markup + chrome variables |
+| `renderers/_picker_tiles.py` | the picker's chrome variables |
+| `renderers/ui/tile.py` | the tile component: box geometry, label fit, the markup half and the drawing half |
 | `html-templates/dock.html` | the apps dock strip under the home screen |
 | `renderers/unified_dock.py` | dock feed state -> the strip's variables + composite |
 | `html-templates/options.html` | the selection screen: chrome plus one name layer |
 | `renderers/options.py` | the options view: params, the pinned picks, the card |
-| `renderers/_options_grid.py` | geometry -> name markup + the chrome variables |
+| `renderers/_options_grid.py` | the name grid's geometry + the chrome variables |
 | `html-templates/chat.html` | the two-pane chat panel: roster left, chat right |
 | `renderers/chat.py` | the chat view: params, the ordered event timeline, the loop |
 | `renderers/chat_panes.py` | geometry -> pane/row/line markup + the chrome variables |
@@ -541,6 +554,7 @@ the root is still one `POST /show` away.
 
 The picker itself is now a template surface too: `picker.html` is the same
 chrome plus a tile layer, and `renderers/picker.py` holds the view contract
-while `renderers/_picker_tiles.py` turns geometry into that layer. Nothing
+while `renderers/ui/tile.py` -- the tile component -- turns geometry into that
+layer. Nothing
 draws in Pillow on that path any more, which is also why the failure card lives
 in `renderers/_html_error.py`: both views share one.

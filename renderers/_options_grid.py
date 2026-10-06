@@ -1,30 +1,29 @@
-"""The options name grid: geometry -> one litehtml document.
+"""The options name grid: geometry -> the rects a name is drawn at.
 
-Split out of renderers/options.py the same way _picker_tiles.py splits
-out the picker's tile layer. options.py keeps the view contract (params,
-the pinned picks, the failure card); this module owns drawing that
-contract -- name divs at the very rects ``grid_geometry`` hands out, plus
+Split out of renderers/options.py the same way ``_picker_tiles.py`` splits
+out the picker's chrome. options.py keeps the view contract (params, the
+pinned picks, the failure card); this module owns the grid arithmetic and
 the ``options.html`` chrome variables.
 
-Nothing here trusts a caller. View names arrive from a ``views`` param,
-which is caller-supplied, so each name is escaped here before it reaches
-the document: the markup below is generated in-process from fixed
-arithmetic, and the only part of it that came from outside is already
-escaped. This is the same rule the picker tile layer follows, and the
-reason {{names|raw}} is a renderer-only slot.
+The DRAWING of a name is not here any more: a name cell is a tile with no
+frame, so it comes from ``renderers/ui/tile.py`` -- the same component the
+picker's filled tiles use, which is why the two surfaces can no longer
+disagree about how a label is fitted or centred.
+
+``grid_geometry`` is load-bearing twice over: the renderer places a name at
+exactly these rects, so the drawn cell and the geometry a caller would read
+are the same four numbers by construction.
 
 Pixel facts this depends on, both verified live:
 
 - an absolutely positioned child offsets from its positioned parent, so a
-  name label is placed in cell-local pixels;
-- litehtml does not centre a label the way a browser would, so the offset
-  is measured here from the real face rather than left to flex centring.
+  name label is placed in cell-local pixels (``ui.tile`` does that now);
+- litehtml does not centre a label the way a browser would, which is why
+  the offset is measured from the real face rather than left to flex.
 """
 
-import _html_native
 import _html_templates as templates
 
-MAX_NAME_PX = 84
 DEFAULT_COLS = 2
 # Hard ceiling on the number of name cells. The old Pillow loop drew every
 # name at a row height that shrank towards zero, so a caller could hand it
@@ -45,10 +44,7 @@ FOOTER_RIGHT = "litehtml"
 
 
 def hex_colour(color):
-    """Palette tuple -> CSS colour. Lives in the trust boundary because a
-    template that takes colours in a style attribute needs one rule for
-    it: the colour came from a screen that already parsed it, never from
-    caller text."""
+    """Palette tuple -> CSS colour (the trust boundary's one rule)."""
     return templates.hex_colour(color)
 
 
@@ -98,66 +94,6 @@ def grid_geometry(rect, count, cols=None, gutter=None):
     return [(rx + g + (i % cols) * (cw + g),
              ry + g + (i // cols) * (ch + g), cw, ch)
             for i in range(count)]
-
-
-def label_px(name, cw, start=MAX_NAME_PX, max_height=None):
-    """Biggest name that fits its cell, shrinking in steps. Width and (when
-    given) height both constrain it, because a deep name list makes short
-    cells. Never raises."""
-    try:
-        size = max(12, int(start))
-    except (TypeError, ValueError):
-        size = MAX_NAME_PX
-    budget = max(8, int(cw) - 32)
-    tall = max(8, int(max_height)) if max_height else None
-    while size > 12:
-        font = _html_native.ui_font(size, bold=True)
-        try:
-            ascent, descent = font.getmetrics()
-            fits = (font.getlength(str(name)) <= budget and
-                    (tall is None or ascent + descent <= tall))
-        except Exception:
-            fits = True
-        if fits:
-            break
-        size -= 4
-    return max(12, size)
-
-
-def label_box(name, rect, size):
-    """Where the name goes inside its cell: centred, exact pixels, relative
-    to the cell. Measured, not left to flex centring."""
-    _x, _y, cw, ch = (int(v) for v in rect)
-    try:
-        font = _html_native.ui_font(size, bold=True)
-        width = int(font.getlength(str(name)))
-        ascent, descent = font.getmetrics()
-        height = int(ascent + descent)
-    except Exception:
-        width, height = int(cw * 0.6), int(size)
-    return max(0, (cw - width) // 2), max(0, (ch - height) // 2)
-
-
-def _cell(name, rect, colour, size):
-    """One name div. The name is escaped here, which is what makes this
-    markup safe to hand the engine at all."""
-    x, y, cw, ch = (int(v) for v in rect)
-    cx, cy = label_box(name, rect, size)
-    return ('<div class="cell" style="left:%dpx; top:%dpx; width:%dpx; '
-            'height:%dpx;"><div class="name" style="left:%dpx; top:%dpx; '
-            'font-size:%dpx; color:%s;">%s</div></div>'
-            % (x, y, cw, ch, cx, cy, size, hex_colour(colour),
-               templates.escape(str(name))))
-
-
-def name_markup(names, geometry, colour, start=MAX_NAME_PX):
-    """The whole name layer for {{names|raw}}, in paint order. Pure."""
-    parts = []
-    for name, rect in zip(names, geometry):
-        _cw, ch = int(rect[2]), int(rect[3])
-        size = label_px(name, rect[2], start, max_height=ch - 8)
-        parts.append(_cell(name, rect, colour, size))
-    return "".join(parts)
 
 
 def chrome(names, bg, fg, title, instructions, footer):

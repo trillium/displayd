@@ -366,13 +366,22 @@ keeps running the old tick until the installer runs (`install-mac.sh
   names itself. Never add a second one.
 - The PICKER is a template surface: `renderers/picker.py` holds the view
   contract (params, `live_views`, `grid_geometry`, `picker_regions`) and draws
-  NO Pillow (a source test asserts it); `renderers/_picker_tiles.py` turns that
-  geometry into tile divs at exactly the region rects, minus the border
+  NO Pillow (a source test asserts it); `renderers/_picker_tiles.py` supplies
+  the chrome variables only, and the tile divs come from the tile component
+  `renderers/ui/tile.py` at exactly the region rects, minus the border
   compensation litehtml needs (declared width is the CONTENT box, so an
   uncompensated tile is 12px wider than the region that taps it). An
   absolutely positioned child offsets from its positioned parent, so label
   offsets are tile-local. `unified.py` still calls `pk.draw()` for the grid and
   draws its dock with Pillow on top -- that is intended.
+- A TILE (a bounded box with a label) is one component, `renderers/ui/tile.py`:
+  one declared-box rule, one label fit (`fit_size`) and one centring
+  (`label_box`), a markup half (`cell`/`layer`) for the template path and a
+  drawing half (`draw`) for Pillow views (the touch-confidence region map uses
+  it). Its look is authored once in the shared stylesheet, with every colour a
+  token (`--on-accent`, `--label-shade`) and the frame width pinned to
+  `tile.BORDER` by `tests/test_tile.py`; the picker and options tile layers
+  used to carry those four helpers verbatim, which is what this folded away.
 - OPTIONS is a template surface too (`html-templates/options.html` +
   `renderers/_options_grid.py`), and it shows what a geometry-driven layer
   costs: the grid ALLOCATES a rect per name where the old Pillow loop only
@@ -380,7 +389,7 @@ keeps running the old tick until the installer runs (`install-mac.sh
   keep the header count honest, and `grid_geometry` is total AND bounded on
   any input (a huge count must never become a runaway allocation -- `10**9`
   OOM-killed the suite before that bound). litehtml does not centre a label
-  like a browser, so `label_box()` measures the box from the real face.
+  like a browser, so `ui.tile.label_box` measures the box from the real face.
   `options_regions()` stays `[]` on purpose: options NAMES, the picker
   SELECTS, so a per-name hit rect would be a behaviour change disguised as
   migration. Only the persistent overlay chrome (the system buttons in

@@ -29,6 +29,11 @@ Layout of the package:
 - ``base`` -- the composition primitive (``chain``), no pixels.
 - ``system_buttons`` -- the home and sleep badges: one module, one
   definition, composable by every view regardless of which path it uses.
+- ``tile`` -- a bounded box with a label: the declared-box rule, the label
+  fit and centring, plus a markup half (``cell``/``layer``, what the
+  picker and options fill their raw slot with) and a drawing half
+  (``draw``, for the Pillow views). Its look is authored once in the
+  shared stylesheet, from palette tokens.
 
 Adding a component: give it its own module here, take every colour from
 ``theme``, return the frame unchanged on any failure, and add it to the

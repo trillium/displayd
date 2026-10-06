@@ -11,6 +11,8 @@
 
   SECTIONS
     css            every chrome rule, including the variant classes below
+                   and the tile look (the component looks that more than
+                   one surface draws live here rather than per template)
     head           the header band: eyebrow left, status right
     title          the big title band
     subtitle       one dim line under the title
@@ -107,6 +109,20 @@
           align-items: baseline; padding-bottom: var(--foot-pad);
           padding-left: var(--inset); padding-right: var(--inset); }
   .foot .l, .foot .r { font-size: 26px; color: var(--faint); }
+  /* -- the tile: a bounded box with a label. Its geometry (the declared
+     box, the label fit, the centring) is owned by renderers/ui/tile.py,
+     which is why the frame width here is pinned to tile.BORDER by a test.
+     `border-width`/`border-style`/`border-color` are longhands on purpose:
+     litehtml drops a multi-value shorthand containing a var(). */
+  .layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+  .tile { position: absolute; border-width: 6px; border-style: solid;
+          border-color: var(--on-accent); }
+  .tile .lab { position: absolute; font-weight: bold;
+               color: var(--on-accent); }
+  .tile .shade { position: absolute; font-weight: bold;
+                 color: var(--label-shade); }
+  .cell { position: absolute; }
+  .cell .name { position: absolute; font-weight: bold; }
 <!--#endsection-->
 
 <!--#section head-->

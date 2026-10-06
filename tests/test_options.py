@@ -36,6 +36,7 @@ import displayd
 import _html_native
 import _html_templates as templates
 import _options_grid as grid
+from ui import tile as ui_tile
 
 OPT_PATH = os.path.join(displayd.RENDERER_DIR, "options.py")
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), os.pardir,
@@ -305,8 +306,9 @@ class OptionsTemplateTest(unittest.TestCase):
         # standing between a caller and the document. A name is the one
         # value here that comes from outside the repo.
         hostile = '<img src=x onerror=alert(1)>'
-        markup = grid.name_markup([hostile], [(0, 0, 800, 200)],
-                                  (255, 255, 255))
+        markup = ui_tile.layer([hostile], [(0, 0, 800, 200)],
+                               ink=(255, 255, 255), border=0,
+                               box_cls="cell", label_cls="name")
         self.assertNotIn("<img", markup)
         # The payload survives as TEXT: escaped, not dropped, so a caller
         # cannot make the name vanish either. (The escaped literal still

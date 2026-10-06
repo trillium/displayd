@@ -46,6 +46,13 @@ MUTED = "#8b93a7"       # labels, status, secondary text
 MUTED_SOFT = "#b9c2d6"  # body copy under a lead
 FAINT = "#5c6780"       # footer and strip hints: present, not competing
 
+# The tile: a bright fill takes dark ink, and a label on it wears a soft
+# offset copy instead of a hard shadow. Both are roles rather than a
+# per-view literal because the picker, the options grid and the arcade
+# grid all label a bright surface (renderers/ui/tile.py owns the rest).
+ON_ACCENT = "#120c20"    # ink -- and the frame -- on an accent-filled tile
+LABEL_SHADE = "#5a4670"  # the offset copy behind a label on a bright fill
+
 ACCENT = "#7fd1ff"      # the default accent: eyebrow, focus, live marker
 
 # The alert family: one failure, from the dark page it sits on to the
@@ -74,6 +81,8 @@ TOKENS = (
     ("muted", MUTED),
     ("muted-soft", MUTED_SOFT),
     ("faint", FAINT),
+    ("on-accent", ON_ACCENT),
+    ("label-shade", LABEL_SHADE),
     ("accent", ACCENT),
     ("alert", ALERT),
     ("alert-ink", ALERT_INK),
