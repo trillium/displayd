@@ -31,6 +31,24 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 REPO = os.path.join(os.path.dirname(__file__), os.pardir)
 DEPLOY = os.path.join(REPO, "deploy.sh")
 
+# The pre-fix idiom, verbatim from 97db86e^:deploy.sh (the two blocks
+# that carried the defect; its long lines are verbatim too). Committed
+# here so the disconfirming case is deterministic on every host: it must
+# NOT be read back from git, since HEAD stopped carrying the defect the
+# moment 97db86e committed the fix -- `git show HEAD:deploy.sh` answers
+# "no offenders" on every checkout from 97db86e onward, which is what
+# made this test red forever after.
+PRE_FIX_IDIOM = r'''TRANSIENT_VIEWS=$(python3 -c \
+    "import sys,os; sys.path.insert(0,'$HERE');"\
+    "import policy;"\
+    "renders={f[:-3] for f in os.listdir(os.path.join('$HERE','renderers')) if f.endswith('.py')};"\
+    "print(' '.join(sorted(k for k in policy.PRIORITY if k in renders)))" 2>/dev/null || echo "notice reload")
+RELOAD_BODY=$(SHA="$SHA" HIGHLIGHTS="$HIGHLIGHTS" python3 -c \
+    "import json,os; body={'sha':os.environ['SHA']};"\
+    "hl=os.environ.get('HIGHLIGHTS','').strip();"\
+    "body.update({'highlights':hl} if hl else {}); print(json.dumps(body))")
+'''
+
 # Stubs stand in for the ssh/rsync that would touch a live host. Nothing
 # here reaches the network: rsync is a no-op and every ssh invocation is
 # answered locally (the restart one restarts the headless daemon, so the
@@ -67,10 +85,33 @@ elif "install_html_runtime" in cmd:
                     "--prefix", REPO, "--check"], check=False)
 elif "restart displayd" in cmd:
     try:
-        os.kill(int(open(PIDF).read().strip()), signal.SIGTERM)
+        pid = int(open(PIDF).read().strip())
     except Exception:
-        pass
-    time.sleep(0.3)
+        pid = None
+    if pid is not None:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pid = None
+    # systemd's restart waits for the unit to STOP before starting the
+    # replacement. Without that wait the new daemon can race the old one
+    # for the listening port, exit on "address in use", and leave the
+    # health poll below answering nothing -- a fixture-only race that
+    # would surface as a mysterious deploy failure. Bound the stop, then
+    # SIGKILL the way systemd's stop timeout does.
+    deadline = time.time() + 10
+    while pid is not None and time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            break
+        time.sleep(0.05)
+    else:
+        if pid is not None:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except Exception:
+                pass
     env = dict(os.environ)
     log = open(os.path.join(os.path.dirname(PIDF), "daemon.log"), "ab")
     proc = subprocess.Popen(
@@ -121,7 +162,8 @@ class DeployFixture(object):
         return env
 
     def _start(self):
-        log = open(os.path.join(self.tmp.name, "daemon.log"), "ab")
+        self.log_path = os.path.join(self.tmp.name, "daemon.log")
+        log = open(self.log_path, "ab")
         self._log = log
         proc = subprocess.Popen(
             [sys.executable, "displayd.py", "--bind", "127.0.0.1",
@@ -138,7 +180,22 @@ class DeployFixture(object):
                         return proc
             except Exception:
                 time.sleep(0.2)
-        raise AssertionError("headless daemon never became healthy")
+            # A daemon that already died (port in use, missing dep, a
+            # bind this environment refuses) must fail HERE with its own
+            # log, not after 60 s of silence and a bare "never healthy".
+            if proc.poll() is not None:
+                raise AssertionError(
+                    "headless daemon exited rc=%s before becoming "
+                    "healthy:\n%s" % (proc.returncode, self._log_tail()))
+        raise AssertionError("headless daemon never became healthy:\n%s"
+                             % self._log_tail())
+
+    def _log_tail(self, limit=2000):
+        try:
+            with open(self.log_path, "rb") as fh:
+                return fh.read()[-limit:].decode("utf-8", "replace")
+        except Exception:
+            return "(daemon log unavailable)"
 
     def _write_stubs(self):
         ssh = os.path.join(self.bin, "ssh")
@@ -238,8 +295,10 @@ class TestProofBodyIsOneShellWord(unittest.TestCase):
     two arguments and only the first becomes the -c program. The rule is
     therefore purely lexical: the word after `-c` must be one quoted
     string, and no further quoted word may follow it in the same command
-    (a separator or redirection may). Read straight off deploy.sh, so it
-    needs no daemon and no deploy run.
+    (a separator or redirection may). The live rule is read straight off
+    deploy.sh, so it needs no daemon and no deploy run; the
+    disconfirming case runs against PRE_FIX_IDIOM, the committed copy of
+    the spelling that had the defect.
     """
 
     def _skip_gap(self, text, i):
@@ -284,16 +343,22 @@ class TestProofBodyIsOneShellWord(unittest.TestCase):
                          "multi-word python3 -c silently runs only the "
                          "first: " + "; ".join(offenders))
 
-    def test_guard_catches_the_pre_fix_script(self):
-        # Disconfirming evidence: the guard must FAIL on the script that
-        # had the defect, or it proves nothing.
-        old = subprocess.run(["git", "-C", REPO, "show", "HEAD:deploy.sh"],
-                             capture_output=True, text=True)
-        if old.returncode != 0:
-            self.skipTest("HEAD:deploy.sh unavailable")
-        self.assertTrue(self._offenders(old.stdout),
-                        "the guard must flag the pre-fix deploy.sh, else it "
-                        "does not actually detect the defect")
+    def test_guard_catches_the_pre_fix_idiom(self):
+        # Disconfirming evidence: the guard must FAIL on the spelling
+        # that had the defect, or it proves nothing. The spelling is a
+        # committed fixture, not a git lookup: `git show HEAD:deploy.sh`
+        # only carried the defect while the fix was uncommitted, so from
+        # 97db86e onward it answered "no offenders" and this test could
+        # never pass again (97db86e^ has three offenders, 97db86e and
+        # every later revision have none). That is a stale-environment
+        # assumption, not a timing flake -- three consecutive runs on the
+        # pre-change tree all failed here and only here, in ~141 s each.
+        offenders = self._offenders(PRE_FIX_IDIOM)
+        self.assertEqual(
+            len(offenders), 2,
+            "the guard must flag both pre-fix python3 -c idioms "
+            "(TRANSIENT_VIEWS and RELOAD_BODY); it reported %s"
+            % offenders)
 
 
 class TestTransientDerivationRuns(unittest.TestCase):

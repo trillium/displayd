@@ -1,6 +1,11 @@
 """Talon app-switcher tests: renderer geometry, daemon focus slot,
 closed touch action, bridge helpers, and Talon-side pure logic.
 
+The Talon-side module itself lives on the Talon install, outside this
+repo, so its contract is asserted twice: against the committed double
+(tests/fixtures/displayd_apps.py, every host) and against the real
+module wherever Talon is installed (named skip where it is not).
+
 Run from the repo root:  python3 -m unittest tests.test_talon_apps -v
 """
 
@@ -29,14 +34,41 @@ def load_module(name, path):
 
 
 REPO = os.path.join(os.path.dirname(__file__), os.pardir)
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "fixtures")
 RENDERER = load_module("test_talon_apps_renderer",
                        os.path.join(REPO, "renderers", "talon_apps.py"))
 BRIDGE = load_module("test_talon_apps_bridge",
                      os.path.join(REPO, "bridges", "talon_apps.py"))
-TALON_SIDE = load_module(
-    "test_displayd_apps_talon",
-    os.path.expanduser("~/.talon/user/trillium_talon/core/"
-                       "displayd_apps/displayd_apps.py"))
+
+
+def load_optional(name, path):
+    """(module, gap): the module, or (None, why it could not load).
+
+    An optional fixture that is absent must degrade to a NAMED skip,
+    never to a module-load error that takes the rest of this file's
+    tests down with it."""
+    try:
+        return load_module(name, path), ""
+    except FileNotFoundError:
+        return None, "not installed at %s" % path
+    except Exception as err:
+        return None, "could not import %s: %s" % (path, err)
+
+
+# The real Talon-side module lives on the Talon install, outside this
+# repo, so it is absent on every host without Talon (all CI, and the
+# hosts this suite is normally run on).
+REAL_TALON_APPS = os.path.expanduser(
+    "~/.talon/user/trillium_talon/core/displayd_apps/displayd_apps.py")
+TALON_SIDE, TALON_SIDE_GAP = load_optional("test_displayd_apps_talon",
+                                           REAL_TALON_APPS)
+# Committed contract double (tests/fixtures/displayd_apps.py): keeps the
+# Talon-facing contract executable on every host. It does NOT prove the
+# real install matches -- see its docstring -- so the same assertions
+# also run against the real module wherever that is installed.
+TALON_FIXTURE = load_module("test_displayd_apps_fixture",
+                            os.path.join(FIXTURES, "displayd_apps.py"))
 
 
 class FakeFramebuffer(displayd.Framebuffer):
@@ -457,44 +489,50 @@ class BridgeHelperTest(unittest.TestCase):
         self.assertIsNone(BRIDGE.fetch_focus("http://127.0.0.1:9"))
 
 
-class TalonSideTest(unittest.TestCase):
+class _TalonSideContract(object):
+    """The Talon-facing contract, asserted against whichever module a
+    subclass binds to ``side``. A mixin rather than a TestCase so the
+    unbound base is never collected as a test class of its own."""
+
+    side = None
+
     def test_clean_name(self):
-        self.assertEqual(TALON_SIDE.clean_name("Safari"), "Safari")
-        self.assertEqual(TALON_SIDE.clean_name(" \x00a\x07 "), "a")
-        self.assertEqual(len(TALON_SIDE.clean_name("z" * 200)),
-                         TALON_SIDE.NAME_CHARS)
+        self.assertEqual(self.side.clean_name("Safari"), "Safari")
+        self.assertEqual(self.side.clean_name(" \x00a\x07 "), "a")
+        self.assertEqual(len(self.side.clean_name("z" * 200)),
+                         self.side.NAME_CHARS)
 
     def test_build_state_doc_bounded_deduped_sorted(self):
-        doc = TALON_SIDE.build_state_doc(
+        doc = self.side.build_state_doc(
             ["Safari", "Safari", "", "Mail"], "Safari")
         self.assertEqual(doc["apps"], ["Mail", "Safari"])
         self.assertEqual(doc["focused"], "Safari")
-        doc = TALON_SIDE.build_state_doc(
+        doc = self.side.build_state_doc(
             ["App%d" % i for i in range(100)], "")
-        self.assertEqual(len(doc["apps"]), TALON_SIDE.MAX_APPS)
+        self.assertEqual(len(doc["apps"]), self.side.MAX_APPS)
 
     def test_handle_focus_doc_refuses_without_calling(self):
         calls = []
         stale = {"id": 1, "name": "Safari",
                  "ts": time.time() - 60}
-        resp = TALON_SIDE.handle_focus_doc(stale, calls.append)
+        resp = self.side.handle_focus_doc(stale, calls.append)
         self.assertFalse(resp["ok"])
         self.assertEqual(calls, [])
         empty = {"id": 2, "name": "  ", "ts": time.time()}
-        resp = TALON_SIDE.handle_focus_doc(empty, calls.append)
+        resp = self.side.handle_focus_doc(empty, calls.append)
         self.assertFalse(resp["ok"])
         self.assertEqual(calls, [])
 
     def test_handle_focus_doc_focuses_and_reports(self):
         calls = []
         req = {"id": 3, "name": "Safari", "ts": time.time()}
-        resp = TALON_SIDE.handle_focus_doc(req, calls.append)
+        resp = self.side.handle_focus_doc(req, calls.append)
         self.assertEqual(calls, ["Safari"])
         self.assertEqual(resp, {"id": 3, "ok": True,
                                 "focused": "Safari"})
 
     def test_capture_doc_captures_rect_to_fixed_path(self):
-        if not hasattr(TALON_SIDE, "handle_capture_doc"):
+        if not hasattr(self.side, "handle_capture_doc"):
             self.skipTest("talon side predates the capture verb")
         made = {}
 
@@ -506,7 +544,7 @@ class TalonSideTest(unittest.TestCase):
             made["shot"] = (rect, path)
         req = {"id": 9, "x": 10, "y": 20, "w": 480, "h": 360,
                "ts": time.time()}
-        self.assertEqual(TALON_SIDE.handle_capture_doc(
+        self.assertEqual(self.side.handle_capture_doc(
             req, rect_of, shoot, "/tmp/fixed.png"),
             {"id": 9, "ok": True})
         self.assertEqual(made["rect"], (10.0, 20.0, 480.0, 360.0))
@@ -514,7 +552,7 @@ class TalonSideTest(unittest.TestCase):
                          (made["rect"], "/tmp/fixed.png"))
 
     def test_capture_doc_refuses_without_capturing(self):
-        if not hasattr(TALON_SIDE, "handle_capture_doc"):
+        if not hasattr(self.side, "handle_capture_doc"):
             self.skipTest("talon side predates the capture verb")
         calls = []
 
@@ -523,14 +561,14 @@ class TalonSideTest(unittest.TestCase):
 
         stale = {"id": 1, "x": 0, "y": 0, "w": 10, "h": 10,
                  "ts": time.time() - 60}
-        resp = TALON_SIDE.handle_capture_doc(stale, None, shoot,
+        resp = self.side.handle_capture_doc(stale, None, shoot,
                                              "/tmp/fixed.png")
         self.assertFalse(resp["ok"])
         for bad in ({"id": 2, "x": 0, "y": 0, "w": 99999,
                      "h": 10, "ts": time.time()},
                     {"id": 3, "ts": time.time()},
                     "junk"):
-            resp = TALON_SIDE.handle_capture_doc(bad, None, shoot,
+            resp = self.side.handle_capture_doc(bad, None, shoot,
                                                  "/tmp/fixed.png")
             self.assertFalse(resp["ok"])
         self.assertEqual(calls, [])
@@ -541,11 +579,32 @@ class TalonSideTest(unittest.TestCase):
         # sleep loop, no keystroke trigger anywhere in the module.
         # (Prose mentions in the docstring are fine; calls are not.)
         import inspect
-        src = inspect.getsource(TALON_SIDE)
+        src = inspect.getsource(self.side)
         for banned in ("rpc_client_", "read_json_with_timeout(",
                        "trigger_command_server_command_execution",
                        "actions.sleep(", "actions.key("):
             self.assertNotIn(banned, src)
+
+
+class TalonSideFixtureTest(_TalonSideContract, unittest.TestCase):
+    """The contract on every host, against the committed double.
+
+    What this cannot prove: that the installed Talon module behaves
+    like the double. It pins what the bridge expects of the Talon side
+    (bounds, refusal rules, no blocking primitive) so drift in the
+    EXPECTATION is caught everywhere; drift in the real install is only
+    caught by TalonSideTest, below."""
+
+    side = TALON_FIXTURE
+
+
+@unittest.skipUnless(TALON_SIDE is not None,
+                     "real Talon displayd_apps absent: %s"
+                     % (TALON_SIDE_GAP or REAL_TALON_APPS))
+class TalonSideTest(_TalonSideContract, unittest.TestCase):
+    """The real Talon integration: runs only where Talon is installed."""
+
+    side = TALON_SIDE
 
 
 if __name__ == "__main__":

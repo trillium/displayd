@@ -11,7 +11,9 @@ import base64
 import io
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +24,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
 
 import mac_zoom as mz
 import mac_preview as mp
+import mac_preview_capture as mpc
+
+# Committed argv-recording double, so the command-line assertions do not
+# depend on which ffmpeg (if any) this host has or where it lives.
+FAKE_FFMPEG = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "fixtures", "fake_ffmpeg.py")
 
 DISPLAYS = [{"bounds": {"x": 0, "y": 0, "w": 1728, "h": 1117},
              "main": True},
@@ -154,11 +162,34 @@ class CaptureTest(unittest.TestCase):
 class FfmpegFallbackTest(unittest.TestCase):
     """Review-capture ffmpeg fallback (task-ax59w: a broken Talon side
     must degrade to a coarser review, never a stale zoom feed that
-    409-refuses every image tap). No real ffmpeg on CI (subprocess
-    injected); no Quartz on CI (scales injected)."""
+    409-refuses every image tap). No real ffmpeg anywhere: both bridges
+    are pointed at the committed argv-recording double
+    (tests/fixtures/fake_ffmpeg.py), so the assertions are about the
+    command line the bridge BUILDS and never about which ffmpeg a host
+    happens to have, or where. No Quartz on CI (scales injected)."""
 
     SCALES = [(0, 0, 1728, 1117, 2.0),
               (-355, -1080, 1920, 1080, 2.0)]
+
+    def setUp(self):
+        # argv[0] is the resolved binary, not a flag: point both bridges
+        # at the double so the shape checks below measure flags, not one
+        # machine's Nix/Homebrew layout. (The two bridges really do
+        # resolve argv[0] by different rules -- mac_preview walks
+        # FFMPEG_CANDIDATES, mac_zoom pins the Homebrew path -- which is
+        # a finding filed against the bridge, not a thing this test can
+        # pin without re-hardcoding a path.)
+        if not os.access(FAKE_FFMPEG, os.X_OK):
+            self.skipTest("argv-recording ffmpeg double is not executable "
+                          "(check the file mode): %s" % FAKE_FFMPEG)
+        self.stub = FAKE_FFMPEG
+        for module in (mz, mpc):
+            old = module.FFMPEG_BIN
+            module.FFMPEG_BIN = self.stub
+            self.addCleanup(setattr, module, "FFMPEG_BIN", old)
+        fd, self.arglog = tempfile.mkstemp(prefix="ffmpeg-argv")
+        os.close(fd)
+        self.addCleanup(os.unlink, self.arglog)
 
     def _jpeg(self, size=(480, 360)):
         from PIL import Image
@@ -179,7 +210,9 @@ class FfmpegFallbackTest(unittest.TestCase):
         zoom = mz.ffmpeg_review_cmd(
             1, {"x": 0, "y": 0, "w": 480, "h": 360})
         prev = mp.ffmpeg_cmd(1)
-        self.assertEqual(zoom[:11], prev[:11])
+        self.assertEqual(zoom[0], self.stub)
+        self.assertEqual(prev[0], self.stub)
+        self.assertEqual(zoom[1:11], prev[1:11])
         self.assertEqual(zoom[-3:], ["-f", "mjpeg", "-"])
         self.assertEqual(zoom[zoom.index("-q:v") + 1],
                          str(mz._ffmpeg_q(mz.JPEG_QUALITY)))
@@ -187,6 +220,24 @@ class FfmpegFallbackTest(unittest.TestCase):
         vf = zoom[zoom.index("-vf") + 1]
         self.assertTrue(vf.startswith("crop="))
         self.assertIn("scale=", vf)
+
+    def test_command_lines_execute_and_record_their_argv(self):
+        # The shape claim above is a claim about what reaches the OS:
+        # run both built command lines through a real exec and read back
+        # the argv the process saw. Guards against an argv the shape
+        # checks would still accept but exec would not.
+        env = dict(os.environ, FAKE_FFMPEG_LOG=self.arglog)
+        zoom = mz.ffmpeg_review_cmd(
+            1, {"x": 0, "y": 0, "w": 480, "h": 360})
+        prev = mp.ffmpeg_cmd(1)
+        for argv in (zoom, prev):
+            done = subprocess.run(argv, env=env, timeout=30,
+                                  capture_output=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+        with open(self.arglog, encoding="utf-8") as fh:
+            recorded = [json.loads(line) for line in fh if line.strip()]
+        self.assertEqual(recorded, [zoom, prev])
+        self.assertEqual(recorded[0][1:11], recorded[1][1:11])
 
     def test_crop_snapped_even(self):
         # yuv420p refuses odd crop geometry: odd device rects snap.
