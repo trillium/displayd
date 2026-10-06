@@ -159,6 +159,37 @@ def accent_rgb(view, default=ACCENT):
     return _rgb(accent(view, default))
 
 
+BRIGHT_SUM = 384  # sum(r,g,b) above which a surface reads as bright
+
+
+def bright(surface):
+    """True when a surface reads as bright: the ink on it must be dark.
+
+    ``surface`` is a PIL tuple or a '#rrggbb' string. Anything that cannot
+    be read counts as dark, so an unreadable surface gets the light ink
+    rather than dark type on a dark panel -- a legibility failure is worse
+    than a small colour mistake.
+    """
+    try:
+        rgb_ = _rgb(surface) if isinstance(surface, str) else tuple(surface)
+        return sum(int(channel) for channel in rgb_[:3]) > BRIGHT_SUM
+    except Exception:
+        return False
+
+
+def ink_on(surface, dark=None, light=None):
+    """The ink that reads on ``surface``: ``on-accent`` on a bright fill,
+    ``muted`` on a dark one.
+
+    A view that paints a surface the caller chose -- a QR card's white
+    page, an operator's background param -- cannot name one ink, and this
+    is the one rule that decides. Both candidates are roles here, so such a
+    view still states no colour of its own.
+    """
+    return (rgb("on-accent") if dark is None else dark) if bright(surface) \
+        else (rgb("muted") if light is None else light)
+
+
 def css_root(selector=":root"):
     """The token block every template document inherits.
 

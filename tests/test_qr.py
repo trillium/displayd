@@ -11,6 +11,7 @@ Run from the repo root:  python3 -m unittest discover -s tests -v
 
 import io
 import os
+import re
 import sys
 import threading
 import unittest
@@ -20,8 +21,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 import displayd
 from PIL import Image
 
+import theme
 from renderers import qr
 from renderers import qr_common
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 
 
 def decode_png(png_bytes):
@@ -166,6 +171,57 @@ class TestContract(unittest.TestCase):
         self.assertEqual(img.size, (1920, 1080))
         self.assertTrue(any(img.tobytes()),
                         "oversize payload must message, not blank")
+
+
+class TestComponentMigration(unittest.TestCase):
+    """The QR view draws nothing itself: the panel and the layer's line.
+
+    It used to hold a fourth font loader, a prompt with two grey literals
+    chosen by an inline brightness test, and a caption shrink loop.
+    """
+
+    def source(self, rel):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_the_module_holds_no_drawing_primitive_or_font_loader(self):
+        src = self.source(os.path.join("renderers", "qr.py"))
+        self.assertNotIn("ImageDraw", src)
+        self.assertNotIn("from PIL", src)
+        self.assertNotIn("def _font", src)
+        self.assertEqual(HEX_RE.findall(src), [])
+        self.assertIn("from ui import", src)
+        self.assertIn("fit_size", src)
+
+    def test_the_prompt_wears_the_ink_that_reads_on_the_card(self):
+        # The default QR card is white: the prompt must be the dark role,
+        # not the old (90, 90, 100) / (160, 160, 170) pair.
+        img = run_qr({"data": ""})
+        painted = {c for _n, c in img.getcolors(1 << 24)}
+        self.assertIn(theme.ink_on((255, 255, 255)), painted)
+        self.assertNotIn((90, 90, 100), painted)
+        self.assertNotIn((160, 160, 170), painted)
+        # And the other way round on a dark card.
+        dark = run_qr({"data": "", "background": "#000000"})
+        dark_painted = {c for _n, c in dark.getcolors(1 << 24)}
+        self.assertIn(theme.ink_on((0, 0, 0)), dark_painted)
+
+    def test_a_long_caption_is_fitted_inside_the_panel(self):
+        from ui import text as ui_text
+
+        caption = "x" * 90
+        img = run_qr({"data": qr_common.DEFAULT_URL, "caption": caption})
+        screen = FakeScreen()
+        room = int(screen.W * 0.9)
+        size = ui_text.fit_size(screen, caption, qr.CAPTION_SIZE, room,
+                                floor=20, step=4)
+        self.assertLessEqual(ui_text.width(screen, caption, size), room)
+        # The caption sits under the code; a fitted line keeps a margin, a
+        # clipped one would run to both panel edges.
+        rows = [img.getpixel((x, y))
+                for y in range(915, 975)
+                for x in list(range(0, 40)) + list(range(1880, 1920))]
+        self.assertEqual({c for c in rows if c != qr_common.QR_BG}, set())
 
 
 if __name__ == "__main__":

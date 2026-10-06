@@ -21,10 +21,9 @@ Sizes are the caller's: a component names its own scale (``shell.HEAD_SIZE``,
 rather than scattered as magic numbers through the drawing code.
 
 The fourth rule is ``fit_size``: a line that does not fit its column is
-made smaller rather than cut, and never below its floor. Three views still
+made smaller rather than cut, and never below its floor. Two views still
 carry their own version of it (``reload.fit_font``,
-``retro_grid_draw._fit_font``, ``qr``'s caption loop) because they take a
-PIL ``draw`` handle; they fold in when those views migrate.
+``retro_grid_draw._fit_font``); they fold in when those views migrate.
 """
 
 import os
@@ -150,21 +149,26 @@ def fit_size(screen, text, size, room, floor=FLOOR, step=2, bold=False,
 
 
 def write(img, screen, xy, text, ink, size, bold=False, room=None,
-          family=None):
+          family=None, anchor=None):
     """One line of type at ``xy``, fitted to ``room`` px first.
 
-    Returns the frame unchanged on any failure -- the component layer's
-    obligation -- so a line that cannot be drawn is a missing line and
-    never a blank panel.
+    ``xy`` is the text box's top-left corner unless ``anchor`` states
+    otherwise (PIL's own anchor letters: ``mm`` centred on ``xy``, ``ma``
+    centred on ``xy`` by its top edge), which is what a view that centres
+    a caption on the panel needs. Returns the frame unchanged on any
+    failure -- the component layer's obligation -- so a line that cannot
+    be drawn is a missing line and never a blank panel.
     """
     try:
         from PIL import ImageDraw
         line = fit(screen, text, size, bold=bold, room=room, family=family)
         if not line:
             return img
+        kwargs = {} if anchor is None else {"anchor": str(anchor)}
         ImageDraw.Draw(img).text(
             (int(xy[0]), int(xy[1])), line,
-            font=face(screen, size, bold=bold, family=family), fill=ink)
+            font=face(screen, size, bold=bold, family=family), fill=ink,
+            **kwargs)
     except Exception:
         pass
     return img

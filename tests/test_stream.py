@@ -178,6 +178,73 @@ class TestStreamRun(unittest.TestCase):
             server.server_close()
 
 
+class TestStreamPresentation(unittest.TestCase):
+    """The live tag and the idle frame come from the component layer.
+
+    Both were hand-drawn here: a rounded rectangle, an ellipse and a label
+    with three colour literals, and a bare relative-path truetype call
+    that never resolved on any host, so the tag fell back to "o LIVE" in
+    the default face with no backdrop at all.
+    """
+
+    def painted(self, img):
+        return {c for _n, c in img.getcolors(1 << 24)}
+
+    def test_the_live_tag_is_a_pill_on_the_page_surface(self):
+        import theme
+
+        mod = stream_mod()
+        screen = make_screen(1920, 1080)
+        frame = screen.new_image((20, 20, 20))
+        mod._draw_status(screen, frame, "LIVE", 2.0, False)
+        painted = self.painted(frame)
+        self.assertIn(theme.rgb("page"), painted)
+        self.assertIn(theme.accent_rgb("stream"), painted)
+        self.assertIn(theme.rgb("ink-strong"), painted)
+        self.assertNotIn((255, 70, 70), painted)   # the old dot literal
+        self.assertNotIn((0, 0, 0), painted)        # the old bare backdrop
+
+    def test_a_quiet_source_marks_the_dot_muted(self):
+        import theme
+
+        mod = stream_mod()
+        screen = make_screen(1920, 1080)
+        frame = screen.new_image((20, 20, 20))
+        mod._draw_status(screen, frame, "LIVE", 0, True)
+        painted = self.painted(frame)
+        self.assertIn(theme.rgb("muted"), painted)
+        self.assertNotIn(theme.accent_rgb("stream"), painted)
+
+    def test_the_badges_do_not_cover_the_live_tag(self):
+        """The pill starts past the gesture strip: at the panel's own
+        corner the home badge sits on its dot and its first letters."""
+        import theme
+        from ui import system_buttons as sb
+
+        mod = stream_mod()
+        screen = make_screen(1920, 1080)
+        frame = screen.new_image((20, 20, 20))
+        mod._draw_status(screen, frame, "LIVE", 2.0, False)
+        self.assertEqual(self.painted(frame.crop((0, 0, sb.STRIP, 160))),
+                         {(20, 20, 20)})
+        screen.overlay = sb.system_overlay(screen, None)
+        painted = self.painted(screen.overlay(frame.copy()))
+        self.assertIn(theme.rgb("page"), painted)
+        self.assertIn(theme.accent_rgb("stream"), painted)  # the dot
+        self.assertIn(theme.rgb("ink-strong"), painted)     # the label
+
+    def test_the_idle_frame_is_the_panel_block_never_blank(self):
+        import theme
+
+        mod = stream_mod()
+        screen = make_screen(1920, 1080)
+        frame = mod._draw_idle(screen, theme.rgb("page"),
+                               "POST a frame to /feed/stream/frame")
+        painted = self.painted(frame)
+        self.assertIn(theme.rgb("muted"), painted)
+        self.assertNotIn((120, 120, 130), painted)  # the old idle grey
+
+
 class TestStreamThroughput(unittest.TestCase):
     def test_push_throughput_at_full_panel_size(self):
         """Measured ceiling, headless: distinct pushed frames consumed as

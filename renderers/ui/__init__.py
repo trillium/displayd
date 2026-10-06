@@ -42,8 +42,9 @@ Layout of the package:
   panel's top corners.
 - ``stat`` -- a label plus a value line (``row``), one horizontal list
   entry (``list_row``: status dot, name, right-aligned value), a
-  supporting ``body`` line, and the ``meter`` bar for a fraction of a
-  whole.
+  supporting ``body`` line, the ``meter`` bar for a fraction of a whole,
+  and ``pill`` -- a dot and a line of type on the panel's own page
+  surface, the tag a view wears over a frame it did not paint.
 - ``tile`` -- a bounded box with a label: the declared-box rule, the label
   fit and centring, plus a markup half (``cell``/``layer``, what the
   picker and options fill their raw slot with) and a drawing half

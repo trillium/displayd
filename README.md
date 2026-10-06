@@ -326,7 +326,11 @@ strip (`band_pad`), so the home badge no longer covers the first letters of a
 title and the sleep badge no longer covers the health dot. The entries under
 the band are `renderers/ui/stat.py` (`row` for a label over its value,
 `list_row` for one horizontal entry: status dot, name, right-aligned value,
-and a clamped `meter` for a fraction of a whole). Both draw through
+a clamped `meter` for a fraction of a whole, and `pill` — a dot and a line
+of type on the panel's own page surface, which is what a view wears over a
+frame it did not paint: the stream view's live tag is that pill, placed
+after the gesture strips so the home badge cannot cover its dot, and its
+idle frame is the panel component's block). Both draw through
 `renderers/ui/text.py` — the layer's one font, measurement, trim-to-room rule,
 `fit_size` for a line that shrinks to its column, and `wrap` for a paragraph
 broken to a width. The five views that used to carry that band and those rows
@@ -357,6 +361,15 @@ border — drawn from the palette's `track` token and the border roles. The
 daemon's `playlist.py` composes it; it used to carry a second, byte-identical
 copy of the same three functions, which shadowed its own import of the module
 its docstring named as the owner.
+
+A **status pill** is that same `stat.pill`: `stream` draws its live tag with
+it (the view's own accent as the dot while frames arrive, the palette's muted
+role when its source is quiet) and its idle frame with the panel component's
+block, and `qr` draws its prompt and caption through the panel component and
+the layer's one line-of-type rule. Both views no longer hold a font loader, an
+image-drawing primitive or a colour literal; the ink a caller-coloured page
+needs is `theme.ink_on`, the token layer's one rule for "what reads on this
+surface".
 
 The apps dock under the merged home screen is a template too
 (`html-templates/dock.html`), composited into the picker frame inside the rect

@@ -231,6 +231,12 @@ listing and the picker all agree without a renderer declaring a colour.
 A renderer from outside this tree may still declare its own `ACCENT`, which
 takes precedence over the slot.
 
+Which ink reads on a surface is a rule of the palette, not of the view:
+`theme.ink_on(surface)` answers with `on-accent` on a bright fill and
+`muted` on a dark one, so a view that paints a surface the *caller* chose
+(`qr`'s card page, an operator's `background` param) can pick a legible ink
+without holding a colour literal or its own brightness test.
+
 A migrated template carries **no** colour literal: `layout.html` and
 `status.html` are the first two, and `tests/test_theme.py` fails on any
 `#rrggbb` in a migrated style, so a template cannot quietly re-author a
@@ -538,7 +544,7 @@ that only survives polite input is not a budget.
 | `renderers/_picker_tiles.py` | the picker's chrome variables |
 | `renderers/ui/tile.py` | the tile component: box geometry, label fit, the markup half and the drawing half |
 | `renderers/ui/grid.py` | the grid of tiles: the column count (shape-derived when no `cols` is given) and the row-major rects, asked by the picker and the options name grid alike |
-| `renderers/ui/shell.py`, `renderers/ui/stat.py`, `renderers/ui/text.py` | the band a Pillow view wears (inset clear of the badges via `band_pad`), the label/value row and its meter, and the layer's one font/measure/fit rule plus `fit_size` (the template path takes its band from the shared stylesheet instead) |
+| `renderers/ui/shell.py`, `renderers/ui/stat.py`, `renderers/ui/text.py` | the band a Pillow view wears (inset clear of the badges via `band_pad`), the label/value row, its meter and the `pill` overlay tag, and the layer's one font/measure/fit rule plus `fit_size` and the anchored one-line writer (the template path takes its band from the shared stylesheet instead) |
 | `renderers/ui/panel.py` | the panel component: a titled region with a body -- one scale-to-fit rule, a centred headline and body, the corner tag and the accent bar (`notice`, `text`, `sleep`, `clock` are composers over it; `touch_confidence` composes its lines and its region boxes from `panel` + `tile`) |
 | `renderers/ui/progress.py` | the progress component: a fraction of a whole across a flush edge strip (`boxes`/`shown`/`contrast`/`draw`), the playlist bar's one definition, drawn from the `track` token and the contrast border roles -- `playlist.py` composes it and does not draw |
 | `html-templates/dock.html` | the apps dock strip under the home screen |
