@@ -14,7 +14,9 @@ renderer that declares neither resolves exactly as before.
 """
 
 DEFAULT_COLOR = (255, 255, 255)
-TRACK_COLOR = (38, 38, 46)
+# The strip under the fill is not a playlist colour: it is the progress
+# component's own surface, so it is the palette's ``track`` token
+# (``renderers/ui/progress.py``) and nothing here repeats it.
 
 NAMED = {
     "black": (0, 0, 0),

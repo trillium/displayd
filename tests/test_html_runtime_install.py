@@ -139,6 +139,14 @@ class SourceTree(object):
             if name.endswith(".py"):
                 shutil.copy(os.path.join(REPO, "renderers", name),
                             os.path.join(prefix, "renderers", name))
+        # The component layer travels with the daemon: install.sh copies it,
+        # because the views import it by name and the playlist imports its
+        # bar component.
+        os.makedirs(os.path.join(prefix, "renderers", "ui"), exist_ok=True)
+        for name in os.listdir(os.path.join(REPO, "renderers", "ui")):
+            if name.endswith(".py"):
+                shutil.copy(os.path.join(REPO, "renderers", "ui", name),
+                            os.path.join(prefix, "renderers", "ui", name))
         return run_installer(self, list(args), prefix)
 
     def clean(self):
@@ -570,27 +578,40 @@ class TestInstallIntoItsOwnSourceTree(unittest.TestCase):
         self.assertEqual(strict.returncode, 1, strict.stdout + strict.stderr)
 
 
+def _module_file(rel):
+    """The repo file a dotted module name resolves to, or None."""
+    for candidate in (rel + ".py", os.path.join(rel, "__init__.py")):
+        if os.path.exists(os.path.join(REPO, candidate)):
+            return candidate
+    return None
+
+
 def _daemon_import_closure():
-    """Every top-level repo module displayd.py transitively imports by name."""
+    """Every repo module displayd.py transitively imports, as repo-relative
+    paths (``playlist.py``, ``renderers/ui/progress.py``).
+
+    Dotted names are resolved through the repo tree, so an import of a
+    submodule (``from renderers.ui import progress``) is a module the prefix
+    must carry -- a bare ``displayd.py`` import that names a package the
+    installer copies by top-level glob alone would otherwise pass unnoticed.
+    """
     seen, queue = set(), ["displayd"]
     while queue:
-        name = queue.pop()
-        path = os.path.join(REPO, name + ".py")
-        if name in seen or not os.path.exists(path):
+        rel = queue.pop().replace(".", "/")
+        path = _module_file(rel)
+        if path is None or path in seen:
             continue
-        seen.add(name)
-        with open(path) as fh:
+        seen.add(path)
+        with open(os.path.join(REPO, path)) as fh:
             tree = ast.parse(fh.read())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                names = [a.name for a in node.names]
+                queue.extend(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.level == 0:
-                names = [node.module or ""]
-            else:
-                continue
-            for imported in names:
-                if os.path.exists(os.path.join(REPO, imported + ".py")):
-                    queue.append(imported)
+                if node.module:
+                    queue.append(node.module)
+                    queue.extend("%s.%s" % (node.module, alias.name)
+                                 for alias in node.names)
     return sorted(seen)
 
 
@@ -607,9 +628,18 @@ class TestCleanTargetCanImportTheDaemon(unittest.TestCase):
         self.src.install(self.prefix)
 
     def test_the_installed_prefix_has_every_module_the_daemon_imports(self):
-        present = set(os.listdir(self.prefix))
-        for name in _daemon_import_closure():
-            self.assertIn(name + ".py", present, name)
+        for rel in _daemon_import_closure():
+            self.assertTrue(os.path.isfile(os.path.join(self.prefix, rel)),
+                            rel)
+
+    def test_the_installed_prefix_carries_the_component_layer(self):
+        # Views import the layer by name ("from ui import tile") and the
+        # daemon's playlist imports its bar component, so a prefix without
+        # renderers/ui/ cannot load the picker, the home screen or the bar.
+        for name in ("tile.py", "progress.py", "system_buttons.py",
+                     "__init__.py"):
+            self.assertTrue(os.path.isfile(os.path.join(
+                self.prefix, "renderers", "ui", name)), name)
 
     def test_the_daemon_imports_cleanly_from_the_installed_prefix(self):
         # The real proof: run the daemon's own import machinery against the
@@ -633,6 +663,10 @@ class TestCleanTargetCanImportTheDaemon(unittest.TestCase):
         with open(os.path.join(REPO, "install.sh")) as fh:
             src = fh.read()
         self.assertIn('install -m 0644 "$HERE"/*.py "$PREFIX/"', src)
+        # ...including the component layer, which the fixture above copies
+        # too: the two halves of "what a clean target carries" are pinned
+        # together, so one cannot drift from the other.
+        self.assertIn('"$HERE"/renderers/ui/*.py', src)
 
 
 if __name__ == "__main__":

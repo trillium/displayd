@@ -136,8 +136,11 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Bar is composited via `Screen.overlay` (`overlay_image` hook) +
   `repaint_overlay()` tick; hidden whenever rotation holds (transient,
   screen-off, manual hold). Rotation never touches the activity clock.
-- Colour precedence: per-view `color` > renderer `ACCENT` attr >
-  playlist `color` > white fallback, always with a contrast border.
+  The bar itself is the component `renderers/ui/progress.py`;
+  `playlist.py` composes it and holds no drawing code.
+- Colour precedence: per-view `color` > renderer `ACCENT` attr > the
+  renderer's palette slot (`theme.ACCENT_SLOTS`, resolved into its entry)
+  > playlist `color` > white fallback, always with a contrast border.
   A renderer declares `ACCENT = "#rrggbb"` to opt in (additive).
 - Manual `/show`/`/clear` holds rotation until `POST /playlist/resume`;
   boot-time `clear()` is followed by `playlist.boot()` so a persisted

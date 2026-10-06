@@ -320,6 +320,14 @@ every line of its frame is the panel's `block` and its region boxes are the
 tile component's `draw`, with the palette's `attention`/`alert`/`accent` roles
 where it used to hold six RGB literals and a private font loader.
 
+A **progress bar** is a component as well, `renderers/ui/progress.py`: the
+playlist's bar is one definition of where the track strip and the fill land on
+any of the four edges, the `drain`/`fill` direction rule, and the contrast
+border — drawn from the palette's `track` token and the border roles. The
+daemon's `playlist.py` composes it; it used to carry a second, byte-identical
+copy of the same three functions, which shadowed its own import of the module
+its docstring named as the owner.
+
 The apps dock under the merged home screen is a template too
 (`html-templates/dock.html`), composited into the picker frame inside the rect
 its `apps-dock` tap region covers. It is authored once at the standard dock
@@ -632,7 +640,9 @@ colour name, or an `(r, g, b)` tuple) to opt in, and a per-view `color` in
 the playlist item overrides either (handy for views owned by other
 tasks); then the playlist-level `color`, then a white fallback. The fill
 always carries a contrast border over a dark track, so it reads on dark
-and light views alike. Renderers with no slot and no `ACCENT` work exactly
+and light views alike — both the track and the border are the progress
+component's palette roles (`renderers/ui/progress.py`), not playlist
+literals. Renderers with no slot and no `ACCENT` work exactly
 as before.
 
 Rotation yields: a notice or chat-attention transient pauses it (bar

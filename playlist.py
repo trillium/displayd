@@ -4,12 +4,12 @@ A playlist is a configured list of views ``[{renderer, params, dwell}]``.
 The scheduler advances through the list on top of the existing ``/show``
 machinery (one ``_start_view`` per switch, wrapping at the end).
 
-Single-concept split: colours live in :mod:`playlist_color`, bar geometry
-and compositing in :mod:`playlist_bar`, the read model (hold reasons,
-progress, status) in :mod:`playlist_state`, and view advancement in
-:mod:`playlist_schedule`. This module keeps the ``Playlist`` identity,
-lifecycle, overlay hook, and view-list validation; moved names are
-re-exported here so existing importers keep working.
+Single-concept split: colours live in :mod:`playlist_color`, the read
+model (hold reasons, progress, status) in :mod:`playlist_state`, view
+advancement in :mod:`playlist_schedule`, and the bar itself -- geometry
+and compositing -- in the component layer,
+:mod:`renderers.ui.progress`. The bar's own names are re-exported here
+so existing importers keep working, and nothing in this module draws.
 
 Config lives in the ``playlist`` section of the policy surface
 (``GET``/``POST /policy``, persisted to ``policy.json``)::
@@ -24,11 +24,18 @@ Config lives in the ``playlist`` section of the policy surface
 import threading
 import time
 
-from playlist_bar import (DIRECTIONS, PLACEMENTS, bar_boxes, draw_bar)
-from playlist_color import (DEFAULT_COLOR, NAMED, TRACK_COLOR, accent_for,
-                            parse_color)
+from playlist_color import (DEFAULT_COLOR, NAMED, accent_for, parse_color)
 from playlist_schedule import (ERROR_DWELL, HISTORY, PlaylistScheduleMixin)
 from playlist_state import PlaylistStateMixin
+from renderers.ui import progress as ui_progress
+
+# The bar is a component: this module composes it, it does not draw it.
+# Re-exported because the playlist's own config validation and its
+# callers name the vocabulary and the geometry through this module.
+PLACEMENTS = ui_progress.PLACEMENTS
+DIRECTIONS = ui_progress.DIRECTIONS
+bar_boxes = ui_progress.boxes
+draw_bar = ui_progress.draw
 
 
 def validate_views(views):
@@ -52,59 +59,6 @@ def validate_views(views):
         if "color" in item and parse_color(item["color"], None) is None:
             raise ValueError("%s.color is not a colour" % where)
     return views
-
-
-def bar_boxes(width, height, placement, thickness, fraction):
-    """Return (track_box, fill_box) in PIL coordinates.
-
-    The track owns a flush strip along ``placement``; the fill grows
-    left-to-right on horizontal edges and bottom-to-top on vertical ones.
-    ``fraction`` is the filled share in [0, 1] (already direction-applied
-    by the caller). Either box may be ``None`` when there is nothing to
-    draw (zero thickness or empty fill)."""
-    t = max(1, int(thickness))
-    fraction = max(0.0, min(1.0, fraction))
-    if placement == "top":
-        track = (0, 0, width, t)
-        w = int(width * fraction)
-        fill = (0, 0, w, t) if w > 0 else None
-    elif placement == "bottom":
-        track = (0, height - t, width, height)
-        w = int(width * fraction)
-        fill = (0, height - t, w, height) if w > 0 else None
-    elif placement == "left":
-        track = (0, 0, t, height)
-        h = int(height * fraction)
-        fill = (0, height - h, t, height) if h > 0 else None
-    elif placement == "right":
-        track = (width - t, 0, width, height)
-        h = int(height * fraction)
-        fill = (width - t, height - h, width, height) if h > 0 else None
-    else:
-        raise ValueError("placement must be one of %s" % "/".join(PLACEMENTS))
-    return track, fill
-
-
-def _contrast(color):
-    """Border colour that reads against both the accent and any page."""
-    lum = (0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]) / 255.0
-    return (10, 10, 12) if lum > 0.55 else (235, 235, 240)
-
-
-def draw_bar(img, placement, thickness, fraction, direction, color):
-    """Composite the progress bar onto a PIL image, in place. Returns img."""
-    from PIL import ImageDraw
-
-    shown = fraction if direction != "drain" else 1.0 - fraction
-    track, fill = bar_boxes(img.size[0], img.size[1], placement,
-                            thickness, shown)
-    draw = ImageDraw.Draw(img)
-    if track is not None:
-        draw.rectangle(track, fill=TRACK_COLOR)
-    if fill is not None:
-        draw.rectangle(fill, fill=tuple(color))
-        draw.rectangle(fill, outline=_contrast(tuple(color)), width=1)
-    return img
 
 
 class Playlist(PlaylistStateMixin, PlaylistScheduleMixin):
