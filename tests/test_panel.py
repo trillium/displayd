@@ -41,7 +41,7 @@ from ui import text as ui_text
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 MIGRATED = ("renderers/notice.py", "renderers/text.py",
-            "renderers/sleep.py")
+            "renderers/sleep.py", "renderers/clock.py")
 
 
 class FakeScreen:
@@ -305,6 +305,51 @@ class TextAndSleepCardTest(unittest.TestCase):
         screen = render("renderers.sleep", {"hint": "waking up",
                                             "color": "#0a0b0c"})
         self.assertGreater(count(screen.frames[0], (10, 11, 12)), 0)
+
+
+class ClockCardTest(unittest.TestCase):
+    """The clock is one headline now, not its own fit search.
+
+    It used to binary-search its own font size against 92% of the panel,
+    so the clock and the card component could disagree about what fits.
+    """
+
+    def ink_bbox(self, frame, colour):
+        xs = [x for x in range(0, frame.width, 4)
+              for y in range(0, frame.height, 4)
+              if frame.getpixel((x, y)) == colour]
+        return (min(xs), max(xs)) if xs else None
+
+    def test_the_digits_are_drawn_centred_and_fitted(self):
+        screen = render("renderers.clock", {"format": "%H:%M"})
+        frame = screen.frames[0]
+        self.assertEqual(frame.size, (1920, 1080))
+        span = self.ink_bbox(frame, theme.rgb("ink-strong"))
+        self.assertIsNotNone(span, "the clock drew no ink")
+        self.assertLessEqual(span[1] - span[0], 1920)
+        # Centred: ink on both sides of the panel's middle, and no ink
+        # touching either edge.
+        self.assertLess((span[0] + span[1]) // 2, 1000)
+        self.assertGreater((span[0] + span[1]) // 2, 920)
+        self.assertGreater(count(frame.crop((0, 0, 960, 1080)),
+                                 theme.rgb("ink-strong")), 0)
+        self.assertGreater(count(frame.crop((960, 0, 1920, 1080)),
+                                 theme.rgb("ink-strong")), 0)
+
+    def test_the_page_is_the_palette_role_not_a_second_black(self):
+        frame = render("renderers.clock", {}).frames[0]
+        self.assertEqual(frame.getpixel((0, 0)), theme.rgb("page"))
+        self.assertGreater(count(frame, theme.rgb("page")), 100000)
+        # The view's old default background (0, 0, 0) is not a role.
+        self.assertNotEqual(theme.rgb("page"), (0, 0, 0))
+        self.assertEqual(count(frame, (0, 0, 0)), 0)
+
+    def test_an_operator_colour_and_background_are_honoured(self):
+        frame = render("renderers.clock",
+                       {"format": "%H:%M", "color": "#ff0000",
+                        "background": "#101010"}).frames[0]
+        self.assertGreater(count(frame, (255, 0, 0)), 0)
+        self.assertEqual(frame.getpixel((0, 0)), (16, 16, 16))
 
 
 if __name__ == "__main__":

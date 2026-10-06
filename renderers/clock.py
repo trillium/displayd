@@ -1,8 +1,20 @@
-"""A large running clock. Re-renders once a second."""
+"""A large running clock. Re-renders once a second.
 
+One line of type, centred, scaled to fit the panel -- which is exactly the
+panel component's ``headline``. This view owns the pattern, the refresh
+and nothing else: it used to carry its own binary-search font fitter (the
+fourth copy of "make this line fit") and its own default inks, so the
+clock could disagree with the panel's palette about what "big type" is.
+"""
+
+import os
+import sys
 import time
 
-from PIL import ImageDraw, ImageFont
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import theme
+from ui import panel as ui_panel
 
 NAME = "clock"
 DESCRIPTION = "A large clock that updates every second"
@@ -14,27 +26,13 @@ PARAMS = {
     "background": {"type": "string", "help": "background colour, default black"},
 }
 
-
-def _autofit(draw, text, path, width, height):
-    best = 12
-    low, high = 12, 900
-    while low <= high:
-        mid = (low + high) // 2
-        font = ImageFont.truetype(path, mid)
-        box = draw.textbbox((0, 0), text, font=font)
-        if (box[2] - box[0]) <= width * 0.92 and (box[3] - box[1]) <= height * 0.92:
-            best = mid
-            low = mid + 1
-        else:
-            high = mid - 1
-    return best
+DIGIT_MAX = 900  # the size to scale down from: the panel's tallest type
 
 
 def run(screen, params, stop):
     pattern = params.get("format") or "%H:%M:%S"
-    fg = screen.color(params.get("color"), (255, 255, 255))
-    bg = screen.color(params.get("background"), (0, 0, 0))
-    path = screen.font_path("DejaVuSans-Bold")
+    fg = screen.color(params.get("color"), theme.rgb("ink-strong"))
+    bg = screen.color(params.get("background"), theme.rgb("page"))
 
     last = None
     while not stop.is_set():
@@ -42,12 +40,6 @@ def run(screen, params, stop):
         if text != last:
             last = text
             img = screen.new_image(bg)
-            draw = ImageDraw.Draw(img)
-            if path is None:
-                draw.text((20, 20), text, fill=fg)
-            else:
-                size = _autofit(draw, text, path, screen.W, screen.H)
-                font = ImageFont.truetype(path, size)
-                draw.text((screen.W // 2, screen.H // 2), text, font=font, fill=fg, anchor="mm")
+            ui_panel.headline(img, screen, text, ink=fg, size=DIGIT_MAX)
             screen.present(img)
         stop.wait(0.25)

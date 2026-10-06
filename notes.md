@@ -191,24 +191,22 @@ grid), now one component with two halves; the two polled list views
 `resources_draw` and `services_draw`, now composers over `ui.shell` +
 `ui.stat` (`ui.text` underneath both); the three card views, `notice`,
 `text` and `sleep`, now composers over `ui.panel`; the two list
-dashboards `feed_health` and `activity`; and this increment's
-`row_draw`, the third copy of the band.
+dashboards `feed_health` and `activity`; this increment's
+`row_draw`, the third copy of the band; and now `clock` (one headline) and
+`touch_confidence_draw` (its lines via `panel.block`, its boxes via
+`tile.draw`).
 
-Deliberately left (still Pillow, still drawing by hand): the other 16
+Deliberately left (still Pillow, still drawing by hand): the other 14
 modules in the gate's exemption list — `beads` with its `beads_detail`/
 `beads_detail_card`/`services`-style draw helpers, `macbook_draw`/
-`macbook_strip`, `qr`/`qr_common`, `reload`, `stream`, `clock`,
-`retro_grid_draw`, `touch_confidence_draw`, `life`,
-`playlist`/`playlist_bar` (the daemon-side progress bar), and
-`_html_error`/`_html_native`. Reason: the vocabulary they need is now built
-(`tile`, `text`, `shell`, `stat`, `panel`) but each of them is a real
+`macbook_strip`, `qr`/`qr_common`, `reload`, `stream`,
+`retro_grid_draw`, `life`, `playlist`/`playlist_bar` (the daemon-side
+progress bar), and `_html_error`/`_html_native`. Reason: the vocabulary
+they need is now built (`tile` + `grid`, `text` + `wrap` + `fit_size`,
+`shell`, `stat` + `list_row`, `panel`) but each of them is a real
 migration — `beads` is several surfaces, `reload` owns
 the QR proof and its scan relay, `stream` is a live frame at a capped fps,
 and `_html_native` is the engine shim rather than a view.
-`touch_confidence_draw` is partly migrated (its region boxes are
-`ui.tile.draw` now) but keeps its own accent bar, title and diagnostics
-lines, so it stays on the list until `shell`/`panel` are applied to it — a
-half-migrated file must not claim to have left the ratchet.
 
 ### 2d. The panel component, and the three card views it pulled (this increment)
 
@@ -477,6 +475,62 @@ Before/after on the real panel: `/tmp/row-evi-corner-left.png` reads "WING"
 on HEAD and "ROWING" now; a warm frame's `ok` pixels went 0 → 349 (the dot
 was painted and then covered).
 
+### 2i. The clock and the touch-confidence frame on the layer (this increment)
+
+Two more hand-drawing views became composers, and the gate's ratchet went
+**16 → 14**.
+
+| File | Before | After | What was deleted |
+| --- | --- | --- | --- |
+| `renderers/clock.py` | 53 | 45 | `_autofit` (the fourth copy of "make this line fit"; `ui.text.fit_size`'s docstring named it), `from PIL`, both default inks |
+| `renderers/touch_confidence_draw.py` | 146 | 130 | `font_for` (a fourth font loader), the stale `__all__` export, six colour literals, four copies of the same centred-text call |
+
+The clock is now `screen.new_image(bg)` + `ui_panel.headline(img, screen,
+text, ink=fg, size=DIGIT_MAX)` + present; `touch_confidence_draw` builds
+every line through one private `_line` that maps a palette *role name* to
+`ui_panel.block`, its accent bar is `ui_panel.bar`, and its region boxes
+stay `ui_tile.draw` (the box font now comes from `ui_text.face`).
+
+Deliberate pixel changes, all measured (see the evidence below):
+
+| Line | HEAD literal | Now | Role |
+| --- | --- | --- | --- |
+| clock background | `(0, 0, 0)` | `(7, 8, 12)` | `page` |
+| touch instructions | `(180, 180, 190)` | `(185, 194, 214)` | `muted-soft` |
+| touch "no regions" | `(140, 140, 150)` | `(92, 103, 128)` | `faint` |
+| touch last tap | `(255, 255, 160)` | `(255, 180, 80)` | `attention` |
+| touch error line | `(255, 150, 150)` | `(214, 74, 74)` | `alert` |
+| touch chips | `(160, 200, 255)` | `(127, 209, 255)` | `accent` |
+
+Two lines did not move at all: the title/counters were already
+`(255, 255, 255)` = `ink-strong`, and the accent bar's old default
+`#50DC78` is exactly `theme.accent_rgb("touch_confidence")` — it just
+stopped being owned by the view. The clock's fit room did move: 92% of
+both axes (its own search) became the component's `MARGIN = 0.88`, so the
+digits render at 85% of the panel width (x=144..1772) instead of 92%;
+with no font package the digits now use `ui_text.face`'s scalable default
+rather than a small line at (20, 20).
+
+Tests: `tests/test_panel.py`'s `MIGRATED` set gained `renderers/clock.py`
+(the anti-drift rule: no PIL, no `_autofit`, no hex, no `ACCENT`) plus
+`ClockCardTest` (the page role at (0,0), zero `(0,0,0)` pixels, ink on both
+sides of the middle, an operator colour/background honoured);
+`tests/test_touch_confidence.py` gained `TestComponentMigration` (7 tests:
+no PIL/`font_for`/hex, the accent bar is the slot, the title wears
+`ink-strong`, `attention` on a hit, `alert` on an error, `muted-soft`
+instructions, `faint` for no regions) and every colour test also asserts
+the old literal is absent from the frame.
+
+Fail-before probes, deterministic (`git show HEAD:<file> | grep -n`):
+`clock.py` lines 5 `from PIL`, 18 `def _autofit`, 49 the call;
+`touch_confidence_draw.py` lines 12 `from PIL`, 19 `def font_for`,
+42 `#50DC78`, 64 `(180, 180, 190)`, 95 `(140, 140, 150)`,
+118 `(255, 255, 160)`, 133 `(255, 150, 150)`. None of those five literals
+is any palette role's value (`(255, 255, 160) in palette values -> False`,
+same for the other four), so every "the old literal is gone" assertion was
+red on HEAD, and the gate reported "2 stale exemption(s)" until the two
+entries left `EXEMPTIONS`.
+
 ### 3. The shared chrome, composed at load time — `html-templates/_chrome.html`
 
 **litehtml has no `@import` and a template cannot inherit from another**, so
@@ -704,11 +758,12 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   only owner, and `accent_for` resolves the slot through the renderer
   entry. A plugin from outside this tree may still declare its own
   `ACCENT`, which is honoured ahead of the slot.
-- **The card vocabulary could still pull more views**: `feed_health`'s
-  cold-start/error cards and `beads_detail_card` are a title plus a body,
-  and `touch_confidence_draw`'s bar/title/diagnostics is the other obvious
-  pull (`panel` + `stat` now cover it). Left because each is a bigger
-  surface than the three card views and needs its own test story.
+- ~~**The card vocabulary could still pull more views**~~ — **partly done
+  this increment** (section 2i): `touch_confidence_draw`'s bar/title/
+  diagnostics is now `panel.bar` + `panel.block`. `feed_health`'s
+  cold-start/error cards and `beads_detail_card` are still a title plus a
+  body, left because each is a bigger surface than the three card views
+  and needs its own test story.
 - **The band still has two definitions, one per rendering path**: the shared
   stylesheet's `.frame`/`.head`/`.title`/`.rule`/`.foot` rules for
   templates, and `ui/shell.py`'s constants for the Pillow views. That is one
@@ -730,14 +785,15 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   20px) instead of three 69px ones (12px floor), `cols` is a real param,
   and `picker_regions` generates the matching tap rects. A dedicated
   narrow-band renderer is no longer needed.
-- **The remaining hand-drawing views** (the gate's 16 exemptions) are the
+- **The remaining hand-drawing views** (the gate's 14 exemptions) are the
   bigger migration: `beads*`, `macbook_draw`/`macbook_strip`,
-  `qr`/`qr_common`, `reload`, `stream`, `clock`, `retro_grid_draw`,
-  `touch_confidence_draw`, `life`, `playlist`/`playlist_bar` and the two
+  `qr`/`qr_common`, `reload`, `stream`, `retro_grid_draw`,
+  `life`, `playlist`/`playlist_bar` and the two
   `_html_*` non-views. The vocabulary they need all exists now (`tile` +
   `grid`, `text` + `wrap` + `fit_size`, `shell`, `stat` + `list_row`,
   `panel`), so each is a straight migration with its own test story, not
-  new design.
+  new design. `clock` and `touch_confidence_draw` left the list this
+  increment (section 2i).
 - **Layout-mode taps.** While a layout owns the panel the touch service
   evaluates global regions only (view-scoped regions are skipped), so a
   band's tiles need global `touch.json` entries at the band geometry
@@ -755,8 +811,8 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   an exempt view, so they go with that view's migration.
 - **Hand-drawn views still sit under the badges.** `ui.shell` now keeps
   the band clear of the home/sleep badges (§2h), but a view that draws at
-  its own `PAD` (beads, macbook, qr, reload, stream, clock, retro_grid,
-  touch_confidence, life) is still covered by the home badge in the top
+  its own `PAD` (beads, macbook, qr, reload, stream, retro_grid,
+  life) is still covered by the home badge in the top
   160px of the panel. Fixing each one is part of its own migration, which
   is exactly why the band's version went into the component.
 - **A layout switch still shows the panel fill in region by region.**
@@ -790,7 +846,7 @@ Full objective suite (the stop-condition command), after this increment:
         tests.test_unified tests.test_chat tests.test_html \
         tests.test_html_runtime_install tests.test_control tests.test_options \
         tests.test_layout && python3 tools/check-lines.py
-    component layer ok: 17 shipped module(s) still draw by hand; all exempt, none stale
+    component layer ok: 14 shipped module(s) still draw by hand; all exempt, none stale
     Ran 331 tests in 52.8s
     OK
     line budget ok: all source files within 250 lines
@@ -1628,6 +1684,50 @@ whose old colours the four inequalities above prove are not the tokens.
 reason that the two views are declared `full` there, so
 `POST /layout {"preset": "split-50-50", ...}` is a 400.
 
+### The clock and the touch-confidence frame, rendered headless (this increment)
+
+    $ DISPLAYD_FAKE_FB=1 python3 /tmp/component_evidence.py
+    daemon: DISPLAYD_FAKE_FB=1 http://127.0.0.1:58654
+    display: {'width': 1920, 'height': 1080, 'bpp': 32, 'stride': 7680, 'fb_blank': 0, 'backlight': {'available': False}}
+    panel: 1920x1080  badge strip=160  badge fill=(13, 17, 28)
+
+    == clock: one headline, not its own fit search ==
+      background is the page role at (0,0): True ((7, 8, 12))
+      old view-local black (0,0,0) pixels: 0
+      strong-ink pixels: 274353  span x=144..1772 (panel 1920)
+      centred: ink on both sides of the middle: True
+      fitted: span 85% of the panel
+      switch -> clock, first_pixel_ms=7.5
+
+    == touch_confidence: components + palette roles ==
+      accent bar at (240,8): (80, 220, 120) (slot (80, 220, 120) = the old literal #50DC78: True)
+      title ink-strong pixels: 30475  muted-soft: 5627  faint: 0
+      badge tiles drawn over the frame (home [0, 0, 160, 160], sleep [1760, 0, 160, 160]): True
+      after a hit: attention last-tap ((255, 180, 80)) pixels: 2279  old (255,255,160) pixels: 0
+      after an error: alert ((214, 74, 74)) pixels: 1710  old (255,150,150): 0
+      accent chips ((127, 209, 255)) pixels: 721  old (160,200,255): 0
+
+    == the four layout styles, with the system buttons ==
+      full                   regions=1 renderers=['clock'] badge px=29416 first_pixel_ms=2.4
+      split-50-50            regions=2 renderers=['clock', 'picker'] badge px=29416 first_pixel_ms=4.1
+      split-50-50-columns    regions=2 renderers=['clock', 'options'] badge px=29416 first_pixel_ms=6.3
+      15-70-15               regions=3 renderers=['picker', 'clock', 'picker'] badge px=29416 first_pixel_ms=6.3
+
+    == system buttons over a template view (html/status) ==
+      error card absent (alert-page (28, 10, 14) pixels: 0)
+      accent ((127, 209, 255)) pixels: 1975  panel ((22, 27, 34)) pixels: 22386
+      badge fill pixels (both buttons over the template): 29416
+
+    frames saved under /tmp/comp-evi-*.png
+
+Every claim is a pixel count or a role comparison, not a screenshot
+opinion: the clock's background is the `page` token and holds zero
+`(0,0,0)` pixels; its ink sits on both sides of the middle and spans 85%
+of the panel; the touch frame's accent bar is the view's palette slot
+(byte-identical to the literal it used to carry), the five old literals
+count zero pixels while their roles count thousands; every layout style
+and the html/status template keep both badges (29416 `badge` pixels).
+
 ## 8. The branch and the pull request — opened this increment
 
 Iterations 1-12 never pushed anything: the remote had no
@@ -1655,6 +1755,12 @@ last increment must push too, otherwise the PR stops at the state before
 it. `notes.md` inside the repo is the PR-readable record, so it should stay
 updated even when the PR body itself is not rewritten.
 
+The next increment (section 2i) followed that rule: `git push origin
+gnhf/objective-coalesce-t-0df99b-1` moved the remote ref `8dae35d..bb01922`,
+so the PR now shows iteration 13's record commit as its tip. The working
+tree of section 2i itself is uncommitted by design and reaches the PR with
+the next increment's push.
+
 ### The PR-body summary it published
 
 The body states: the token layer, the load-time template composition, the
@@ -1672,8 +1778,8 @@ touched.
 The command above exits zero as of this increment. Its exact output:
 
     $ python3 tools/check-components.py && python3 -m unittest tests.test_picker tests.test_unified tests.test_chat tests.test_html tests.test_html_runtime_install tests.test_control tests.test_options tests.test_layout && python3 tools/check-lines.py
-    component layer ok: 16 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 331 tests in 52.421s
+    component layer ok: 14 shipped module(s) still draw by hand; all exempt, none stale
+    Ran 331 tests in 52.560s
     OK
     line budget ok: all source files within 250 lines
 
@@ -1682,11 +1788,11 @@ budget line plus `ok: no generated native artifacts tracked` and the
 component line.)
 
 That is a **floor, not the finish line**:
-the gate is a ratchet with 16 exemptions, most views still hand-draw, and
+the gate is a ratchet with 14 exemptions, most views still hand-draw, and
 the component vocabulary exists (`system_buttons`, `ui.tile` + `ui.grid`,
 `ui.shell` + `ui.stat` + `ui.text`, `ui.panel`, and the `ui.base.chain`
 primitive) but the larger views (`beads*`, `macbook_*`, `qr`,
-`reload`, `stream`, `clock`, `retro_grid`, `touch_confidence`, `life`)
+`reload`, `stream`, `retro_grid`, `life`)
 have not been migrated onto it. What is left is those migrations, the
 control page's style picker, the layout-mode tap entries, and the layout
 composite seam recorded in "Still owed". The stop condition became

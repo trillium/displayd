@@ -537,7 +537,7 @@ that only survives polite input is not a budget.
 | `renderers/ui/tile.py` | the tile component: box geometry, label fit, the markup half and the drawing half |
 | `renderers/ui/grid.py` | the grid of tiles: the column count (shape-derived when no `cols` is given) and the row-major rects, asked by the picker and the options name grid alike |
 | `renderers/ui/shell.py`, `renderers/ui/stat.py`, `renderers/ui/text.py` | the band a Pillow view wears (inset clear of the badges via `band_pad`), the label/value row and its meter, and the layer's one font/measure/fit rule plus `fit_size` (the template path takes its band from the shared stylesheet instead) |
-| `renderers/ui/panel.py` | the panel component: a titled region with a body -- one scale-to-fit rule, a centred headline and body, the corner tag and the accent bar (`notice`, `text`, `sleep` are composers over it) |
+| `renderers/ui/panel.py` | the panel component: a titled region with a body -- one scale-to-fit rule, a centred headline and body, the corner tag and the accent bar (`notice`, `text`, `sleep`, `clock` are composers over it; `touch_confidence` composes its lines and its region boxes from `panel` + `tile`) |
 | `html-templates/dock.html` | the apps dock strip under the home screen |
 | `renderers/unified_dock.py` | dock feed state -> the strip's variables + composite |
 | `html-templates/options.html` | the selection screen: chrome plus one name layer |
