@@ -5,6 +5,68 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.8.0
+
+The chat panel is the two-pane panel the captain asked for: the viewers in the
+channel on the left, the chat on the right, and user-join events on the chat
+stream itself (task-vd6qk, task-3yep9).
+
+**Presence needed a source, and the documented one was wrong.** The scout
+report and the beads both point at `GET /api/v1/viewers`, so it was read off the
+Firebot 5.66.7 tree rather than trusted: that endpoint is the viewer DATABASE
+(`getAllUsernamesWithIds` projects `{_id, username, displayName}` over
+`{twitch: true}`), every viewer Firebot has ever recorded, with no presence
+field at all. Drawing it under "who is here now" would have fabricated
+presence. `GET /api/v1/viewers/export` is the same documents unprojected, so
+each one carries Firebot's own `online` flag -- the one `ActiveUserHandler`
+flips on a 450 s TTL, fed by the Helix chatter poll every 5 minutes and by every
+chat message. That is Firebot's own answer to "who is presently in the channel",
+and its TTL is the documented lag: an arrival shows as soon as Firebot sees the
+user, a quiet departure within ~7.5 minutes. It is the whole viewer database, so
+it is the wrong poll on a large channel; `--roster-url` points the poll
+elsewhere.
+
+`bridges/firebot_roster.py` owns that read and its two pure halves (the export
+payload -> a roster, and a roster diff -> arrivals). The bridge runs one poll per
+cycle in a thread beside the socket (default 10 s) and pushes BOTH answers off
+that SINGLE read: the snapshot to `/feed/chat/roster`, and each arrival to
+`/feed/chat/message` as a join event, so the panel interleaves joins with
+messages by arrival and never holds two answers to the same question. Joins are
+announced, departures are not -- the roster pane drops them, and the request
+named joins. A failed read keeps the last-known roster (a blip must not
+re-announce the channel), the first read only establishes a baseline (a restart
+must not either), and the bridge logs the failure without taking the socket down.
+
+`renderers/chat.py` is a template surface now, drawn by litehtml from
+`html-templates/chat.html` with the geometry in `renderers/chat_panes.py` and
+the text fitting in `renderers/chat_fit.py`, so the panel reads across a room and
+its rows are measured rather than hoped for. Every pushed display name and
+message is escaped into the one `{{panes|raw}}` slot, and the only colours there
+come from palette tuples the screen already parsed. Roster rows are
+alphabetical with a `+N more` overflow row, the pane head's count is the same
+number the pane draws, and a roster whose pushes stopped says `ROSTER STALE`
+with the age instead of showing last-known presence as live.
+
+Retention is untouched and re-pinned: a message leaves state only on a
+moderation delete, never for age or count, and join events are retained the same
+way. Only the visible window is screen-bounded, budgeted from the newest event
+backwards so the line that just arrived is always on screen -- which also fixes
+the old loop's quiet failure of drawing past the bottom and cutting the newest
+message off. With nothing pushed at all the panel still says `waiting for chat`
+and draws no panes around it (project-a4t.8.1).
+
+The chat view therefore needs the built engine, exactly as `html`, `picker`,
+`options` and the home screen do; without it the panel shows the red build card.
+`bridges/firebot_roster.py` joins `bridges/mac-set.manifest`, so
+`bridges/install-mac.sh` deploys it with the bridge it belongs to -- until the
+MacBook's bridge is reinstalled the panel honestly shows no roster rather than a
+stale one.
+
+Minor bump: a new user-visible feature (the two-pane panel and join
+events) landing after 0.7.0. No public endpoint shape changed, no other
+view's behaviour changed, and the chat view's own contract only gained an
+input (`roster`) and a flag (`join` on `message`).
+
 ## 0.7.0
 
 The panel's UI shell renders through litehtml. The chrome every view sits

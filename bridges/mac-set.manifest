@@ -41,6 +41,7 @@ talon_apps.py             job:com.displayd.talon-apps-bridge
 talon_windows.py          lib:com.displayd.talon-apps-bridge
 firebot_chat.py           job:com.displayd.firebot-chat-bridge
 firebot_wire.py           lib:com.displayd.firebot-chat-bridge
+firebot_roster.py         lib:com.displayd.firebot-chat-bridge
 beads_activity.py         job:com.displayd.beads-activity-bridge
 beads_activity_events.py  lib:com.displayd.beads-activity-bridge
 beads_activity_cli.py     lib:com.displayd.beads-activity-bridge

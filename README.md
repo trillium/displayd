@@ -38,11 +38,11 @@ through `GET /renderers`.
 * Python 3.8+.
 * [Pillow](https://python-pillow.org/) — used by the daemon and by the bundled
   renderers.
-* Optional, for the [`html` renderer](#html-renderer-litehtml) only: a
-  C++ toolchain, to build the bundled layout engine once with
-  `tools/build_litehtml.sh`. `install.sh` invokes it through
-  `tools/install_html_runtime.sh`; nothing else here needs a compiler
-  (`DISPLAYD_SKIP_HTML=1` opts out, and the view then draws a build card).
+* Optional, for the views drawn by the layout engine (`html`, `picker`, the
+  merged home screen, `options`, `chat`): a C++ toolchain, to build the bundled
+  layout engine once with `tools/build_litehtml.sh`. `install.sh` invokes it
+  through `tools/install_html_runtime.sh`; nothing else here needs a compiler
+  (`DISPLAYD_SKIP_HTML=1` opts out, and those views then draw a build card).
 * For screen power control: a `/sys/class/backlight/*` device is used when
   present. Without one, blanking still works but the panel backlight is not
   touched.
@@ -175,6 +175,13 @@ advertised by `GET /renderers`, and pushes go to `POST /feed/<renderer>/<input>`
     curl -s -X POST localhost:8980/feed/chat/message -H 'Content-Type: application/json' \
       -d '{"author":"someone","text":"hello wall"}'
 
+The chat panel takes three of them: `message` (one line, or a join event with
+`"join": true`), `delete` (retract one line by id), and `roster` (the present
+viewers, `{"viewers":[{"id","username","display_name"}],"ts"}`):
+
+    curl -s -X POST localhost:8980/feed/chat/roster -H 'Content-Type: application/json' \
+      -d '{"viewers":[{"id":"1","username":"ada","display_name":"Ada"}],"ts":0}'
+
 A payload is validated against the input schema and rejected with HTTP 400 if
 it does not fit -- without disturbing whatever is on screen. Inputs buffer
 even while their view is not selected, so switching to the view later is
@@ -223,7 +230,7 @@ evidence for later human-guided work, not a control loop.
 | `life` | no | `cell`, `density`, `speed` |
 | `notice` | yes | `title` (required), `body`, `severity` (`info`/`warn`/`critical`), `color`, `background` |
 | `reload` | yes | `sha` (required, full 40-char deployed commit SHA; QR encodes its commit page), `highlights` (optional bounded commit-message summary, drawn as text only, never in the QR) |
-| `chat` | no | `title`, `lines` (default 7), `background` — inputs: `message`, `delete` |
+| `chat` | no | `title`, `lines` (default 7), `background`, `color` — inputs: `message` (a line, or a join event with `join: true`), `delete`, `roster` (present viewers); two panes, needs the native engine built once, see [docs/HTML_RENDERER.md](docs/HTML_RENDERER.md) |
 | `stream` | no | `url` (snapshot JPEG to poll), `fps` (0.5–5, default 2), `fit` (cover/contain/stretch), `background`, `label` — inputs: `frame` (`{data}` base64 or `{url}`) |
 | `retro_grid` | no | `boxes` (per-cell `label`/`text` or `image` file-or-URL + `color`/`text_color`/`text_size`), `columns`/`rows` (default 4/3), `gutter`, `border`, `background`, `flash_seconds` — input: `tap` (`{cell,label,id,region,x,y}`); tap wiring in `touch-retro-grid.json.example`, see TOUCH.md "Retro grid wiring" |
 | `html` | no | `template` (file name in the template root, default `layout.html`), `vars` (values for `{{placeholders}}`), `background` — input: `vars`; needs the native engine built once, see [docs/HTML_RENDERER.md](docs/HTML_RENDERER.md) |
@@ -274,9 +281,18 @@ the picks and the way back; the picker SELECTS. Its single `{{names|raw}}` slot
 is renderer-filled, and every caller-supplied view name is escaped before it
 goes in.
 
-The engine is optional and lazily loaded, so the daemon and `GET /renderers`
-work unchanged without it — the view explains how to build it instead of going
-missing. `install.sh` and `deploy.sh` both run `tools/install_html_runtime.sh`,
+The `chat` panel is the two-pane one: a present-viewer roster column beside
+the chat column (`html-templates/chat.html`, geometry in
+`renderers/chat_panes.py`, text fitting in `renderers/chat_fit.py`), with one
+`{{panes|raw}}` slot this repo fills and every pushed display name and message
+escaped before it goes in. With nothing pushed it draws no panes at all and
+says it is waiting.
+
+So the surfaces drawn by the engine are `html`, `picker`, the merged home
+screen (picker + dock), `options` and `chat`. The engine is still optional and
+lazily loaded, so the daemon and `GET /renderers` work unchanged without it --
+each of those views explains how to build it instead of going missing.
+`install.sh` and `deploy.sh` both run `tools/install_html_runtime.sh`,
 which delivers the engine, its sources and licences, and the templates, then
 verifies the set (`--check` never builds). The running daemon answers the same
 question from `GET /state`'s `html` key. Build it by hand with:
@@ -375,6 +391,18 @@ message id, and forwards retractions to `/feed/chat/delete`. No credential:
 the socket needs none. It runs as its own unit:
 
     sudo systemctl enable --now firebot-chat-bridge
+
+Presence rides a second loop in the same process: once every
+`--roster-interval` seconds (default 10) it reads Firebot's own viewer list
+with one GET (`bridges/firebot_roster.py` documents which endpoint and why),
+and pushes both answers off that single read -- the roster pane's snapshot to
+`/feed/chat/roster`, and each arrival to `/feed/chat/message` as a join event.
+A failed read is a warning and the last-known roster is kept, so a bridge blip
+never re-announces everybody. `--roster-url` points the poll at a lighter
+shim; the endpoint it replaces returns the whole viewer database, which is
+fine for a small channel and the wrong thing for a large one. The deployed
+bridge is reinstalled with `bridges/install-mac.sh`; until it is, the panel
+honestly shows no roster rather than a stale one.
 
 ## Touch input (`touch.py`)
 

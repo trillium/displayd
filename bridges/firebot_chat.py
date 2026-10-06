@@ -9,7 +9,19 @@ that stream and pushes messages across the tailnet into displayd's feed API::
 
 The bridge owns the vendor protocol; displayd stays content-agnostic and only
 ever sees validated ``{author, text, ...}`` payloads on ``/feed/chat/message``
-(plus ``{messageId}`` retractions on ``/feed/chat/delete``).
+(plus ``{messageId}`` retractions on ``/feed/chat/delete``), and the present
+viewer list on ``/feed/chat/roster``.
+
+Presence comes from a second, slower loop beside the socket: one GET of
+Firebot's own viewer list per cycle (``firebot_roster.py`` explains which
+endpoint and why), and that single read answers both questions the panel asks
+-- the roster the left pane draws, and the arrivals that ride the chat feed as
+join events. Joins are announced; departures are not (the roster pane drops
+them, and the request named joins).
+
+By default the roster GET goes to the same host and port as the overlay socket
+(``--firebot-host``/``--firebot-port``, so ``FIREBOT_HOST`` moves both: one web
+server serves Firebot's REST API and its socket). ``--roster-url`` overrides it.
 
 Protocol notes (from the Firebot scout report -- do not re-derive):
   * hello is ``overlay-connected`` with ``{"instanceName": "Stream 1080p"}``;
@@ -30,6 +42,7 @@ import logging
 import os
 import random
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -39,6 +52,7 @@ LOG = logging.getLogger("firebot-chat-bridge")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import firebot_wire as _wire
+import firebot_roster as _roster
 
 # Re-exported for backwards compatibility (Firebot upstream wire protocol
 # lives in firebot_wire.py; the bridge lifecycle below is the only
@@ -63,14 +77,25 @@ BACKOFF_FIRST = 1.0
 BACKOFF_MAX = 30.0
 SEEN_CAP = 1000
 
+# How often the viewer list is read. Firebot's own presence TTL is 7.5
+# minutes (a 5-minute Helix chatter poll, plus chat activity), so a tighter
+# cadence buys nothing but load, and a slower one delays a join showing up.
+ROSTER_INTERVAL = 10.0
+
 
 # ---- bridge ------------------------------------------------------------------
 
 class Bridge:
-    def __init__(self, firebot_host, firebot_port, displayd_base):
+    def __init__(self, firebot_host, firebot_port, displayd_base,
+                 roster_url=None, roster_interval=ROSTER_INTERVAL):
         self.firebot_host = firebot_host
         self.firebot_port = firebot_port
         self.displayd_base = displayd_base.rstrip("/")
+        self.roster = _roster.Roster(roster_url or _roster.url_for(
+            firebot_host, firebot_port))
+        self.presence = _roster.Presence(self.roster, self.post,
+                                         roster_interval)
+        self.roster_interval = float(roster_interval)
         self.seen = set()
         self.seen_order = []
         self.connects = 0
@@ -170,6 +195,11 @@ class Bridge:
 
     def run_forever(self, stop=None):
         self.check_firebot()
+        # Presence rides its own thread: the socket half keeps running
+        # whether or not a viewer-list read works.
+        presence = threading.Thread(target=self.presence.forever, args=(stop,),
+                                    name="firebot-roster", daemon=True)
+        presence.start()
         backoff = BACKOFF_FIRST
         while True:
             if stop is not None and stop():
@@ -200,6 +230,7 @@ def main(argv=None):
                     help="Firebot port (default: %(default)s)")
     ap.add_argument("--displayd", default=os.environ.get("DISPLAYD_BASE", "http://100.81.88.113:8980"),
                     help="displayd base URL (default: %(default)s)")
+    _roster.add_arguments(ap)
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -207,7 +238,9 @@ def main(argv=None):
     if not args.firebot_host or not args.displayd:
         ap.error("firebot host and displayd base URL are required")
         return 2
-    Bridge(args.firebot_host, args.firebot_port, args.displayd).run_forever()
+    Bridge(args.firebot_host, args.firebot_port, args.displayd,
+           roster_url=args.roster_url,
+           roster_interval=args.roster_interval).run_forever()
     return 0
 
 

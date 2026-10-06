@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<!--
+  The chat surface: the shared panel chrome (header bands, footer band)
+  plus ONE addition -- a two-pane layer, because a roster column beside a
+  chat column cannot be expressed as text variables. It is drawn by
+  renderers/chat.py through renderers/_chat_panes.py, which places every
+  pane, row and line at panel pixels it computed, so the row the geometry
+  budgeted for and the row that is drawn are the same numbers.
+
+  Left is the roster: who is in the channel now, from the bridge's single
+  roster read (POST /feed/chat/roster). Right is the chat: messages and
+  join events, newest at the bottom, from POST /feed/chat/message. With
+  nothing pushed at all there are NO panes -- the notice says the panel is
+  waiting, which is the healthy idle state (project-a4t.8.1), not a bug.
+
+  VARIABLE CONTRACT -- every slot this surface draws, with the "an empty
+  value collapses the slot" rule. Pinned against _chat_panes.chrome() by a
+  test, so the file and the renderer cannot drift apart:
+
+      eyebrow      small accent label above the title (DISPLAYD)
+      title        the view's `title` param (CHAT)
+      status       the roster's state at the right of the header:
+                   "7 HERE" / "NO ROSTER" / "ROSTER STALE"
+      notice       the cold-state line; empty whenever anything is drawn
+      footer       how fresh that roster is ("roster just now")
+      footer_right small bottom-right status (litehtml)
+
+      background   panel colour behind everything (a #rrggbb string the
+                   renderer parsed out of the params, never raw caller
+                   text -- so a style attribute here cannot be injected)
+      color        primary text colour, same rule
+      dim          secondary text colour, same rule
+      accent       the eyebrow, the rule under the title, same rule
+      line         pane frame colour, same rule
+
+  plus ONE raw slot:
+
+      {{panes|raw}}   the two pane divs, built by renderers/_chat_panes.py
+
+  The raw slot is the one place a document receives markup, and it is
+  reachable only from a renderer, never from a caller: /show and
+  /feed/html/vars always escape every value, and the only raw value here is
+  pane/row/line divs this repo generates from its own arithmetic over a
+  display name or a message that was escaped before it went in. A pushed
+  chat payload can therefore never add markup -- see
+  renderers/_html_templates.py.
+
+  This view needs the built layout engine, exactly as html, picker, options
+  and the home screen do; without it the panel shows the red
+  "build it: tools/build_litehtml.sh" card instead of the chat.
+
+  Sized for a 1920x1080 panel read from across a room: the title is the
+  biggest type, viewer names are large enough to identify at a distance,
+  and the panes fill the band between the header rule and the footer. Note
+  litehtml drops `gap` on a flex row whose children grow -- spacing here is
+  margins and padding, never `gap`.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { background: #0a0a0e; color: #ebebf0; font-family: sans-serif;
+               height: 100%; }
+  .frame { display: flex; flex-direction: column; height: 100%; }
+  .head { display: flex; justify-content: space-between; align-items: baseline;
+          padding: 30px 176px 0 176px; }
+  .eyebrow { font-size: 26px; font-weight: bold; color: {{accent}}; }
+  .status { font-size: 26px; color: {{dim}}; }
+  .title { font-size: 72px; font-weight: bold; color: {{color}};
+           padding: 8px 176px 0 176px; }
+  .rule { height: 4px; background: {{accent}}; margin: 14px 176px 0 176px; }
+  .notice { font-size: 40px; color: {{dim}}; text-align: center;
+            margin: 140px 176px 0 176px; }
+  .foot { display: flex; justify-content: space-between; align-items: baseline;
+          margin-top: auto; padding: 0 176px 24px 176px; }
+  .foot .l { font-size: 24px; color: {{dim}}; }
+  .foot .r { font-size: 24px; color: {{dim}}; }
+  .layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+  .pane { position: absolute; background: #11141b;
+          border: 2px solid {{line}}; }
+  .ph { position: absolute; font-weight: bold; color: {{dim}}; }
+  .note { font-weight: normal; color: {{dim}}; }
+  .row { position: absolute; color: {{color}}; }
+  .dim { color: {{dim}}; }
+  .ln { position: absolute; color: {{color}}; }
+  .b { font-weight: bold; }
+</style>
+</head>
+<body style="background: {{background}}; color: {{color}};">
+  <div class="frame">
+    <div class="head">
+      <div class="eyebrow">{{eyebrow}}</div>
+      <div class="status">{{status}}</div>
+    </div>
+    <div class="title">{{title}}</div>
+    <div class="rule"></div>
+    <div class="notice">{{notice}}</div>
+    <div class="foot">
+      <div class="l">{{footer}}</div>
+      <div class="r">{{footer_right}}</div>
+    </div>
+  </div>
+  <div class="layer">{{panes|raw}}</div>
+</body>
+</html>

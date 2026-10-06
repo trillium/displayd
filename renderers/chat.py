@@ -1,44 +1,70 @@
-"""Rolling chat window, sized to read across a room on a 1920x1080 panel.
+"""Two-pane chat: the viewers in the channel on the left, the chat on the
+right, sized to read across a room on a 1920x1080 panel.
 
 Fed live while running -- or while idle -- through POST /feed/chat/message
-(one chat line) and POST /feed/chat/delete ({messageId} retraction). Inputs
-pushed while another view is selected accumulate in the daemon's feed cache,
-so switching here is instantly populated, never empty.
+(one chat line, or a join event with ``"join": true``) and POST
+/feed/chat/delete ({messageId} retraction). Inputs pushed while another view
+is selected accumulate in the daemon's feed cache, so switching here is
+instantly populated, never empty.
 
-Ambient-first: scroll retention matters more than feature count. No emote
-image downloads in v1 -- message text plus cheap role/badge tags only.
+Presence arrives on its own input: POST /feed/chat/roster carries the current
+viewer list, and the left pane draws it. Neither the join events nor the pane
+is fetched here -- ``bridges/firebot_roster.py`` polls Firebot ONCE per cycle
+and pushes both off that single read, so the panel never talks to a vendor
+protocol and never holds two answers to the same question.
+
+Retention is unchanged and pinned (project-a4t.8): a message leaves state only
+on a moderation delete, never for age or count. The visible window is
+screen-bounded here, budgeted from the newest event backwards so the line that
+just arrived is always on screen. With nothing pushed at all the panel says it
+is waiting (project-a4t.8.1) rather than framing an empty roster column.
+
+The panel is drawn by litehtml from ``html-templates/chat.html`` with the
+geometry in ``renderers/chat_panes.py`` (and the text fitting in
+``renderers/chat_fit.py``), so this view needs the built engine exactly as the
+html, picker, options and home views do; without it the panel shows the red
+"build it" card instead of the chat.
 """
 
-import textwrap
+import os
+import sys
 import time
 
-from PIL import ImageDraw, ImageFont
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import _html_error
+import _html_native
+import _html_templates as templates
+import chat_panes as panes
 
 NAME = "chat"
-DESCRIPTION = "Rolling chat window fed live (POST /feed/chat/message)"
+DESCRIPTION = ("Two-pane chat: present-viewer roster + rolling messages "
+               "(POST /feed/chat/message, /feed/chat/roster)")
 STATIC = False
 PARAMS = {
     "title": {"type": "string", "help": "header text, default CHAT"},
     "lines": {"type": "integer", "help": "messages on screen, default 7"},
     "background": {"type": "string", "help": "background colour, default near-black"},
+    "color": {"type": "string", "help": "text colour, default near-white"},
 }
 INPUTS = {
     "message": {
         "type": "object",
-        "help": "one chat line: {author, text, ...}",
+        "help": "one chat line, or one join event: {author, text, join}",
         "required": ["author", "text"],
         "properties": {
             "id": {"type": "string"},
             "author": {"type": "string"},
             "display_name": {"type": "string"},
             "text": {"type": "string"},
+            "join": {"type": "boolean"},
             "color": {"type": "string"},
             "badges": {"type": "array"},
             "timestamp": {"type": "number"},
         },
         # Persistent retention: 0 means unbounded -- a message leaves
         # state only on moderation delete, never for age or count. The
-        # visible window stays screen-bounded in _draw via max_lines.
+        # visible window stays screen-bounded in chat_fit.feed_lines.
         "buffer": 0,
     },
     "delete": {
@@ -53,128 +79,162 @@ INPUTS = {
         # (retained) message resurface, so deletes persist too.
         "buffer": 0,
     },
+    "roster": {
+        "type": "object",
+        "help": "the present-viewer snapshot: {viewers:[{id,username,"
+                "display_name}], ts}",
+        "required": ["viewers"],
+        "properties": {
+            "viewers": {
+                "type": "array",
+                "items": {"type": "object",
+                          "properties": {"id": {"type": "string"},
+                                         "username": {"type": "string"},
+                                         "display_name": {"type": "string"}}},
+            },
+            "count": {"type": "integer"},
+            "ts": {"type": "number"},
+        },
+        # A snapshot, not a stream: only the latest one is the truth, so
+        # the buffer is one and a slow pane can never draw a stale list
+        # under a newer count.
+        "buffer": 1,
+    },
 }
 
 POLL = 0.4  # seconds between buffer checks; draws happen only on change
-HEADER_H = 110
-PAD = 48
-AUTHOR_SIZE = 46
-TEXT_SIZE = 44
-LINE_GAP = 14
-
-ROLE_TAGS = (  # cheap badge distinction: (payload flag, tag, colour)
-    ("isMod", "MOD", (255, 80, 80)),
-    ("isVip", "VIP", (200, 120, 255)),
-    ("isSubscriber", "SUB", (90, 200, 255)),
-    ("isFirstChat", "NEW", (120, 220, 120)),
-)
-
-
-def _font(screen, name, size):
-    path = screen.font_path(name)
-    if path is None:
-        return None
-    return ImageFont.truetype(path, size)
+TEMPLATE = "chat.html"
+BUILD_HINT = "build it: tools/build_litehtml.sh"
+# The panel's ink: palette tuples the screen already parsed, never caller
+# text. chat_panes turns them into #rrggbb strings for the document.
+DIM = (140, 160, 190)
+ACCENT = (127, 209, 255)
+LINE = (35, 43, 58)
+TEXT = (235, 235, 240)
+AUTHOR = (120, 200, 255)
+JOIN = (120, 220, 150)
 
 
 def _snapshot(screen):
-    """Current view of the world: ordered unique messages minus retractions."""
+    """Current view of the world: ordered unique events minus retractions.
+
+    Joins arrive on this same input (the bridge flags them), so this is the
+    one ordered timeline the panel draws and the order is arrival order --
+    no second clock, and no second feed to interleave.
+    """
     seen = {}
-    for msg in screen.get_input("chat", "message"):
+    for msg in screen.get_input(NAME, "message"):
         if not isinstance(msg, dict):
             continue
         key = msg.get("id") or (msg.get("author"), msg.get("text"))
         seen[key] = msg
     gone = set()
-    for d in screen.get_input("chat", "delete"):
+    for d in screen.get_input(NAME, "delete"):
         if isinstance(d, dict) and d.get("messageId"):
             gone.add(d["messageId"])
     return [m for k, m in seen.items() if k not in gone]
 
 
-def _wrap(draw, text, font, max_w):
-    if font is None:
-        return textwrap.wrap(text, 52)
+def _roster(screen):
+    """(viewers, latest payload). The pane's data, straight off the feed:
+    no fetch here, and a payload that is not one is ignored rather than
+    drawn as an empty room."""
+    pushed = screen.get_input(NAME, "roster")
+    latest = pushed[-1] if pushed else None
+    if not isinstance(latest, dict):
+        return [], None
+    rows = latest.get("viewers")
+    if not isinstance(rows, (list, tuple)):
+        return [], latest
+    return [v for v in rows if isinstance(v, dict)], latest
+
+
+def _key(events, viewers, state, age, max_lines):
+    """Change detector for the poll loop: the frame is a function of the
+    visible window, the roster and how fresh it is. Nothing else redraws,
+    so a quiet panel stays quiet."""
+    visible = [e for e in events[-max(1, int(max_lines)):]]
+    return (
+        tuple((e.get("id"), e.get("join"), len(str(e.get("text") or "")))
+              for e in visible if isinstance(e, dict)),
+        tuple((v.get("display_name"), v.get("username")) for v in viewers),
+        state, None if age is None else int(age // 10), max_lines)
+
+
+def _document(screen, title, events, max_lines, viewers, ink, state, age):
+    """The filled template for this state -- what the panel draws, as text.
+
+    Separated from the render so a test can assert on the document (the
+    escape, the pane markup, the waiting line) without reading pixels.
+    """
+    lay = panes.layout(screen.W, screen.H)
+    words = panes.notice(events, viewers)
+    colours = panes.chrome(ink, title, len(viewers), state, age, words)
+    raw = panes.panes(events, viewers, lay, ink, words, max_lines)
+    document, root = templates.load(TEMPLATE, colours, raw={"panes": raw})
+    return document, root
+
+
+def _frame(screen, title, events, max_lines, viewers, ink, state, age):
+    """One complete frame, or a card if the engine will not draw it. Never
+    raises: a blank panel is indistinguishable from a dead daemon."""
+    bg = tuple(ink["bg"])
     try:
-        avg = draw.textlength("0123456789", font=font) / 10.0
-    except Exception:
-        avg = TEXT_SIZE * 0.55
-    width = max(12, int(max_w / max(avg, 1)))
-    out = []
-    for para in str(text).splitlines() or [""]:
-        out.extend(textwrap.wrap(para, width) or [""])
-    return out[:3]  # cap a single message at 3 rows: retention over completeness
+        document, root = _document(screen, title, events, max_lines, viewers,
+                                   ink, state, age)
+        image, _height = _html_native.render(
+            document, screen.W, screen.H, background=bg, root=root)
+        canvas = screen.new_image(bg)
+        canvas.paste(image, (0, 0))
+        return canvas
+    except templates.TemplateError as err:
+        return _html_error.error_frame(screen, "chat: " + str(err),
+                                       "fix the template, then re-show")
+    except _html_native.NativeMissing as err:
+        return _html_error.error_frame(screen, "chat: " + str(err), BUILD_HINT)
+    except _html_native.HtmlRenderError as err:
+        return _html_error.error_frame(screen, "chat: " + str(err),
+                                       "template parsed but would not draw")
+    except Exception as err:  # never a blank panel, whatever happens
+        return _html_error.error_frame(screen, "chat: %s" % err,
+                                       "the chat could not draw")
 
 
-def _draw(screen, title, messages, max_lines, bg):
-    img = screen.new_image(bg)
-    draw = ImageDraw.Draw(img)
-    author_font = _font(screen, "DejaVuSans-Bold", AUTHOR_SIZE)
-    text_font = _font(screen, "DejaVuSans", TEXT_SIZE)
-    head_font = _font(screen, "DejaVuSans-Bold", 54)
+def _ink(fg, bg=(10, 10, 14)):
+    """The panel's palette for one run. One dict, so a colour is resolved once
+    and the pane layer cannot disagree with the chrome."""
+    return {"bg": bg, "text": fg, "dim": DIM, "accent": ACCENT, "line": LINE,
+            "author": AUTHOR, "join": JOIN}
 
-    # Header: title + live count.
-    draw.text((PAD, 26), title, font=head_font or text_font, fill=(255, 255, 255))
-    count = "%d in view" % len(messages[-max_lines:])
-    if head_font is not None:
-        draw.text((screen.W - PAD - draw.textlength(count, font=text_font),
-                   40), count, font=text_font, fill=(140, 140, 150))
-    draw.line([(PAD, HEADER_H - 14), (screen.W - PAD, HEADER_H - 14)],
-              fill=(60, 60, 70), width=2)
 
-    y = HEADER_H
-    max_text_w = screen.W - 2 * PAD
-    for msg in messages[-max_lines:]:
-        author = str(msg.get("display_name") or msg.get("author") or "???")
-        acolor = screen.color(msg.get("color"), (120, 200, 255))
-        tags = []
-        for flag, tag, tcolor in ROLE_TAGS:
-            if msg.get(flag):
-                tags.append((tag, tcolor))
-        x = PAD
-        if author_font is not None:
-            for tag, tcolor in tags:
-                draw.text((x, y), "[" + tag + "] ", font=text_font, fill=tcolor)
-                x += draw.textlength("[" + tag + "] ", font=text_font)
-            draw.text((x, y), author, font=author_font, fill=acolor)
-            x += draw.textlength(author + "  ", font=author_font)
-        else:
-            prefix = "".join("[%s] " % t for t, _ in tags) + author + ": "
-            draw.text((x, y), prefix, fill=acolor)
-            x += 10
-        rows = _wrap(draw, msg.get("text", ""), text_font, max_text_w - (x - PAD))
-        if author_font is not None and rows:
-            draw.text((x, y), rows[0], font=text_font, fill=(235, 235, 240))
-            rows = rows[1:]
-        for row in rows:
-            y += TEXT_SIZE + 6
-            draw.text((PAD + 40, y), row, font=text_font, fill=(235, 235, 240))
-        y += AUTHOR_SIZE + LINE_GAP
-        if y > screen.H - 60:
-            break
-
-    if not messages:
-        idle = "waiting for chat \u2014 feed a message to wake this view"
-        draw.text((PAD, HEADER_H + 40), idle, font=text_font, fill=(120, 120, 130))
-    return img
+def _draw(screen, title, messages, max_lines, bg, roster=(),
+          fg=TEXT, state="none", age=None):
+    """One complete frame of the two panes. Kept as the drawing entry point
+    the panel and the tests call."""
+    return _frame(screen, title, list(messages or []), max_lines,
+                  list(roster or []), _ink(fg, bg), state, age)
 
 
 def run(screen, params, stop):
-    title = str(params.get("title") or "CHAT")
+    params = params or {}
+    title = str(params.get("title") or panes.TITLE)
     try:
         max_lines = max(1, min(12, int(params.get("lines") or 7)))
     except (TypeError, ValueError):
         max_lines = 7
     bg = screen.color(params.get("background"), (10, 10, 14))
+    fg = screen.color(params.get("color"), TEXT)
+    ink = _ink(fg, bg)
 
-    last_key = None
+    last_key = object()
     while not stop.is_set():
-        messages = _snapshot(screen)
-        key = (len(messages),
-               messages[-1].get("id") if messages else None,
-               len(screen.get_input("chat", "delete")))
+        events = _snapshot(screen)
+        viewers, pushed = _roster(screen)
+        state, age = panes.roster_state(pushed, time.time())
+        key = _key(events, viewers, state, age, max_lines)
         if key != last_key:
             last_key = key
             # One complete frame, one swap: never a partial chat window.
-            screen.present(_draw(screen, title, messages, max_lines, bg))
+            screen.present(_frame(screen, title, events, max_lines, viewers,
+                                  ink, state, age))
         stop.wait(POLL)
