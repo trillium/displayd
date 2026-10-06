@@ -28,7 +28,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from resources_draw import C_BG, _draw
+import theme
+from resources_draw import _draw
 from resources_poll import (
     POLL_DEFAULT_INTERVAL,
     _POLL,
@@ -69,7 +70,7 @@ def _snapshot_key():
 def run(screen, params, stop):
     params = params or {}
     title = str(params.get("title") or "RESOURCES").upper()
-    bg = screen.color(params.get("background"), C_BG)
+    bg = screen.color(params.get("background"), theme.rgb("page"))
     try:
         interval = int(params.get("interval") or POLL_DEFAULT_INTERVAL)
     except (TypeError, ValueError):

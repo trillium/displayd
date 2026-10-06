@@ -38,6 +38,7 @@ import macbook_layout as lay
 import macbook_map
 import macbook_preview as prev
 import mac_preview as bridge
+import theme
 
 PANEL_W, PANEL_H = 1920, 1080
 BG = (10, 10, 14)
@@ -209,9 +210,9 @@ class MapOverlayCase(unittest.TestCase):
         scale, ox, oy = macbook_map.frame(box, PANEL_W, PANEL_H,
                                           top=lay.HDR_H, bottom=PANEL_H)
         r0 = macbook_map.rect(DISPLAYS[0]["bounds"], scale, ox, oy)
-        # Focus rect == full first display: top-edge midpoint is ACCENT.
-        accent = tuple(int(glance.ACCENT[i:i + 2], 16)
-                       for i in (1, 3, 5))
+        # Focus rect == full first display: top-edge midpoint is the
+        # view's palette accent.
+        accent = theme.rgb("macbook")
         self.assertEqual(img.getpixel((int((r0[0] + r0[2]) / 2),
                                        int(r0[1]) + 1)), accent)
         # Pointer dot centre is white fill.

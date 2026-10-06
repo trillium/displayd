@@ -3,6 +3,7 @@
 NAME = "solid"
 DESCRIPTION = "Fill the screen with a single colour"
 STATIC = True
+CAPABILITY = "partial"  # fills whatever region it is given
 PARAMS = {
     "color": {"type": "string", "help": "fill colour, default black"},
 }

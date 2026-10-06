@@ -35,7 +35,8 @@ DEFAULTS = {
         "thickness": 10,  # bar thickness in px at panel resolution
         "direction": "fill",  # fill (empty->full) or drain (full->empty)
         "color": "#FFFFFF",  # default bar colour; per-view color wins,
-        # then renderer ACCENT, then this (see playlist.accent_for)
+        # then a renderer's own ACCENT, then its theme.ACCENT_SLOTS slot,
+        # then this (see playlist.accent_for)
         "tick_seconds": 0.2,  # overlay repaint cadence for parked views
         "views": [],  # [{renderer, params?, dwell?, color?}]
     },

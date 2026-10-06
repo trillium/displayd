@@ -27,6 +27,13 @@ def main():
         print(out)
     else:
         print(out.rstrip())
+    # 3. Component layer: no shipped module draws outside renderers/ui/
+    rc, out = run([sys.executable, 'tools/check-components.py'])
+    if rc != 0:
+        ok = False
+        print(out)
+    else:
+        print(out.rstrip())
     if not ok:
         return 1
     return 0

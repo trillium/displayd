@@ -16,9 +16,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import picker as pk
-import sleep_chrome
 import talon_apps as ta
 import unified_dock as dock_mod
+from ui import system_buttons as buttons
 
 coerce_views = pk.coerce_views  # audit contract: explicit list, else
 # fallback (live-minus-self comes from tile_views with a table)
@@ -27,7 +27,6 @@ NAME = "unified"
 DESCRIPTION = ("Merged home: view tiles plus a live apps dock; "
                "one dock tap opens the merged macbook screen")
 STATIC = False
-ACCENT = "#7BDFF2"
 PARAMS = {
     "views": {"type": "array", "help": "tile views (absent: live "
                                        "set minus this view, max 24)"},
@@ -113,7 +112,7 @@ def unified_regions(w=1920, h=1080, views=None, rect=None, dock=None,
               "action": {"name": "select_view", "view": n}}
              for n, r in zip(views, pk.grid_geometry(grid, len(views),
                                                      gutter=gutter))]
-    return ([sleep_chrome.sleep_region(w, h)] + tiles +
+    return ([buttons.sleep_region(w, h)] + tiles +
             [{"id": "apps-dock", "rect": [int(v) for v in box],
               "action": {"name": "select_view", "view": "macbook"}}])
 

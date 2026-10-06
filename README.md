@@ -109,6 +109,10 @@ publishes an unauthenticated control surface to everything that can route to it.
 | GET | `/renderers` | – | available renderers and their params |
 | GET | `/snapshot` | – | PNG of the last frame presented |
 | POST | `/show` | `{"renderer":"text","params":{...}}` | switch content |
+| POST | `/layout` | `{"regions":[{"name":...,"renderer":...,"height"?/"width"?/"rect"?/"row"?/"col"?...}]}`, or `{"preset":"full"\|"split-50-50"\|"split-50-50-columns"\|"15-70-15","views":{slot:view}?}` | split the panel into static regions, or into a named style; a view that declares itself full-panel-only is refused in a reduced region |
+| GET | `/layout` | – | current layout (null when inactive), including the named style it came from |
+| GET | `/layout/presets` | – | the named styles, their slots, and the views each slot accepts |
+| DELETE | `/layout` | – | clear the layout |
 | POST | `/feed/<renderer>/<input>` | any JSON payload | push validated data into a view |
 | POST | `/notify` | `{"title":...}`, `body`?, `severity`? (`info`/`warn`/`critical`), `duration`? | transient notice, then automatic return |
 | POST | `/reload` | `{"sha":...}`, `highlights`? | reload confirmation (RELOADED + full SHA + scan-confirm QR, plus an optional bounded commit-message summary), stays until a scan or tap confirms it; answers `relay_url` when the phone can reach it |
@@ -268,6 +272,29 @@ what is tappable cannot drift apart. The one markup slot it needs
 so a caller still cannot put markup on the panel — see
 `docs/HTML_RENDERER.md`.
 
+A **tile** — a bounded box with a label — is one component,
+`renderers/ui/tile.py`: the declared-box rule, the label fit, the centring,
+and both a markup half (the picker's grid, the options name layer) and a
+drawing half (a Pillow view's labelled box). Its look is authored once in the
+shared stylesheet with palette tokens, and the component layer is the only
+place a renderer may draw by hand (`tools/check-components.py`).
+
+The band a full-panel view wears is a component too, `renderers/ui/shell.py`
+(title, detail, the health dot and its honest age, the rule under it, the
+footer line), and the label/value rows under it are `renderers/ui/stat.py`
+(`row`, the supporting `body` line, and a clamped `meter` for a fraction of a
+whole). Both draw through `renderers/ui/text.py` — the layer's one font,
+measurement and trim-to-room rule. The two views that used to carry that band
+twice (`resources`, `services`) are now composers over them, and carry no
+colour, font or truncation rule of their own.
+
+A **panel** — a titled region with a body — is `renderers/ui/panel.py`: one
+scale-to-fit rule (the whole block is scaled to the region and never cut), a
+centred headline and body, the corner tag and the accent bar. `notice`, `text`
+and `sleep` are composers over it and hold no font, fitting search or colour
+of their own; the notice's severity is a palette role lookup
+(`accent`/`attention`/`alert`) rather than a fourth copy of red.
+
 The apps dock under the merged home screen is a template too
 (`html-templates/dock.html`), composited into the picker frame inside the rect
 its `apps-dock` tap region covers. It is authored once at the standard dock
@@ -349,6 +376,7 @@ That is the whole extension step. No core edits, no registration, no config.
 | `NAME` | no | API name; defaults to the filename without `.py` |
 | `DESCRIPTION` | no | shown in `GET /renderers` |
 | `STATIC` | no | `True` (default) draws once; `False` loops until `stop` is set |
+| `CAPABILITY` | no | how much panel the view can render into: `full` (default), `partial`, `primary`; surfaced by `GET /renderers` and enforced by `POST /layout` |
 | `PARAMS` | no | parameter schema, surfaced verbatim by `GET /renderers` |
 | `INPUTS` | no | feed schema (`{name: {type, required, properties, buffer, help}}`); pushed payloads are validated and buffered |
 | `run(screen, params, stop)` | yes | does the drawing |
@@ -372,6 +400,12 @@ Compose one complete PIL image and hand it over with a single
 A renderer that raises is recorded in `/state` under `last_error` and does not
 take the daemon down; a plugin that fails to import is reported against its own
 name by `GET /renderers`. Neither stops the other renderers from working.
+
+`CAPABILITY` is a declaration, not a hint: `partial` (and `primary`) say the
+view renders correctly into a region smaller than the panel -- a split half or
+a `15-70-15` band -- and `POST /layout` refuses a `full` view in one of those,
+naming it. An undeclared or misspelled value is `full`, so the safe failure is
+a whole frame rather than a cropped one. See `capability.py`.
 
 ## Bridges: feeding views from the outside world
 
@@ -564,13 +598,17 @@ fill left-to-right, side edges fill bottom-to-top. Thickness defaults to
 animated views directly and is repainted on a short tick (`tick_seconds`,
 default 0.2s) for static views that park after one frame.
 
-The bar wears the page's colours: a renderer may declare an `ACCENT`
-module attribute (`"#rrggbb"`, a colour name, or an `(r, g, b)` tuple)
-and the bar uses it; a per-view `color` in the playlist item overrides it
-(handy for views owned by other tasks), then the playlist-level `color`,
-then a white fallback. The fill always carries a contrast border over a
-dark track, so it reads on dark and light views alike. Renderers that
-declare no `ACCENT` work exactly as before.
+The bar wears the page's colours: a view's accent is its palette slot
+(`theme.ACCENT_SLOTS`, resolved into the renderer entry by
+`renderer_registry` and read by `playlist_color.accent_for`), so a
+shipped view declares no colour of its own. A renderer from outside this
+tree may still declare an `ACCENT` module attribute (`"#rrggbb"`, a
+colour name, or an `(r, g, b)` tuple) to opt in, and a per-view `color` in
+the playlist item overrides either (handy for views owned by other
+tasks); then the playlist-level `color`, then a white fallback. The fill
+always carries a contrast border over a dark track, so it reads on dark
+and light views alike. Renderers with no slot and no `ACCENT` work exactly
+as before.
 
 Rotation yields: a notice or chat-attention transient pauses it (bar
 hidden) and it resumes with a fresh dwell on return; a blanked panel

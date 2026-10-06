@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import macbook_layout as lay
 import macbook_map
 import macbook_preview
-from macbook_glance_color import ACCENT, C_DIM
+import theme
+from macbook_glance_color import C_DIM
 
 
 def draw_map(img, draw, screen, state, preview, meta_font):
@@ -49,8 +50,8 @@ def draw_map(img, draw, screen, state, preview, meta_font):
         shot = macbook_preview.decode(frames[i]) \
             if i in frames else None
         live = macbook_preview.paint(img, shot, r)
-        draw.rectangle(r, outline=ACCENT if is_active else (90, 90, 110),
-                       width=5 if is_active else 2)
+        outline = theme.rgb("macbook") if is_active else (90, 90, 110)
+        draw.rectangle(r, outline=outline, width=5 if is_active else 2)
         tag = macbook_map.label(i, bool(d.get("main")))
         if is_active:
             tag += " FOCUS"
@@ -69,7 +70,7 @@ def draw_map(img, draw, screen, state, preview, meta_font):
     rect = macbook_map.rect(bounds, scale, ox, oy) \
         if isinstance(bounds, dict) else None
     if rect is not None:
-        draw.rectangle(rect, outline=ACCENT, width=3)
+        draw.rectangle(rect, outline=theme.rgb("macbook"), width=3)
     if isinstance(mouse.get("x"), (int, float)) and \
             isinstance(mouse.get("y"), (int, float)):
         px, py = macbook_map.project(mouse["x"], mouse["y"],

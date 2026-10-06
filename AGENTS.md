@@ -274,7 +274,8 @@ keeps running the old tick until the installer runs (`install-mac.sh
 - `renderers/unified.py` is `HOME_VIEW` (picker tiles at real geometry +
   live apps dock; dock drawing split into `renderers/unified_dock.py` per
   the 250-line budget). Home badge/region target it
-  (`home_chrome.HOME_VIEW`, suppressed there); `picker` stays selectable.
+  (`system_buttons.HOME_VIEW` in `renderers/ui/`, suppressed there);
+  `picker` stays selectable.
 - The dock is a litehtml strip (`html-templates/dock.html`, shared chrome
   slot names + dim/accent/alert/line + an empty-when-live `marker`), drawn
   by `unified_dock.draw_dock(img, ...)`, which pastes ONLY the dock rect and
@@ -316,8 +317,8 @@ keeps running the old tick until the installer runs (`install-mac.sh
 - `renderers/html.py` renders a named local template; the full contract is
   `docs/HTML_RENDERER.md` (trust boundary, supported CSS, cost). Start from
   `html-templates/status.html`, which is a working example.
-- `html-templates/layout.html` is the SHARED PANEL CHROME (header, side
-  gesture strips, content band, footer) and the default template, so `template`
+- `html-templates/layout.html` is the shell surface (header, side gesture
+  strips, content band, footer) and the default template, so `template`
   is optional and `html` sits in the live picker/home set and rotates like
   any other view. Its ten variables (`eyebrow`, `title`, `status`, `lead`,
   `body`, `hint_left`, `hint_right`, `footer`, `footer_right`) are ALL
@@ -327,6 +328,14 @@ keeps running the old tick until the installer runs (`install-mac.sh
   template falls back to `DEFAULT_VARS`, because a tile that shows a red card
   the instant it is tapped is not a usable home tile. Pushed values are
   escaped exactly like any other template's; no markup, ever.
+- The chrome those variables fill is NOT in layout.html: it is authored once
+  in `html-templates/_chrome.html` (a `_`-prefixed composition partial, hidden
+  from `available()` and refused by name) and spliced into a template at load
+  time by `renderers/_html_compose.py` for the include directives, because
+  litehtml has no `@import` and no inheritance. Variants (`panel center`,
+  `panel tight`, `panel wide`, `bright`) are custom properties on `<body>`.
+  `docs/HTML_RENDERER.md` owns the directive list; `tests/test_html.py`
+  (`TestChromeComposition`) fails if a panel template restates a chrome rule.
 - Rendering is fixed-px, authored at 1920x1080: litehtml fills whatever
   viewport it is handed, but it has no viewport-relative units, so a
   smaller panel gets the same type size.
@@ -357,13 +366,22 @@ keeps running the old tick until the installer runs (`install-mac.sh
   names itself. Never add a second one.
 - The PICKER is a template surface: `renderers/picker.py` holds the view
   contract (params, `live_views`, `grid_geometry`, `picker_regions`) and draws
-  NO Pillow (a source test asserts it); `renderers/_picker_tiles.py` turns that
-  geometry into tile divs at exactly the region rects, minus the border
+  NO Pillow (a source test asserts it); `renderers/_picker_tiles.py` supplies
+  the chrome variables only, and the tile divs come from the tile component
+  `renderers/ui/tile.py` at exactly the region rects, minus the border
   compensation litehtml needs (declared width is the CONTENT box, so an
   uncompensated tile is 12px wider than the region that taps it). An
   absolutely positioned child offsets from its positioned parent, so label
   offsets are tile-local. `unified.py` still calls `pk.draw()` for the grid and
   draws its dock with Pillow on top -- that is intended.
+- A TILE (a bounded box with a label) is one component, `renderers/ui/tile.py`:
+  one declared-box rule, one label fit (`fit_size`) and one centring
+  (`label_box`), a markup half (`cell`/`layer`) for the template path and a
+  drawing half (`draw`) for Pillow views (the touch-confidence region map uses
+  it). Its look is authored once in the shared stylesheet, with every colour a
+  token (`--on-accent`, `--label-shade`) and the frame width pinned to
+  `tile.BORDER` by `tests/test_tile.py`; the picker and options tile layers
+  used to carry those four helpers verbatim, which is what this folded away.
 - OPTIONS is a template surface too (`html-templates/options.html` +
   `renderers/_options_grid.py`), and it shows what a geometry-driven layer
   costs: the grid ALLOCATES a rect per name where the old Pillow loop only
@@ -371,11 +389,12 @@ keeps running the old tick until the installer runs (`install-mac.sh
   keep the header count honest, and `grid_geometry` is total AND bounded on
   any input (a huge count must never become a runaway allocation -- `10**9`
   OOM-killed the suite before that bound). litehtml does not centre a label
-  like a browser, so `label_box()` measures the box from the real face.
+  like a browser, so `ui.tile.label_box` measures the box from the real face.
   `options_regions()` stays `[]` on purpose: options NAMES, the picker
   SELECTS, so a per-name hit rect would be a behaviour change disguised as
-  migration. Only the persistent overlay chrome (`renderers/home_chrome.py`)
-  still draws in Pillow, and it is deliberately left for its own increment.
+  migration. Only the persistent overlay chrome (the system buttons in
+  `renderers/ui/`) still draws in Pillow, and it now lives in the
+  component layer as one module.
 - Three litehtml gotchas, all verified live, each of which silently renders
   WRONG rather than failing: `document::render()` returns natural WIDTH, not
   height (read `doc->height()`, and note this revision declares but never

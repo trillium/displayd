@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import macbook_layout as lay
 import talon_apps as ta
-from macbook_glance_color import (ACCENT, APP_SIZE, C_DIM, C_FOCUS_BG,
+from macbook_glance_color import (APP_SIZE, C_DIM, C_FOCUS_BG,
                                   C_LINE, C_ROW, C_STALE, META_SIZE,
                                   MODE_COLORS, ROW_SIZE, TITLE_SIZE)
 from macbook_glance_map import draw_map

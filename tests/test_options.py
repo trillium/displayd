@@ -34,7 +34,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
 
 import displayd
 import _html_native
+import _html_templates as templates
 import _options_grid as grid
+from ui import tile as ui_tile
 
 OPT_PATH = os.path.join(displayd.RENDERER_DIR, "options.py")
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), os.pardir,
@@ -231,8 +233,12 @@ class OptionsTemplateTest(unittest.TestCase):
             return handle.read()
 
     def declared(self):
-        with open(TEMPLATE_PATH, encoding="utf-8") as handle:
-            text = handle.read()
+        # The template's EFFECTIVE source: its own text with the shared
+        # chrome spliced in, because most of this surface's placeholders
+        # are declared by the chrome partial now. Reading the file alone
+        # would pin a fragment and let the composition drift.
+        text = templates.source(os.path.basename(TEMPLATE_PATH),
+                                os.path.dirname(TEMPLATE_PATH))
         body = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
         return set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)", body)), body
 
@@ -256,7 +262,6 @@ class OptionsTemplateTest(unittest.TestCase):
         # on the panel, which is exactly what drift here would cost.
         declared, body = self.declared()
         supplied = set(grid.chrome(["clock"], (8, 10, 16), (255, 255, 255),
-                                   (140, 160, 190), (156, 200, 255),
                                    "OPTIONS", "pick one", "foot"))
         self.assertEqual(declared, supplied | {"names"})
         self.assertEqual(len(displayd.load_renderers(
@@ -281,8 +286,7 @@ class OptionsTemplateTest(unittest.TestCase):
 
     def test_the_chrome_names_itself(self):
         vars_ = grid.chrome(["clock"], (8, 10, 16), (255, 255, 255),
-                            (140, 160, 190), (156, 200, 255), "OPTIONS",
-                            "pick one", "foot")
+                            "OPTIONS", "pick one", "foot")
         self.assertEqual(vars_["eyebrow"], "DISPLAYD")
         self.assertEqual(vars_["title"], "OPTIONS")
         self.assertEqual(vars_["subtitle"], "pick one")
@@ -291,16 +295,20 @@ class OptionsTemplateTest(unittest.TestCase):
         self.assertEqual(vars_["footer_right"], "litehtml")
         self.assertEqual(vars_["background"], "#080a10")
         self.assertEqual(vars_["color"], "#ffffff")
-        self.assertEqual(vars_["dim"], "#8ca0be")
-        self.assertEqual(vars_["accent"], "#9cc8ff")
+        # The rule and the dim line used to be #rrggbb strings passed in;
+        # they are the chrome's own tokens now (var(--accent), var(--ink-soft)),
+        # so the partial owns them and these are not variables at all.
+        self.assertNotIn("accent", vars_)
+        self.assertNotIn("dim", vars_)
 
     def test_a_caller_view_name_is_escaped_before_it_reaches_markup(self):
         # The names go into a RAW slot, so escaping is the only thing
         # standing between a caller and the document. A name is the one
         # value here that comes from outside the repo.
         hostile = '<img src=x onerror=alert(1)>'
-        markup = grid.name_markup([hostile], [(0, 0, 800, 200)],
-                                  (255, 255, 255))
+        markup = ui_tile.layer([hostile], [(0, 0, 800, 200)],
+                               ink=(255, 255, 255), border=0,
+                               box_cls="cell", label_cls="name")
         self.assertNotIn("<img", markup)
         # The payload survives as TEXT: escaped, not dropped, so a caller
         # cannot make the name vanish either. (The escaped literal still
@@ -353,7 +361,7 @@ class OptionsTemplateTest(unittest.TestCase):
         cells = grid.grid_geometry(rect, len(names))
         self.assertEqual(len(cells), len(names))
         self.assertEqual(grid.chrome(names, (0, 0, 0), (255, 255, 255),
-                                     (0, 0, 0), (0, 0, 0), "t", "s",
+                                     "t", "s",
                                      "f")["status"],
                          "%d VIEWS" % grid.MAX_CELLS)
 

@@ -34,12 +34,13 @@ import _html_error
 import _html_native
 import _html_templates as templates
 import _picker_tiles
+from ui import tile as ui_tile
 
 NAME = "picker"
 DESCRIPTION = ("Tappable view picker: tile grid rerouting the panel "
                "via the select_view touch action")
 STATIC = True
-ACCENT = "#7BDFF2"
+CAPABILITY = "partial"  # a tile grid reflows into any region
 PARAMS = {
     "views": {"type": "array",
               "help": "view names to offer as tiles (absent: the live "
@@ -68,7 +69,6 @@ PALETTE = (
     (255, 140, 60),
     (255, 130, 180),
 )
-INK = (18, 12, 32)  # tile frame + label ink; the template owns the CSS
 TEMPLATE = "picker.html"
 BUILD_HINT = "build it: tools/build_litehtml.sh"
 
@@ -174,9 +174,9 @@ def draw(screen, views, geometry, rect, fills, bg, fg, dim,
         document, root = templates.load(
             TEMPLATE,
             _picker_tiles.chrome(screen, rect, views, bg, fg, title),
-            raw={"tiles": _picker_tiles.tile_markup(
-                views, geometry, fills,
-                min(_picker_tiles.MAX_LABEL_PX, max(12, screen.H // 14)))})
+            raw={"tiles": ui_tile.layer(
+                views, geometry, fills, shadow=True,
+                start=min(ui_tile.LABEL_MAX, max(12, screen.H // 14)))})
         image, _height = _html_native.render(
             document, screen.W, screen.H, background=tuple(bg), root=root)
         canvas = screen.new_image(bg)

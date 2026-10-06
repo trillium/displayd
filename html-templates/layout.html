@@ -35,54 +35,45 @@
   and text. No grid, no gradients, no @import, no webfonts. Note that
   litehtml drops `gap` on a flex row whose children grow, so spacing
   between children here is margins, never `gap`.
+
+  COLOUR comes from the token layer, never from this file: the block
+  below styles with `var(--page)`, `var(--ink)`, `var(--accent)` and the
+  rest of the palette in `renderers/theme.py`, which the loader splices
+  into every document as a `:root` block (see
+  `renderers/_html_compose.py`). Adding a colour literal here would
+  re-create the per-view palette duplication the tokens exist to remove,
+  and a name the palette does not define is a dropped declaration -- a
+  silently wrong panel. `var(--accent-<view>)` holds the per-view accent
+  slots, so a surface can borrow another view's colour by role.
+
+  THE CHROME IS NOT IN THIS FILE. Header band, gesture strips, title band,
+  the rule and the foot are the shared chrome, authored once in
+  `html-templates/_chrome.html` and spliced in here at load time by the
+  include directives below -- the same sections picker.html, options.html
+  and chat.html wear. This file owns only the shell's body: the two text
+  bands (`lead`, `body`) and the variant class on `<body>`. To change the
+  chrome, change the partial; a rule restated here would be the
+  duplication the partial exists to delete.
 -->
 <html>
 <head>
 <meta charset="utf-8">
 <style>
-  * { margin: 0; padding: 0; }
-  html, body { background: #07080c; color: #eef2fa; font-family: sans-serif;
-               height: 100%; }
-  .frame { display: flex; height: 100%; }
-  .strip { width: 160px; background: #0b0d13; }
-  .strip .hint { font-size: 26px; color: #5c6780; text-align: center;
-                 padding-top: 500px; }
-  .main { width: 1600px; display: flex; flex-direction: column;
-          padding: 40px 0 0 0; }
-  .head { display: flex; justify-content: space-between;
-          align-items: baseline; padding: 0 64px; }
-  .eyebrow { font-size: 30px; font-weight: bold; color: #7fd1ff; }
-  .status { font-size: 30px; color: #8b93a7; }
-  .title { font-size: 96px; font-weight: bold; color: #ffffff;
-           padding: 8px 64px 0 64px; }
-  .rule { height: 4px; background: #24405c; margin: 22px 64px 0 64px; }
-  .lead { font-size: 64px; font-weight: bold; color: #f4f7ff;
-          padding: 44px 64px 0 64px; }
-  .body { font-size: 38px; color: #b9c2d6; padding: 18px 64px 0 64px; }
-  .foot { margin-top: auto; display: flex; justify-content: space-between;
-          align-items: baseline; padding: 0 64px 64px 64px; }
-  .foot .left { font-size: 26px; color: #6f7b93; }
-  .foot .right { font-size: 26px; color: #6f7b93; }
+<!--#include css-->
 </style>
 </head>
-<body>
+<body class="panel">
   <div class="frame">
-    <div class="strip"><div class="hint">{{hint_left}}</div></div>
+    <!--#include strip-left-->
     <div class="main">
-      <div class="head">
-        <div class="eyebrow">{{eyebrow}}</div>
-        <div class="status">{{status}}</div>
-      </div>
-      <div class="title">{{title}}</div>
-      <div class="rule"></div>
+      <!--#include head-->
+      <!--#include title-->
+      <!--#include rule-->
       <div class="lead">{{lead}}</div>
       <div class="body">{{body}}</div>
-      <div class="foot">
-        <div class="left">{{footer}}</div>
-        <div class="right">{{footer_right}}</div>
-      </div>
+      <!--#include foot-->
     </div>
-    <div class="strip"><div class="hint">{{hint_right}}</div></div>
+    <!--#include strip-right-->
   </div>
 </body>
 </html>

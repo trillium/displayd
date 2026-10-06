@@ -2,12 +2,14 @@
 
 Single concept: describing the daemon without changing it -- the state dict,
 the last presented frame as PNG, the advertised renderer list with their
-schemas, the html runtime build state, and the delivery stamp.
+schemas and declared capability, the html runtime build state, and the
+delivery stamp.
 """
 
 import io
 import time
 
+import capability
 from PIL import Image
 from daemon_config import APP_VERSION
 from deploy_reload import read_deploy_stamp
@@ -93,6 +95,8 @@ class StatusMixin:
                     "params": entry["params"],
                     "inputs": entry.get("inputs", {}),
                     "static": entry["static"],
+                    "capability": entry.get("capability",
+                                           capability.UNDECLARED),
                     "accent": "#%02x%02x%02x" % accent,
                 }
             )

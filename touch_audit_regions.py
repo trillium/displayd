@@ -12,11 +12,14 @@ import importlib.util
 import os
 
 def _load_renderer(name):
-    """Import renderers/<name>.py by path (lazy: stdlib-only import)."""
+    """Import a module under renderers/ by path (lazy: stdlib-only
+    import). ``name`` may be a slashed subpath, so a component-layer
+    module ("ui/system_buttons") loads the same way a view does."""
+    rel = name.replace(".", "/").strip("/")
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "renderers", name + ".py")
-    spec = importlib.util.spec_from_file_location("touch_audit_" + name,
-                                                  path)
+                        "renderers", *rel.split("/")) + ".py"
+    spec = importlib.util.spec_from_file_location(
+        "touch_audit_" + rel.replace("/", "_"), path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -126,13 +129,13 @@ def expected_for_view(view, params=None, w=1920, h=1080,
         for action in gated[view]:
             presence.append({"action": action})
         note += " + " + view
-    for helper in ("home_chrome", "sleep_chrome"):
-        try:
-            exact.extend(_load_renderer(helper).audit_exact(view, w, h))
-        except Exception as exc:
-            return {"view": view, "checkable": False,
-                    "reason": "chrome geometry failed: %s" % exc,
-                    "exact": [], "presence": []}
+    try:
+        exact.extend(_load_renderer("ui/system_buttons").audit_exact(
+            view, w, h))
+    except Exception as exc:
+        return {"view": view, "checkable": False,
+                "reason": "system-button geometry failed: %s" % exc,
+                "exact": [], "presence": []}
     return {"view": view, "checkable": True,
             "reason": ("badges" + note).strip(),
             "exact": exact, "presence": presence}

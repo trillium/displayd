@@ -7,13 +7,17 @@ renderers/retro_grid.py re-exports the names tests use.
 """
 
 import os
+import sys
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import theme
 from PIL import Image, ImageDraw, ImageFont
 
 DEFAULT_BG = (16, 12, 40)
 DEFAULT_BORDER = (12, 8, 20)
-DEFAULT_INK = (18, 12, 32)  # dark label ink on bright fills
+DEFAULT_INK = theme.rgb("on-accent")  # dark label ink on bright fills
 
 # Limited arcade palette, cycled per cell unless a box sets "color".
 PALETTE = (

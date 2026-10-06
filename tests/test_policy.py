@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 
 import displayd
 import policy as policy_module
+import theme
 
 
 class FakeFramebuffer(displayd.Framebuffer):
@@ -513,7 +514,9 @@ class TestExistingViews(PolicyTestCase):
                                          "severity": "critical"})
         self.assertTrue(screen.frames, "notice drew no frame")
         pixels = screen.frames[0].load()
-        self.assertEqual(pixels[960, 9], (255, 70, 70))  # severity bar
+        # The critical severity is the palette's alert role now, not a
+        # fourth copy of "red" local to the notice view.
+        self.assertEqual(pixels[960, 9], theme.rgb("alert"))  # severity bar
 
 
 if __name__ == "__main__":

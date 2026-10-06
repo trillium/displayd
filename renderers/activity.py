@@ -20,7 +20,6 @@ from PIL import ImageDraw, ImageFont
 NAME = "activity"
 DESCRIPTION = "Live beads-bridge MCP activity fed live (POST /feed/activity/event)"
 STATIC = False
-ACCENT = "#50DC78"
 PARAMS = {
     "title": {"type": "string", "help": "header text, default ACTIVITY"},
     "lines": {"type": "integer", "help": "events on screen, default 8"},

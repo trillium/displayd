@@ -405,7 +405,7 @@ are global, so nothing errors and nothing changes on screen).
 `renderers/unified.py` is the merged home screen (E layout): the picker
 tile grid at real geometry plus a live apps dock below (count + focused
 app + LEFT/RIGHT split, one tap to the merged macbook screen). It
-replaces `picker` as `HOME_VIEW` (see `renderers/home_chrome.py`); the
+replaces `picker` as `HOME_VIEW` (see `renderers/ui/system_buttons.py`); the
 `picker` renderer stays as a selectable view with its own scope.
 
 Reference wiring (`touch-unified.json.example`, 1920x1080):
@@ -452,7 +452,7 @@ y=740, dock starts at y=770), but list the scope's tiles before the dock
 ## Home button (persistent top-left badge)
 
 A home badge is composited top-left on every view through the shared
-`Screen.overlay` hook (`renderers/home_chrome.py`, chained with the
+`Screen.overlay` hook (`renderers/ui/system_buttons.py`, chained with the
 playlist progress bar so both draw at once -- see "chain, do not
 replace" below). No renderer draws it: per-renderer drawing would
 redesign every screen type, and the compositor already runs once per
@@ -465,21 +465,22 @@ screen IS home -- a tap would just re-show it) and `picker`
 
 Reference wiring (`touch-home.json.example`, 1920x1080):
 
-- The region entry is GENERATED, never hand-computed -- the same
-  geometry the badge draws from:
+- The region entries are GENERATED, never hand-computed -- the same
+  geometry the badges draw from:
 
-        python3 renderers/home_chrome.py --width 1920 --height 1080
+        python3 renderers/ui/system_buttons.py --width 1920 --height 1080
 
-  Paste the output FIRST under `"regions"`: `hit_test()` gives earlier
-  entries every overlap, so `home` must precede the picker tiles and
-  the full-height gesture strips. The badge lives inside the left
-  strip's width (never covers picker tiles -- the grid starts at
+  It prints BOTH entries as a JSON list. Paste the home entry FIRST under
+  `"regions"` (and the sleep entry before `playlist-next`): `hit_test()`
+  gives earlier entries every overlap, so `home` must precede the picker
+  tiles and the full-height gesture strips. The badge lives inside the
+  left strip's width (never covers picker tiles -- the grid starts at
   x=160); the strip's top 160px now opens the merged home screen while
   the rest still fires `screen_on`.
 - The region reuses the existing `select_view` action
   (`{"name": "select_view", "view": "unified"}`) -- no second action
   for the same effect. Regenerate after this change: the entry's view
-  follows `home_chrome.HOME_VIEW`, so the pre-merge `picker` target in
+  follows `system_buttons.HOME_VIEW`, so the pre-merge `picker` target in
   an older host file must be refreshed post-deploy.
 - The tap-anywhere fallback is OFF on the host (`"tap_options":
   {"enabled": false, ...}` -- renderer/params kept so re-enabling is
@@ -491,13 +492,13 @@ Reference wiring (`touch-home.json.example`, 1920x1080):
   dismisses AND then navigates home per normal region rules).
   The rest of the screen dismisses exactly as before.
 - Chain, do not replace: `DisplayDaemon` composes
-  `home_chrome.chain_overlays(playlist.overlay_image,
-  home_chrome.home_overlay(screen))`. A second plain assignment to
-  `Screen.overlay` would silently disable the progress bar -- that is
-  the regression this guards. `chain_overlays` skips failing layers so
-  one broken chrome can never blank the panel, and the frame cache
-  keeps pre-overlay frames so a cached re-entry never serves a stale
-  badge.
+  `system_buttons.system_overlay(screen, playlist.overlay_image)`. A
+  second plain assignment to `Screen.overlay` would silently disable the
+  progress bar -- that is the regression this guards. The composition
+  primitive is the component layer's `ui.base.chain`, which skips
+  failing layers so one broken component can never blank the panel, and
+  the frame cache keeps pre-overlay frames so a cached re-entry never
+  serves a stale badge.
 - Host procedure (host-local `~/displayd/touch.json` survives
   redeploys): back the file up (`cp touch.json
   backups/touch.json.pre-home-<date>`), prepend the home region,
@@ -509,8 +510,9 @@ Reference wiring (`touch-home.json.example`, 1920x1080):
 ## Sleep/wake (panel sleeps itself, tap wakes it)
 
 A moon badge is composited top-right on every view through the same
-`Screen.overlay` chain (`renderers/sleep_chrome.py`, after the home
-badge -- same tile style, moon glyph, no font). Its region
+`Screen.overlay` chain (`renderers/ui/system_buttons.py` -- one module
+now owns both badges: one tile, one glyph each, one suppression table,
+chained after the home badge). Its region
 (`screen-off`) fires the existing closed `screen_off` action
 (`POST /screen/off`): no new action, no generic action. List it
 before `playlist-next`: the badge lives inside the right strip's

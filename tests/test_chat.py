@@ -46,7 +46,22 @@ import chat_panes as panes
 import firebot_roster as roster
 
 TEMPLATE_PATH = os.path.join(ROOT, "html-templates", "chat.html")
+SHIPPED_ROOT = os.path.join(ROOT, "html-templates")
 ERROR_RULE = (214, 74, 74)
+
+
+def chrome_inset(variant):
+    """The ``--inset`` the shared chrome gives one variant, read from the
+    partial itself. The pane layer places the panes at ``panes.PAD`` and the
+    template's margin is a chrome variant now, so the two numbers have to be
+    pinned against each other rather than copied."""
+    import _html_compose
+    css = _html_compose.partial_sections(SHIPPED_ROOT)["css"]
+    match = re.search(r"\.panel\.%s\s*\{[^}]*--inset:\s*(\d+)px"
+                      % re.escape(variant), css)
+    assert match, "no --inset for the %s variant" % variant
+    return int(match.group(1))
+
 MSG = {"id": "m1", "author": "testuser", "display_name": "TestUser",
        "text": "hello wall", "color": "#2E8B57", "timestamp": 1789801169829}
 
@@ -182,8 +197,10 @@ class TestTemplateContract(unittest.TestCase):
     """chat.html and the renderer's variables cannot drift apart."""
 
     def declared(self):
-        with open(TEMPLATE_PATH, encoding="utf-8") as handle:
-            text = handle.read()
+        # The EFFECTIVE source: the file plus the chrome partial it splices
+        # in. Reading the file alone would pin a fragment and let the
+        # composition drift out from under this test.
+        text = templates.source("chat.html", os.path.dirname(TEMPLATE_PATH))
         body = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
         return set(templates.PLACEHOLDER_RE.findall(body)), body, text
 
@@ -639,16 +656,18 @@ class TestPanelRenders(unittest.TestCase):
         # in the top-left and top-right 160px squares. A title under a badge
         # is a title nobody can read, so the head band and both panes stay
         # clear of them -- the first live render taught this, and here it is
-        # pinned. (The layer's margin and the template's padding are the same
-        # number, which is what makes the head band part of the same rule.)
-        import home_chrome
-        import sleep_chrome
+        # pinned twice: the chrome variant this surface wears sets the same
+        # inset the pane layer places its panes at, and the real frame has
+        # no head ink inside either badge square.
+        from ui import system_buttons as buttons
 
-        badges = [home_chrome.home_rect(1920, 1080),
-                  sleep_chrome.sleep_rect(1920, 1080)]
+        badges = [buttons.home_rect(1920, 1080),
+                  buttons.sleep_rect(1920, 1080)]
         lay = panes.layout(1920, 1080)
-        self.assertIn("padding: 30px %dpx 0 %dpx;" % (panes.PAD, panes.PAD),
-                      source("html-templates/chat.html"))
+        self.assertIn("wide", re.search(r'<body class="([^"]+)"',
+                                        source("html-templates/chat.html")
+                                        ).group(1).split())
+        self.assertEqual(chrome_inset("wide"), panes.PAD)
         for name in ("board", "feed"):
             px, py, pw, ph = lay[name]
             for bx, by, bw, bh in badges:
@@ -657,7 +676,15 @@ class TestPanelRenders(unittest.TestCase):
                                      and py < by + bh and by < py + ph,
                                      "%s pane overlaps the badge at %d,%d"
                                      % (name, bx, by))
-        self.assertGreaterEqual(lay["board"][0], home_chrome.HOME_STRIP)
+        self.assertGreaterEqual(lay["board"][0], buttons.STRIP)
+        frame = chat._draw(make_screen(1920, 1080), "CHAT", [dict(MSG)], 7,
+                           (10, 10, 14), [viewer("Ada")])
+        for bx, by, bw, bh in badges:
+            box = frame.crop((bx, by, bx + bw, by + bh)).convert("L")
+            with self.subTest(badge=(bx, by)):
+                self.assertLess(max(box.getdata()), 200,
+                                "head ink landed under the badge at %d,%d"
+                                % (bx, by))
 
     def test_the_two_panes_are_where_the_layer_says_they_are(self):
         screen = make_screen(1920, 1080)

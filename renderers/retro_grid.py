@@ -70,7 +70,6 @@ NAME = "retro_grid"
 DESCRIPTION = ("Retro 4x3 arcade button grid (tap via "
                "POST /feed/retro_grid/tap)")
 STATIC = False
-ACCENT = "#FFD23F"
 PARAMS = {
     "boxes": {"type": "array",
               "help": "12 cells: [{label|text, image, color, text_color, "

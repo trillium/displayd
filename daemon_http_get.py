@@ -2,13 +2,15 @@
 
 Single concept: every GET the daemon serves -- control page, health, version,
 state, renderers, snapshot, policy, deploy stamp, the one-time scan relay,
-playlist status, the command long-poll endpoints, layout, the touch gate, and
-the feedback/feed read-backs. GETs never touch the idle clock.
+playlist status, the command long-poll endpoints, layout and its named
+presets, the touch gate, and the feedback/feed read-backs. GETs never touch
+the idle clock.
 """
 
 import json
 from urllib.parse import parse_qs, urlsplit
 
+import layout_presets as presets
 from control_page import CONTROL_PAGE
 from daemon_config import APP_VERSION
 
@@ -91,6 +93,9 @@ class GETRoutesMixin:
                                                         raw, wait)})
         if path == "/layout":
             return self._send(200, {"layout": self.daemon.layout_state()})
+        if path == "/layout/presets":
+            return self._send(200, {"presets": presets.doc(
+                self.daemon.renderers)})
         if path == "/touch/check":
             # Drawn-vs-live region assertion (see touch_audit.py): 200
             # when the per-view matrix agrees, 409 with the exact

@@ -3,74 +3,47 @@
 Single concept: draw the cached poll snapshot to the panel. A poll never
 blocks a draw, and a cold start (first poll not back yet) renders a
 sensible waiting frame -- never blank, never broken.
+
+Presentation only, and every pixel comes from the component layer: the
+band and footer are ``ui.shell``, the tallies, headings and list rows are
+``ui.stat``. This module owns the inventory's shape on the wall and
+nothing else -- it holds no colour, no font and no truncation rule of its
+own, because those used to be this module's second copy of
+``resources_draw``.
 """
 
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PIL import ImageDraw, ImageFont
-
 from services_poll import _get_state
+import theme
+from ui import shell, stat
 
-C_BG = (8, 8, 12)
-C_TEXT = (235, 235, 240)
-C_DIM = (140, 140, 150)
-C_LINE = (60, 60, 70)
-C_UP = (80, 220, 120)
-C_DOWN = (130, 130, 140)
-C_FAILED = (255, 90, 90)
-C_WARN = (255, 180, 60)
+TALLY_Y = 150        # the count above its label
+TALLY_LABEL_Y = 300
+TRACKED_Y = 372
+RULE_Y = 440
+FAILED_Y = 466       # the FAILED heading, and the no-failures line
+FAILED_STEP = 60
+UNIT_STEP = 56
+SERVICE_STEP = 56    # one watched service row
+CHIP_GAP = 60        # between two watched services on one line
+CONTAINER_STEP = 58
+PORTS_STEP = 56
+COLD_Y = 220
+COLD_SUB_Y = 300
+COLD_URL_Y = 360
+COLD_ERROR_Y = 430
 
-PAD = 60
-HEADER_SIZE = 72
-LABEL_SIZE = 44
-COUNT_SIZE = 130
-ROW_SIZE = 40
-SUB_SIZE = 36
-FOOT_SIZE = 30
-
-
-def _font(screen, name, size):
-    try:
-        path = screen.font_path(name)
-    except Exception:
-        return None
-    if path is None:
-        return None
-    try:
-        return ImageFont.truetype(path, size)
-    except Exception:
-        return None
+# A watched service's state -> its palette role. The inventory's three
+# words (up/down/failed) plus anything unexpected (unknown) make a fourth.
+STATE_ROLE = {"up": "ok", "failed": "alert", "unknown": "attention"}
 
 
-def _font_or_default(screen, name, size):
-    return _font(screen, name, size) or ImageFont.load_default()
-
-
-def _fit(draw, text, font, max_w, max_chars=90):
-    text = str(text or "")
-    if font is not None:
-        try:
-            while len(text) > 4 and draw.textlength(text, font=font) > max_w:
-                text = text[:-2]
-            return text
-        except Exception:
-            pass
-    return text[:max_chars] if len(text) > max_chars else text
-
-
-def _age(updated):
-    if not updated:
-        return "no data yet"
-    secs = max(0, time.time() - updated)
-    if secs < 60:
-        return "updated %ds ago" % int(secs)
-    if secs < 3600:
-        return "updated %dm ago" % int(secs // 60)
-    return "updated %dh ago" % int(secs // 3600)
+def _state_ink(state):
+    return theme.rgb(STATE_ROLE.get(str(state), "attention"))
 
 
 def _short_name(unit):
@@ -80,150 +53,137 @@ def _short_name(unit):
     return unit
 
 
+def _cold(img, screen, url, health, error):
+    """No snapshot yet: say so plainly rather than showing an empty column."""
+    if health == "error":
+        big, ink = "SOURCE NOT ANSWERING", theme.rgb("alert")
+        sub = "lnx-viz inventory unreachable"
+    else:
+        big, ink = "waiting for first poll", theme.rgb("muted")
+        sub = "fetching lnx-viz inventory"
+    col_w = screen.W - 2 * shell.PAD
+    stat.body(img, screen, (shell.PAD, COLD_Y), big, ink=ink,
+              size=stat.LABEL_SIZE, bold=True, room=col_w)
+    stat.body(img, screen, (shell.PAD, COLD_SUB_Y), sub,
+              size=stat.ROW_SIZE, room=col_w)
+    stat.body(img, screen, (shell.PAD, COLD_URL_Y), url, room=col_w)
+    if error:
+        stat.body(img, screen, (shell.PAD, COLD_ERROR_Y),
+                  "last error: " + error, ink=theme.rgb("alert"),
+                  room=col_w)
+    return img
+
+
+def _failed_units(img, screen, snap, y, col_w):
+    """Failed units by name -- the thing the captain actually needs."""
+    if snap["failed_units"]:
+        stat.label(img, screen, (shell.PAD, y), "FAILED",
+                   ink=theme.rgb("alert"))
+        y += FAILED_STEP
+        for unit in snap["failed_units"][:3]:
+            stat.body(img, screen, (shell.PAD, y), "\u25cf " + unit,
+                      ink=theme.rgb("alert"), size=stat.ROW_SIZE, room=col_w)
+            y += UNIT_STEP
+    else:
+        stat.body(img, screen, (shell.PAD, y), "no failed units",
+                  size=stat.ROW_SIZE, room=col_w)
+        y += UNIT_STEP
+    return y
+
+
+def _watched(img, screen, snap, y, col_w):
+    """Watched services: dots, never a table. Wraps on the panel's width."""
+    y += 10
+    x = shell.PAD
+    for item in snap["watched"][:4]:
+        text = "\u25cf %s" % _short_name(item["name"])
+        wide = stat.width(screen, text, stat.ROW_SIZE)
+        if x + wide > screen.W - shell.PAD and x > shell.PAD:
+            x = shell.PAD
+            y += SERVICE_STEP
+        stat.body(img, screen, (x, y), text, ink=_state_ink(item["state"]),
+                  size=stat.ROW_SIZE)
+        x += wide + CHIP_GAP
+    return y + 62
+
+
+def _containers(img, screen, snap, y):
+    """Containers: one segment per container, green when running."""
+    if not snap["containers"]:
+        return y
+    x = shell.PAD
+    head_w = stat.width(screen, "CONTAINERS  ", stat.ROW_SIZE)
+    stat.body(img, screen, (x, y), "CONTAINERS", size=stat.ROW_SIZE)
+    x += head_w
+    for container in snap["containers"][:4]:
+        running = container["state"] == "running"
+        seg = "%s %s (%s)" % ("\u25cf" if running else "\u25cb",
+                              container["name"], container["state"])
+        wide = stat.width(screen, seg + "   ", stat.ROW_SIZE)
+        if x + wide > screen.W - shell.PAD and x > shell.PAD + head_w:
+            break  # wall space is finite: show fewer, never truncate
+        stat.body(img, screen, (x, y), seg,
+                  ink=theme.rgb("ok") if running else theme.rgb("attention"),
+                  size=stat.ROW_SIZE)
+        x += wide
+    return y + CONTAINER_STEP
+
+
+def _ports(img, screen, snap, y, col_w):
+    """Listening ports: drop whole entries until the line fits a cut word
+    helps nobody, fewer complete entries do."""
+    shown = list(snap["ports"])
+    line = ""
+    while shown:
+        line = "PORTS  " + "   ".join(
+            "%d/%s" % (port["port"], port["process"]) for port in shown)
+        if stat.width(screen, line, stat.BODY_SIZE) <= col_w:
+            break
+        shown.pop()
+        line = ""
+    if line:
+        stat.body(img, screen, (shell.PAD, y), line, room=col_w)
+    return y + PORTS_STEP
+
+
 def _draw(screen, title, bg, url):
     _, snap, updated, health, error = _get_state()
     img = screen.new_image(bg)
-    draw = ImageDraw.Draw(img)
-    head_font = _font_or_default(screen, "DejaVuSans-Bold", HEADER_SIZE)
-    label_font = _font_or_default(screen, "DejaVuSans-Bold", LABEL_SIZE)
-    count_font = _font_or_default(screen, "DejaVuSans-Bold", COUNT_SIZE)
-    row_font = _font_or_default(screen, "DejaVuSans", ROW_SIZE)
-    sub_font = _font_or_default(screen, "DejaVuSans", SUB_SIZE)
-    small_font = _font_or_default(screen, "DejaVuSans", FOOT_SIZE)
-
     host = snap.get("hostname", "") if snap else ""
-    header = title + ("  \u00b7  " + host if host else "")
-    draw.text((PAD, 24), _fit(draw, header, head_font, screen.W - 2 * PAD),
-              font=head_font, fill=C_TEXT)
-    dot = {"cold": (120, 120, 130), "warm": C_UP,
-           "stale": C_WARN, "error": C_FAILED}[health]
-    status = "%s \u00b7 %s" % (health, _age(updated))
-    try:
-        w = draw.textlength(status, font=small_font)
-    except Exception:
-        w = 0
-    draw.ellipse([screen.W - PAD - 22, 52, screen.W - PAD - 2, 72], fill=dot)
-    draw.text((screen.W - PAD - w - 36, 34), status, font=small_font, fill=C_DIM)
-    draw.line([(PAD, 128), (screen.W - PAD, 128)], fill=C_LINE, width=2)
+    shell.head(img, screen, title, detail=host, health=health,
+               updated=updated)
+    col_w = screen.W - 2 * shell.PAD
 
     if snap is None:
-        # Cold start or a source that has never answered: say so plainly.
-        if health == "error":
-            big = "SOURCE NOT ANSWERING"
-            color = C_FAILED
-            sub = "lnx-viz inventory unreachable"
-        else:
-            big = "waiting for first poll"
-            color = C_DIM
-            sub = "fetching lnx-viz inventory"
-        draw.text((PAD, 220), _fit(draw, big, label_font, screen.W - 2 * PAD),
-                  font=label_font, fill=color)
-        draw.text((PAD, 300), _fit(draw, sub, row_font, screen.W - 2 * PAD),
-                  font=row_font, fill=C_DIM)
-        draw.text((PAD, 360), _fit(draw, url, sub_font, screen.W - 2 * PAD),
-                  font=sub_font, fill=C_DIM)
-        if error:
-            draw.text((PAD, 430),
-                      _fit(draw, "last error: " + error, sub_font, screen.W - 2 * PAD),
-                      font=sub_font, fill=C_FAILED)
+        _cold(img, screen, url, health, error)
         screen.present(img)
         return
 
-    col_w = screen.W - 2 * PAD
-
     # Tally strip: three glanceable counts.
-    tallies = (("UP", snap["up"], C_UP), ("DOWN", snap["down"], C_DOWN),
-               ("FAILED", snap["failed"], C_FAILED if snap["failed"] else C_DIM))
     third = col_w / 3.0
-    for idx, (label, count, color) in enumerate(tallies):
-        x = PAD + idx * third
-        draw.text((x, 150), "%d" % count, font=count_font, fill=color)
-        draw.text((x + 6, 300), label, font=label_font, fill=C_TEXT)
-    draw.text((PAD, 372),
-              _fit(draw, "%d services tracked" % snap["total"], sub_font, col_w),
-              font=sub_font, fill=C_DIM)
-    y = 440
-    draw.line([(PAD, y), (screen.W - PAD, y)], fill=C_LINE, width=2)
-    y += 26
+    tallies = (("UP", snap["up"], theme.rgb("ok")),
+               ("DOWN", snap["down"], theme.rgb("muted")),
+               ("FAILED", snap["failed"],
+                theme.rgb("alert") if snap["failed"] else theme.rgb("muted")))
+    for idx, (name, count, ink) in enumerate(tallies):
+        x = int(shell.PAD + idx * third)
+        stat.value(img, screen, (x, TALLY_Y), "%d" % count, ink=ink,
+                   size=stat.COUNT_SIZE)
+        stat.label(img, screen, (x + 6, TALLY_LABEL_Y), name,
+                   ink=theme.rgb("ink"))
+    stat.body(img, screen, (shell.PAD, TRACKED_Y),
+              "%d services tracked" % snap["total"], room=col_w)
+    stat.rule(img, screen, RULE_Y)
 
-    # Failed units by name -- the thing the captain actually needs.
-    if snap["failed_units"]:
-        draw.text((PAD, y), "FAILED", font=label_font, fill=C_FAILED)
-        y += 60
-        for unit in snap["failed_units"][:3]:
-            draw.text((PAD, y), _fit(draw, "\u25cf " + unit, row_font, col_w),
-                      font=row_font, fill=C_FAILED)
-            y += 56
-    else:
-        draw.text((PAD, y), "no failed units", font=row_font, fill=C_DIM)
-        y += 56
-
-    # Watched services: dots, never a table.
-    y += 10
-    x = PAD
-    for item in snap["watched"][:4]:
-        state = item["state"]
-        color = C_UP if state == "up" else (C_FAILED if state == "failed" else C_WARN)
-        glyph = "\u25cf"
-        text = "%s %s" % (glyph, _short_name(item["name"]))
-        try:
-            tw = draw.textlength(text, font=row_font)
-        except Exception:
-            tw = len(text) * 20
-        if x + tw > screen.W - PAD and x > PAD:
-            x = PAD
-            y += 56
-        draw.text((x, y), text, font=row_font, fill=color)
-        x += tw + 60
-    y += 62
-    draw.line([(PAD, y), (screen.W - PAD, y)], fill=C_LINE, width=2)
-    y += 26
-
-    # Containers: one per segment, green when running, amber otherwise.
-    if snap["containers"]:
-        x = PAD
-        try:
-            head_w = draw.textlength("CONTAINERS  ", font=row_font)
-        except Exception:
-            head_w = 0
-        draw.text((x, y), "CONTAINERS", font=row_font, fill=C_DIM)
-        x += head_w
-        for c in snap["containers"][:4]:
-            running = c["state"] == "running"
-            seg = "%s %s (%s)" % ("\u25cf" if running else "\u25cb",
-                                     c["name"], c["state"])
-            color = C_UP if running else C_WARN
-            try:
-                seg_w = draw.textlength(seg + "   ", font=row_font)
-            except Exception:
-                seg_w = len(seg) * 20
-            if x + seg_w > screen.W - PAD and x > PAD + head_w:
-                break  # wall space is finite: show fewer, never truncate
-            draw.text((x, y), seg, font=row_font, fill=color)
-            x += seg_w
-        y += 58
-    if snap["ports"]:
-        # Drop trailing ports until the whole line fits: a cut "pyth"
-        # helps nobody, fewer complete entries do.
-        shown = list(snap["ports"])
-        while shown:
-            line = "PORTS  " + "   ".join(
-                "%d/%s" % (p["port"], p["process"]) for p in shown)
-            try:
-                fits = draw.textlength(line, font=sub_font) <= col_w
-            except Exception:
-                fits = len(line) <= 120
-            if fits:
-                break
-            shown.pop()
-        if shown:
-            draw.text((PAD, y), line, font=sub_font, fill=C_DIM)
-            y += 56
+    y = _failed_units(img, screen, snap, FAILED_Y, col_w)
+    y = _watched(img, screen, snap, y, col_w)
+    stat.rule(img, screen, y)
+    y = _containers(img, screen, snap, y + 26)
+    _ports(img, screen, snap, y, col_w)
 
     # Footer: host uptime, and the poll error when stale (honest staleness).
     foot = snap["host_uptime"]
     if health in ("stale", "error") and error:
         foot += "   [inventory poll failed: %s]" % error
-    draw.text((PAD, screen.H - 56), _fit(draw, foot, small_font, col_w),
-              font=small_font, fill=C_DIM)
+    shell.foot(img, screen, foot)
     screen.present(img)

@@ -41,6 +41,7 @@ NAME = "chat"
 DESCRIPTION = ("Two-pane chat: present-viewer roster + rolling messages "
                "(POST /feed/chat/message, /feed/chat/roster)")
 STATIC = False
+CAPABILITY = "partial"  # the pane split follows the region
 PARAMS = {
     "title": {"type": "string", "help": "header text, default CHAT"},
     "lines": {"type": "integer", "help": "messages on screen, default 7"},
@@ -108,7 +109,6 @@ BUILD_HINT = "build it: tools/build_litehtml.sh"
 # The panel's ink: palette tuples the screen already parsed, never caller
 # text. chat_panes turns them into #rrggbb strings for the document.
 DIM = (140, 160, 190)
-ACCENT = (127, 209, 255)
 LINE = (35, 43, 58)
 TEXT = (235, 235, 240)
 AUTHOR = (120, 200, 255)
@@ -203,7 +203,7 @@ def _frame(screen, title, events, max_lines, viewers, ink, state, age):
 def _ink(fg, bg=(10, 10, 14)):
     """The panel's palette for one run. One dict, so a colour is resolved once
     and the pane layer cannot disagree with the chrome."""
-    return {"bg": bg, "text": fg, "dim": DIM, "accent": ACCENT, "line": LINE,
+    return {"bg": bg, "text": fg, "dim": DIM, "line": LINE,
             "author": AUTHOR, "join": JOIN}
 
 

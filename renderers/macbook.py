@@ -54,7 +54,6 @@ NAME = "macbook"
 DESCRIPTION = ("MacBook + apps: GLANCE (live apps, mouse, state) and AIM "
                "(fullscreen click review)")
 STATIC = False
-ACCENT = "#4DA3FF"
 PARAMS = {
     "mode": {"type": "string",
              "help": "glance (default) or aim (fullscreen review)"},

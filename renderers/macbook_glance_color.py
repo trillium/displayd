@@ -1,12 +1,14 @@
-"""The GLANCE look: accent, type sizes, mode-chip and status colours.
+"""The GLANCE look: type sizes, mode-chip and status colours.
 
 Single concept: the colour and type vocabulary every GLANCE painter draws
-with -- the view accent, the four font sizes the macbook feature loads, the
-Talon mode-chip colours, and the status palette (stale/dim/rule/row/focus).
-Values only: no drawing, no imports beyond nothing at all.
+with -- the four font sizes the macbook feature loads, the Talon
+mode-chip colours, and the status palette (stale/dim/rule/row/focus).
+Values only: no drawing, no imports.
+
+The view's accent is not here: it is the palette's identity slot,
+``theme.ACCENT_SLOTS["macbook"]``.
 """
 
-ACCENT = "#4DA3FF"
 TITLE_SIZE = 30
 APP_SIZE = 44
 ROW_SIZE = 32

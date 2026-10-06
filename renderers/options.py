@@ -33,12 +33,13 @@ import _html_error
 import _html_native
 import _html_templates as templates
 import _options_grid as grid
+from ui import tile as ui_tile
 
 NAME = "options"
 DESCRIPTION = ("View selection: tap-anywhere landing screen naming the "
                "fastest view picks and the way back")
 STATIC = True
-ACCENT = "#9CC8FF"
+CAPABILITY = "partial"  # a name grid reflows into any region
 PARAMS = {
     "title": {"type": "string",
               "help": "header text, default OPTIONS"},
@@ -61,7 +62,6 @@ FOOTER = "control page one-tap grid \u00b7 POST /show \u00b7 playlist: POST /pla
 
 TEMPLATE = "options.html"
 BUILD_HINT = "build it: tools/build_litehtml.sh"
-DIM = (140, 160, 190)
 
 
 def coerce_views(params):
@@ -96,7 +96,7 @@ def options_regions(views=None):
     return []
 
 
-def draw(screen, views, geometry, bg, fg, dim, accent,
+def draw(screen, views, geometry, bg, fg,
          title=DEFAULT_TITLE, instructions=DEFAULT_INSTRUCTIONS):
     """One complete frame: the chrome plus the name layer, rendered by
     litehtml from html-templates/options.html. Never raises: a failure
@@ -104,11 +104,11 @@ def draw(screen, views, geometry, bg, fg, dim, accent,
     try:
         document, root = templates.load(
             TEMPLATE,
-            grid.chrome(views, bg, fg, dim, accent, title, instructions,
-                        FOOTER),
-            raw={"names": grid.name_markup(
-                views, geometry, fg,
-                min(grid.MAX_NAME_PX, max(12, screen.H // 12)))})
+            grid.chrome(views, bg, fg, title, instructions, FOOTER),
+            raw={"names": ui_tile.layer(
+                views, geometry, ink=fg, border=0,
+                box_cls="cell", label_cls="name",
+                start=min(ui_tile.LABEL_MAX, max(12, screen.H // 12)))})
         image, _height = _html_native.render(
             document, screen.W, screen.H, background=tuple(bg), root=root)
         canvas = screen.new_image(bg)
@@ -133,10 +133,9 @@ def run(screen, params, stop):
     views = coerce_views(params)
     bg = screen.color(params.get("background"), (8, 10, 16))
     fg = screen.color(params.get("color"), (255, 255, 255))
-    accent = screen.color(ACCENT, (156, 200, 255))
     geometry = grid.grid_geometry(grid.grid_rect(screen.W, screen.H),
                                   len(views))
-    screen.present(draw(screen, views, geometry, bg, fg, DIM, accent,
+    screen.present(draw(screen, views, geometry, bg, fg,
                         str(params.get("title") or DEFAULT_TITLE),
                         str(params.get("instructions")
                             or DEFAULT_INSTRUCTIONS)))

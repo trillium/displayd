@@ -27,7 +27,9 @@ from PIL import Image
 
 from renderers import picker as pk
 import _html_native
+import _html_templates as templates
 import _picker_tiles as tiles
+from ui import tile as ui_tile
 
 W, H = 1920, 1080
 VIEWS = ["clock", "chat", "row", "stream", "activity", "options"]
@@ -249,9 +251,11 @@ class SourceTest(unittest.TestCase):
 
     def test_the_shipped_template_matches_the_rendered_variables(self):
         # The template and chrome() cannot drift: every placeholder the
-        # file declares is a key chrome() fills, and vice versa.
-        with open(TEMPLATE_PATH, encoding="utf-8") as handle:
-            text = handle.read()
+        # document declares is a key chrome() fills, and vice versa. Read
+        # through the composition step, so the chrome the template splices
+        # in is part of what is pinned.
+        text = templates.source("picker.html",
+                                os.path.dirname(TEMPLATE_PATH))
         text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
         declared = set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)",
                                   text))
@@ -270,7 +274,7 @@ class TileMarkupTest(unittest.TestCase):
         return pk.grid_geometry(pk.default_rect(W, H), len(VIEWS))
 
     def test_one_tile_per_view_at_the_region_rect(self):
-        markup = tiles.tile_markup(VIEWS, self.rects(), pk.PALETTE)
+        markup = ui_tile.layer(VIEWS, self.rects(), pk.PALETTE, shadow=True)
         self.assertEqual(markup.count('class="tile"'), len(VIEWS))
         for (name, (x, y, cw, ch)) in zip(VIEWS, self.rects()):
             self.assertIn("left:%dpx; top:%dpx" % (x, y), markup)
@@ -281,23 +285,23 @@ class TileMarkupTest(unittest.TestCase):
         # forgot the compensation is 12px wider than the region that taps
         # it, on every side.
         for x, y, cw, ch in self.rects():
-            icw, ich = tiles.content_size((x, y, cw, ch))
-            self.assertEqual(cw - icw, 2 * tiles.BORDER_PX)
-            self.assertEqual(ch - ich, 2 * tiles.BORDER_PX)
+            icw, ich = ui_tile.content_size((x, y, cw, ch))
+            self.assertEqual(cw - icw, 2 * ui_tile.BORDER)
+            self.assertEqual(ch - ich, 2 * ui_tile.BORDER)
             self.assertGreater(icw, 0)
             self.assertGreater(ich, 0)
 
     def test_view_names_are_escaped_into_the_markup(self):
         # The one untrusted string in the tile layer is the name, and the
         # markup only exists because this escapes it first.
-        markup = tiles.tile_markup(["<script>x</script>"],
-                                   [(0, 0, 400, 200)], pk.PALETTE)
+        markup = ui_tile.layer(["<script>x</script>"],
+                               [(0, 0, 400, 200)], pk.PALETTE)
         self.assertNotIn("<script>", markup)
         self.assertIn("&lt;script&gt;", markup)
 
     def test_label_shrinks_to_fit_a_narrow_tile(self):
-        wide = tiles.label_px("touch_confidence", 508)
-        narrow = tiles.label_px("touch_confidence", 120)
+        wide = ui_tile.fit_size("touch_confidence", 508)
+        narrow = ui_tile.fit_size("touch_confidence", 120)
         self.assertGreater(wide, narrow)
         self.assertGreaterEqual(narrow, 12)
 

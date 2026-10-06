@@ -14,8 +14,14 @@ API
   GET  /snapshot                     PNG of the last presented frame
   POST /show    {"renderer":"name","params":{...}}
   POST /layout  {"regions":[{"name":...,"renderer":...,"params"?,
-               "height"?/"width"?/"rect"?/"row"?/"col"?...}]} static regions
+               "height"?/"width"?/"rect"?/"row"?/"col"?...}]} static regions;
+               or {"preset":"full"|"split-50-50"|
+               "split-50-50-columns"|"15-70-15", "views":{slot:view}?}
+               for a named style (GET /layout/presets lists the slots and
+               the views each accepts; a full-panel-only view is refused
+               in a reduced region)
   GET  /layout                       current layout (null when inactive)
+  GET  /layout/presets               the named styles and their slots
   DELETE /layout                     clear the layout (blank screen)
   POST /feed/<renderer>/<input>  push a validated payload into a view
   POST /notify  {"title":...,"body"?,"severity"?,"duration"?} transient notice
@@ -102,9 +108,9 @@ from framebuffer_headless import HeadlessFramebuffer
 from layout import (MAX_LAYOUT_REGIONS, _assign_grid, _assign_rect,
                     _assign_stack, _grid_rect, _parse_dim, parse_layout)
 from renderer_registry import (RENDERER_DIR, _load_shared_helper,
-                               home_chrome_module, load_renderers,
-                               macbook_layout_module, macbook_map_module,
-                               sleep_chrome_module, talon_apps_module)
+                               load_renderers, macbook_layout_module,
+                               macbook_map_module, system_buttons_module,
+                               talon_apps_module)
 from schema import INPUT_TYPES, _type_ok, validate_params, validate_value
 from screen import RegionScreen, Screen
 
@@ -129,9 +135,9 @@ __all__ = [
     "VT", "_assign_grid", "_assign_rect", "_assign_stack", "_grid_rect",
     "_load_shared_helper", "_parse_dim", "_read", "_relay_bind_host",
     "_relay_port", "_resolve_coords", "_type_ok", "deploy_stamp_path",
-    "home_chrome_module", "load_renderers", "macbook_layout_module",
+    "load_renderers", "macbook_layout_module",
     "macbook_map_module", "main", "parse_layout", "read_deploy_stamp",
-    "relay_base_url", "sleep_chrome_module", "talon_apps_module",
+    "relay_base_url", "system_buttons_module", "talon_apps_module",
     "touch_audit", "validate_params", "validate_value",
 ]
 

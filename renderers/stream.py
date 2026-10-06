@@ -34,8 +34,6 @@ NAME = "stream"
 DESCRIPTION = ("Live stream monitor: latest pushed frame or polled snapshot, "
                "fullscreen at capped fps")
 STATIC = False
-# Playlist progress-bar colour for this view (see playlist.accent_for).
-ACCENT = "#FF4D4D"
 PARAMS = {
     "url": {"type": "string",
             "help": "snapshot JPEG URL to poll, e.g. http://mac:8080/snapshot.jpg"},

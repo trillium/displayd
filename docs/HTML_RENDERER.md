@@ -69,6 +69,11 @@ extension tricks, no nested directories -- a template is one file in the root.
 Copy `html-templates/status.html` as the starting point; it is a working
 example, not a stub.
 
+A file whose name starts with `_` is a composition **partial**
+(`_chrome.html`, the shared chrome), not a template: `available()` never
+lists it and a caller cannot name it. Templates pull sections of it in with
+an include directive -- see "One chrome, composed in Python" below.
+
     POST /show {"renderer": "html",
                 "params": {"template": "status.html",
                            "vars": {"title": "BUILD", "sub": "12:04",
@@ -77,7 +82,7 @@ example, not a stub.
 
     POST /feed/html/vars {"title": "...", "value": "..."}   # re-renders in place
 
-## layout.html: the shared panel chrome
+## layout.html: the shell surface
 
 `html-templates/layout.html` is the shell the UI is built from: header,
 side gesture strips, content band, footer. It is the **default template**,
@@ -93,6 +98,12 @@ draws the shell, and a later
 becomes its live content without a re-show. `template` and `vars` are
 otherwise unchanged, and the trust boundary below applies to this template
 exactly as it does to every other.
+
+The chrome it wears is not authored here: the bands, the gesture strips and
+their rules come from `html-templates/_chrome.html` (see "One chrome,
+composed in Python" below), which this file -- and picker, options and chat --
+splices in. This file owns the shell's two content bands, `lead` and `body`,
+and the variant class on its `<body>`.
 
 ### The variable contract
 
@@ -126,6 +137,117 @@ tile that shows a red card the moment it is tapped is not a usable home
 tile. Every other template, and every partial push, still names its missing
 key.
 
+## One chrome, composed in Python (`_chrome.html`)
+
+litehtml has no `@import` (a CSS import is inert) and a template cannot
+inherit from another document, so a shared chrome cannot be shared *in CSS*.
+It is shared in Python instead: the chrome is authored **once** in
+`html-templates/_chrome.html` as named sections, and a template names the
+sections it wants with an include directive, which
+`renderers/_html_compose.py` splices into the document at load time --
+before any value is substituted.
+
+    <!--#include css-->           the chrome stylesheet, inside <style>
+    <!--#include head-->          the header band markup
+    <!--#include title-->         the title band
+    <!--#include subtitle-->      one dim line under the title
+    <!--#include rule-->          the rule under the title
+    <!--#include foot-->          the footer band
+    <!--#include strip-left-->    the left gesture strip
+    <!--#include strip-right-->   the right gesture strip
+
+The file that holds them is a *partial*, not a template: it is named
+`_...html`, `available()` never lists it, and a caller cannot name it (`load`
+and `source` refuse a `_`-prefixed name). It ships by the same
+`html-templates/*.html` install rule as the templates, so a partial travels
+with them.
+
+Failures are loud, because a silently missing chrome is a
+plausible-looking wrong panel: an unknown section, a missing partial, a
+nested include deeper than four levels, or a composed document over 512KiB
+is a `TemplateError` that the view draws as a card.
+
+### Variants: the only per-surface difference, as data
+
+The surfaces genuinely differ in inset, type size and band padding. Those are
+not copies of a rule -- they are custom properties a class on `<body>` sets,
+with the variants declared next to the rules:
+
+    <body class="panel">          the shell: 64px inset, 96px title, left
+    <body class="panel center">   title centred, smaller lead (options.html)
+    <body class="panel tight">    dense bottom band, no head pad (picker.html)
+    <body class="panel wide">     176px inset, 72px title (chat.html)
+    panel bright                  the rule takes var(--accent), not var(--rule)
+
+The promise is mechanical and tested (`tests/test_html.py`,
+`TestChromeComposition`): every shipped panel template includes the chrome `css` section,
+every one names a variant the partial declares, and **no template restates a
+selector the partial owns** -- a re-authored rule is the duplication this
+step removes, and the test names the file.
+
+## Trusted local templates only
+
+Only a file that already exists in that root is ever read: the directive
+names a *section*, never a caller's path or markup, and the partial is read
+from the same root as the template that includes it. A caller never gains a
+route to the composition step, so the trust boundary below is unchanged.
+
+## Design tokens: the palette lives in one module
+
+`renderers/theme.py` owns every colour the panel shows. It is not a
+stylesheet and not a per-view constant: it is a table of roles --
+`page`, `band`, `panel`, `pane`, `edge`, `rule`, `badge`, `ink`,
+`ink-strong`, `ink-soft`, `muted`, `muted-soft`, `faint`, `accent`, the
+alert family (`alert`, `alert-ink`, `alert-body`, `alert-page`),
+`attention`, `ok` -- plus one accent per view under
+`theme.ACCENT_SLOTS`.
+
+Both rendering paths read that table, and they read it differently
+because they are different technologies:
+
+- **Templates** get it as CSS custom properties. `_html_compose.compose()`
+is called by `_html_templates.load()`, so every document the engine lays
+out carries one generated `<style>` block:
+
+      :root { --page: #07080c; --ink: #eef2fa; ... }
+      :root { --accent-clock: #4DC3FF; ... }
+
+  A template then writes `color: var(--ink)` and nothing else. This works
+  because the pinned engine implements css-variables-2 (`subst_var` in
+  `style.cpp`) and inherits a custom property up the element tree; it is
+  **not** a browser feature to be assumed. An undefined name is a
+  *dropped declaration*, not a fallback colour -- which is why a template
+  that names a token must have spelled it right, and why
+  `tests/test_theme.py` renders a box to prove the resolution happens.
+- **Pillow renderers** `import theme` and call `theme.rgb("badge")` for
+the role they mean. `rgb()` is the one conversion point.
+
+A view's identity accent is part of the palette too
+(`theme.ACCENT_SLOTS`), not a per-view constant: `renderer_registry`
+resolves the slot into every renderer entry it loads and
+`playlist_color.accent_for` reads it, so the playlist bar, the renderer
+listing and the picker all agree without a renderer declaring a colour.
+A renderer from outside this tree may still declare its own `ACCENT`, which
+takes precedence over the slot.
+
+A migrated template carries **no** colour literal: `layout.html` and
+`status.html` are the first two, and `tests/test_theme.py` fails on any
+`#rrggbb` in a migrated style, so a template cannot quietly re-author a
+colour the palette already owns. The same file pins that the shared
+chrome really paints those tokens at 1920x1080.
+
+Two consequences worth stating plainly:
+
+- loading a template returns the *composed* document, so the token block
+  is part of what a test sees. `_html_compose.strip_tokens()` takes it
+  back off, and `tests/test_html.py` asserts the substitution contract on
+the text around it -- exactly, not loosely.
+- `renderers/ui/system_buttons.py` (the component layer) and
+`renderers/_html_error.py` already read roles from the palette (the badge
+tile, the glyph, the alert family) instead of carrying their own
+literals: that is the shape the remaining Pillow views migrate towards,
+and it is why the two system buttons cannot drift apart.
+
 ## picker.html: the tile grid
 
 `html-templates/picker.html` is the same chrome (header, side strips, bottom
@@ -137,6 +259,17 @@ per view**, at exactly the rects `picker.grid_geometry()` hands
 four numbers by construction, not by two copies of a constant. The touch
 contract is untouched: the regions, `touch-picker.json.example`, the CLI
 generator and `tests/test_picker.py` all still call the same functions.
+
+The tile itself is a COMPONENT, not a picker detail:
+`renderers/ui/tile.py` owns "a bounded box with a label" -- the declared-box
+compensation, the shrink-until-it-fits rule, the measured centring, and both a
+markup half (`cell`/`layer`, what the picker and options fill their raw slot
+with) and a drawing half (`draw`, which a Pillow view such as
+`renderers/touch_confidence_draw.py` uses for its region map). Its look is
+authored once in the shared stylesheet (`_chrome.html`): `.tile`/`.lab`/`.shade`
+for a filled tile, `.cell`/`.name` for a plain one, every colour a token
+(`on-accent`, `label-shade`), and the frame width pinned to `tile.BORDER` by
+`tests/test_tile.py`. A surface that restates a tile rule fails that test.
 
 Two litehtml facts the tile layer depends on, both verified live:
 
@@ -163,9 +296,9 @@ refused if they carry a placeholder of their own, are not strings, or exceed
 `MAX_RAW_CHARS`. `templates.RAW_RE` finds the slots; a test asserts no shipped
 template declares more than one.
 
-The only raw value the panel ever passes is `renderers/_picker_tiles.py`'s tile
-markup: fixed palette, fixed arithmetic, and a view name escaped before it
-reaches the document.
+The only raw value the panel ever passes is `renderers/ui/tile.py`'s tile
+markup (the picker builds it with `cell()` / `layer()`): fixed palette, fixed
+arithmetic, and a view name escaped before it reaches the document.
 
 ### The picker now needs the engine
 
@@ -253,9 +386,10 @@ Two bounds are deliberate. Names are truncated at `_options_grid.MAX_CELLS`
 agree; and `grid_geometry()` is total and bounded on *any* input, because it
 allocates a rect per name -- the old Pillow loop shrank the row height instead,
 so a huge list cost nothing there and would be a runaway allocation here. The
-label size shrinks to fit each cell (`label_px()`) and the label box is measured
-from the real face (`label_box()`), because litehtml does not centre a label
-the way a browser would.
+label size shrinks to fit each cell and the label box is measured from the
+real face (`fit_size()` / `label_box()` in `renderers/ui/tile.py`, the tile
+component options and the picker share), because litehtml does not centre a
+label the way a browser would.
 
 Failure here is the shared full-screen card, not a strip: options is a whole
 panel view, so a deleted template leaves the red rule and a message that names
@@ -277,7 +411,7 @@ one raw slot, `{{panes|raw}}`, and it holds both pane divs: a document gets one
 raw slot, so the panes' boxes and rows are generated together by
 `renderers/chat_panes.py`, which measures each line with the same face the
 document draws with (`renderers/chat_fit.py`) and places it at panel pixels,
-the way `_picker_tiles.py` places tiles. Every display name and every message
+the way `renderers/ui/tile.py` places tiles. Every display name and every message
 body is escaped before it reaches that markup, and the only colours in it are
 `#rrggbb` strings built from palette tuples the screen already parsed, so a
 pushed chat payload can never add markup or a style.
@@ -337,7 +471,21 @@ Not supported: grid, gradients, rounded clipping, video, canvas, forms,
 JavaScript, webfonts, remote resources. Unsupported CSS is ignored, not
 misrendered -- the panel shows the layout it does understand.
 
-### Two litehtml behaviours worth knowing before you write a template
+### Four litehtml behaviours worth knowing before you write a template
+
+**A shorthand whose value contains `var()` is dropped entirely.**
+`padding: 44px var(--inset) 0 var(--inset)` applies *no* padding at all --
+silently, because a dropped declaration is not an error. Write the longhands
+(`padding-left: var(--inset)` and friends); a single-property declaration with
+a `var()` is fine. `tests/test_html.py` fails on a shorthand carrying a
+`var()` in the chrome or in a panel template.
+
+**A rule using `var()` beats an inline `style` on the same element.** The
+substitution path re-applies the declaration, so a value a caller offers as an
+inline property loses to the chrome's rule. That is why a surface takes its
+page and ink colour by overriding the *role* (inline `--page` / `--ink` on
+`<body>`) rather than the property: the chrome's one rule keeps painting, with
+the caller's colour.
 
 **`gap` is dropped on a flex row whose children grow.** This is upstream, not a
 bug in this renderer, and it looks like a spacing bug rather than a missing
@@ -385,12 +533,15 @@ that only survives polite input is not a budget.
 | `html-templates/layout.html` | the shared panel chrome + its variable contract |
 | `html-templates/picker.html` | the chrome plus the tile layer (one raw slot) |
 | `renderers/picker.py` | the picker view: params, views, touch geometry |
-| `renderers/_picker_tiles.py` | geometry -> tile markup + chrome variables |
+| `renderers/_picker_tiles.py` | the picker's chrome variables |
+| `renderers/ui/tile.py` | the tile component: box geometry, label fit, the markup half and the drawing half |
+| `renderers/ui/shell.py`, `renderers/ui/stat.py`, `renderers/ui/text.py` | the band a Pillow view wears, the label/value row and its meter, and the layer's one font/measure/fit rule (the template path takes its band from the shared stylesheet instead) |
+| `renderers/ui/panel.py` | the panel component: a titled region with a body -- one scale-to-fit rule, a centred headline and body, the corner tag and the accent bar (`notice`, `text`, `sleep` are composers over it) |
 | `html-templates/dock.html` | the apps dock strip under the home screen |
 | `renderers/unified_dock.py` | dock feed state -> the strip's variables + composite |
 | `html-templates/options.html` | the selection screen: chrome plus one name layer |
 | `renderers/options.py` | the options view: params, the pinned picks, the card |
-| `renderers/_options_grid.py` | geometry -> name markup + the chrome variables |
+| `renderers/_options_grid.py` | the name grid's geometry + the chrome variables |
 | `html-templates/chat.html` | the two-pane chat panel: roster left, chat right |
 | `renderers/chat.py` | the chat view: params, the ordered event timeline, the loop |
 | `renderers/chat_panes.py` | geometry -> pane/row/line markup + the chrome variables |
@@ -413,6 +564,7 @@ the root is still one `POST /show` away.
 
 The picker itself is now a template surface too: `picker.html` is the same
 chrome plus a tile layer, and `renderers/picker.py` holds the view contract
-while `renderers/_picker_tiles.py` turns geometry into that layer. Nothing
+while `renderers/ui/tile.py` -- the tile component -- turns geometry into that
+layer. Nothing
 draws in Pillow on that path any more, which is also why the failure card lives
 in `renderers/_html_error.py`: both views share one.

@@ -22,6 +22,7 @@ Run from the repo root:  python3 -m unittest tests.test_html -v
 import importlib.util
 import os
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -35,8 +36,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
                                 "renderers"))
 
 import displayd
+import _html_compose
 import _html_native
 import _html_templates as templates
+import theme
+
+
+def body(text):
+    """The template's own text, with the injected token layer removed.
+
+    Every loaded document carries the palette as a ``:root`` block (see
+    ``_html_compose``). That block is fixed decoration generated from
+    ``theme.py``, so the substitution contract is asserted on the text
+    around it -- exactly, not loosely.
+    """
+    return _html_compose.strip_tokens(text)
 
 HTML_PATH = os.path.join(displayd.RENDERER_DIR, "html.py")
 REPO = os.path.dirname(os.path.abspath(displayd.__file__))
@@ -212,8 +226,9 @@ class TestTemplateValues(TempRoot):
             "a": "</p><style>body{display:none}</style><p>",
             "b": "x",
         })
-        self.assertNotIn("<style>", text)
-        self.assertNotIn("</p><style>", text)
+        self.assertEqual(text.count("<style"), 1)  # the token layer, only
+        self.assertNotIn("<style>", body(text))
+        self.assertNotIn("</p><style>", body(text))
 
     def test_missing_variable_is_an_error_naming_it(self):
         with self.assertRaises(templates.TemplateError) as caught:
@@ -233,7 +248,7 @@ class TestTemplateValues(TempRoot):
     def test_whitespace_in_placeholder_is_fine(self):
         write_template(self.dir.name, "ok.html", "<p>{{  spaced  }}</p>")
         text, _ = self.load("ok.html", {"spaced": "yes"})
-        self.assertEqual(text, "<p>yes</p>")
+        self.assertEqual(body(text), "<p>yes</p>")
 
     def test_non_string_values_become_text(self):
         text, _ = self.load("t.html", {"a": 42, "b": 3.5})
@@ -248,11 +263,11 @@ class TestTemplateValues(TempRoot):
     def test_bool_reads_as_yes_no(self):
         write_template(self.dir.name, "b.html", "<p>{{flag}}</p>")
         text, _ = self.load("b.html", {"flag": False})
-        self.assertEqual(text, "<p>no</p>")
+        self.assertEqual(body(text), "<p>no</p>")
 
     def test_long_value_truncated_not_refused(self):
         text, _ = self.load("t.html", {"a": "y" * 9000, "b": ""})
-        self.assertLess(len(text), templates.MAX_VALUE_CHARS + 200)
+        self.assertLess(len(body(text)), templates.MAX_VALUE_CHARS + 200)
 
     def test_bad_variable_name_refused(self):
         with self.assertRaises(templates.TemplateError):
@@ -290,7 +305,7 @@ class TestRawSlots(TempRoot):
 
     def test_a_raw_value_is_filled_verbatim(self):
         text, _ = self.load("t.html", raw={"tiles": '<b class="x">hi</b>'})
-        self.assertEqual(text, '<div><b class="x">hi</b></div>')
+        self.assertEqual(body(text), '<div><b class="x">hi</b></div>')
 
     def test_a_caller_cannot_reach_the_raw_slot(self):
         # Same template, same key, no raw mapping: the value is escaped
@@ -314,7 +329,7 @@ class TestRawSlots(TempRoot):
         # A template that declares no raw slot gets no markup either way.
         write_template(self.dir.name, "plain.html", "<p>{{a}}</p>")
         text, _ = self.load("plain.html", {"a": "x"}, raw={"tiles": "<b>"})
-        self.assertEqual(text, "<p>x</p>")
+        self.assertEqual(body(text), "<p>x</p>")
 
     def test_the_shipped_picker_template_only_has_one(self):
         names = templates.available(SHIPPED_ROOT)
@@ -811,8 +826,10 @@ class TestViewFailuresAreVisible(unittest.TestCase):
         """
         self.assertIsNotNone(frame, "no frame after the good push")
         self.assertFalse(_is_error_card(frame), "still showing the error rule")
+        # The template's own background, which is the palette's page token:
+        # asserted through theme so a panel background has one owner.
         self.assertEqual(frame.getpixel((2, frame.size[1] - 2)),
-                         (11, 13, 16), "not the template background")
+                         theme.rgb("page"), "not the template background")
 
     @requires_native
     def test_view_recovers_after_a_bad_push(self):
@@ -866,8 +883,10 @@ class TestLayoutChromeContract(unittest.TestCase):
         self.path = os.path.join(SHIPPED_ROOT, "layout.html")
 
     def placeholders(self):
-        with open(self.path, encoding="utf-8") as handle:
-            raw = handle.read()
+        # The EFFECTIVE source: the file with the shared chrome spliced in.
+        # Most of this shell's variables are drawn by the chrome partial, so
+        # reading the file alone would pin a fragment.
+        raw = templates.source("layout.html", SHIPPED_ROOT)
         # Comments are dropped before placeholders are read, so a
         # documented example in the header comment costs no variable.
         raw = templates.COMMENT_RE.sub("", raw)
@@ -919,6 +938,237 @@ class TestLayoutChromeContract(unittest.TestCase):
         self.assertIn("needs variable", message)
         named = message.split("'")[1] if "'" in message else ""
         self.assertIn(named, set(HTML.DEFAULT_VARS) - {"title"})
+
+
+class TestChromeComposition(unittest.TestCase):
+    """One chrome definition, spliced into every surface that wears it.
+
+    litehtml has no ``@import`` and a template cannot inherit from another,
+    so the shared chrome is authored once in ``html-templates/_chrome.html``
+    and expanded into a template's text at load time
+    (``_html_compose.expand``). These run without the native library: a
+    chrome that drifted from its surfaces must fail on any checkout.
+    """
+
+    PANEL = ("layout.html", "picker.html", "options.html", "chat.html")
+    # Deliberately not panel surfaces, each for a stated reason -- the set
+    # equality below is what makes a NEW template decide, rather than
+    # silently inheriting the chrome or silently going without it.
+    NOT_PANEL = {
+        "dock.html": "a strip in its own DESIGN-sized document under the "
+                     "home screen; it has no chrome bands to share",
+        "status.html": "the copy-me example: the minimal template contract "
+                       "(tokens and variables), not the shell",
+    }
+    INCLUDE = "<!--#include css-->"
+
+    def file(self, name):
+        with open(os.path.join(SHIPPED_ROOT, name), encoding="utf-8") as fh:
+            return fh.read()
+
+    def local_style(self, name):
+        """A template's OWN stylesheet: the include directive removed, so
+        what is left is what the file re-authored by hand."""
+        match = re.search(r"<style>(.*?)</style>", self.file(name),
+                          re.DOTALL)
+        body = match.group(1) if match else ""
+        return re.sub(r"[ \t]*<!--\s*#include\s+[A-Za-z0-9_.-]+\s*-->[ \t]*\n?",
+                      "", body)
+
+    def css_section(self):
+        return _html_compose.partial_sections(SHIPPED_ROOT)["css"]
+
+    @staticmethod
+    def selectors(css):
+        """Every selector a stylesheet text defines, as written."""
+        return set(match.group(1).strip()
+                   for match in re.finditer(r"([^{}@]+)\{", css))
+
+    def test_the_partial_is_not_a_template(self):
+        # It ships by the same *.html install rule, so it has to be
+        # invisible to callers by name and by listing.
+        self.assertIn("_chrome.html",
+                      os.listdir(SHIPPED_ROOT))
+        self.assertNotIn("_chrome.html", templates.available(SHIPPED_ROOT))
+        for read in (lambda: templates.load("_chrome.html", root=SHIPPED_ROOT),
+                     lambda: templates.source("_chrome.html", SHIPPED_ROOT)):
+            with self.assertRaises(templates.TemplateError):
+                read()
+
+    def test_every_panel_template_includes_the_chrome(self):
+        including = set(name for name in templates.available(SHIPPED_ROOT)
+                        if self.INCLUDE in self.file(name))
+        self.assertEqual(including, set(self.PANEL))
+        for name in self.PANEL:
+            with self.subTest(template=name):
+                # ... and each one wears a declared, meaningful variant.
+                body = re.search(r'<body class="([^"]+)"', self.file(name))
+                classes = body.group(1).split()
+                self.assertEqual(classes[0], "panel")
+                for extra in classes[1:]:
+                    self.assertIn(".panel.%s" % extra, self.css_section())
+        for name, why in self.NOT_PANEL.items():
+            with self.subTest(template=name):
+                self.assertNotIn(self.INCLUDE, self.file(name), why)
+
+    def test_no_template_restates_a_chrome_rule(self):
+        # The defect this whole step removes: a surface re-authoring the
+        # chrome. A selector the partial already owns may not appear in a
+        # template's own stylesheet -- not even an identical copy.
+        owned = self.selectors(self.css_section())
+        self.assertIn(".strip", owned)
+        self.assertIn(".title", owned)
+        for name in self.PANEL:
+            with self.subTest(template=name):
+                self.assertEqual(self.selectors(self.local_style(name))
+                                 & owned, set())
+
+    def test_no_shorthand_carries_a_var(self):
+        # litehtml DROPS a shorthand whose value contains var(), so
+        # `padding: 44px var(--inset) 0 var(--inset)` silently pads
+        # nothing at all -- verified live, at the cost of a debugging
+        # round. The declaration has to be written as longhands. The guard
+        # covers `border` too: the tile frame takes a var(), a dropped
+        # frame is just as invisible, and the longhand form costs nothing.
+        pattern = re.compile(
+            r"(?:^|[;{\s])(padding|margin|border)\s*:\s*[^;{}]*var\(")
+        for label, css in ([("the chrome partial", self.css_section())]
+                           + [(name, self.local_style(name))
+                              for name in self.PANEL]):
+            with self.subTest(stylesheet=label):
+                self.assertEqual(pattern.findall(css), [])
+
+    def test_the_chrome_styles_from_tokens_only(self):
+        css = templates.COMMENT_RE.sub("", self.css_section())
+        self.assertEqual(re.findall(r"#[0-9a-fA-F]{3,8}\b", css), [])
+        self.assertIn("var(--accent)", css)
+
+    def test_the_chrome_is_local_and_static(self):
+        text = templates.COMMENT_RE.sub("",
+                                        self.file("_chrome.html")).lower()
+        for banned in ("<script", "javascript:", "@import", "http://",
+                       "https://", "url("):
+            self.assertNotIn(banned, text)
+
+    def test_a_section_really_reaches_the_document(self):
+        # Not "the include is there", but "the band is drawn": the
+        # expanded text is what the loader fills and the engine lays out.
+        document, _root = templates.load("layout.html", HTML.DEFAULT_VARS,
+                                         root=SHIPPED_ROOT)
+        self.assertNotIn("#include", document)
+        self.assertIn('class="strip"', document)
+        self.assertIn('class="eyebrow"', document)
+        self.assertIn(HTML.DEFAULT_VARS["eyebrow"], document)
+
+    # ---- the failures, in a synthetic tree -------------------------
+
+    def root(self, templates_):
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory)
+        for name, text in templates_.items():
+            with open(os.path.join(directory, name), "w",
+                      encoding="utf-8") as fh:
+                fh.write(text)
+        return directory
+
+    def test_an_unknown_section_names_itself(self):
+        root = self.root({"t.html": "<div><!--#include nope--></div>",
+                          "_chrome.html": "<!--#section css-->a{}<!--#endsection-->"})
+        with self.assertRaises(templates.TemplateError) as caught:
+            templates.load("t.html", root=root)
+        self.assertIn("nope", str(caught.exception))
+
+    def test_a_missing_partial_is_an_error_not_a_silent_gap(self):
+        root = self.root({"t.html": "<div><!--#include css--></div>"})
+        with self.assertRaises(templates.TemplateError) as caught:
+            templates.load("t.html", root=root)
+        self.assertIn("chrome", str(caught.exception))
+
+    def test_a_section_cycle_is_an_error_not_a_hang(self):
+        root = self.root({
+            "t.html": "<div><!--#include a--></div>",
+            "_chrome.html": ("<!--#section a--><!--#include a-->"
+                             "<!--#endsection-->")})
+        with self.assertRaises(templates.TemplateError) as caught:
+            templates.load("t.html", root=root)
+        self.assertIn("nesting", str(caught.exception))
+
+    def test_a_document_that_does_not_include_anything_still_loads(self):
+        # The step is additive: a template with no chrome is a plain
+        # template, not an error.
+        root = self.root({"t.html": "<p>{{a}}</p>"})
+        text, _root = templates.load("t.html", {"a": "x"}, root=root)
+        self.assertIn("<p>x</p>", text)
+        self.assertEqual(templates.source("t.html", root), "<p>{{a}}</p>")
+
+
+@requires_native
+class TestOneChromeOneDefinition(unittest.TestCase):
+    """The four panel surfaces really wear the same chrome.
+
+    Source tests pin the composition; this pins the pixels, which is where
+    a hand-re-authored chrome would actually show up: a strip that moved, an
+    eyebrow that stopped wearing the accent, a page that changed colour.
+    """
+
+    SURFACES = {
+        "layout.html": dict(HTML.DEFAULT_VARS),
+        "picker.html": {"background": "#07080c", "color": "#eef2fa",
+                        "eyebrow": "DISPLAYD", "title": "PICK A VIEW",
+                        "status": "6 VIEWS", "subtitle": "tap a tile",
+                        "hint_left": "ON", "hint_right": "NEXT",
+                        "footer": "picker", "footer_right": "litehtml"},
+        "options.html": {"background": "#07080c", "color": "#eef2fa",
+                         "eyebrow": "DISPLAYD", "title": "OPTIONS",
+                         "status": "4 VIEWS", "subtitle": "pick one",
+                         "hint_left": "ON", "hint_right": "NEXT",
+                         "footer": "control page", "footer_right": "litehtml"},
+        "chat.html": {"background": "#07080c", "color": "#eef2fa",
+                      "dim": "#8b93a7", "line": "#2b3240",
+                      "eyebrow": "DISPLAYD", "title": "CHAT",
+                      "status": "3 HERE", "notice": "",
+                      "footer": "roster just now", "footer_right": "litehtml"},
+    }
+    RAW = {"picker.html": {"tiles": ""},
+           "options.html": {"names": ""},
+           "chat.html": {"panes": ""}}
+    STRIPS = ("layout.html", "picker.html", "options.html")
+
+    def frame(self, name):
+        document, root = templates.load(name, self.SURFACES[name],
+                                        root=SHIPPED_ROOT,
+                                        raw=self.RAW.get(name))
+        image, _height = _html_native.render(document, 1920, 1080, root=root)
+        return image
+
+    def test_no_surface_falls_back_to_the_error_card(self):
+        for name in self.SURFACES:
+            with self.subTest(template=name):
+                self.assertFalse(_is_error_card(self.frame(name)),
+                                 "%s does not compose" % name)
+
+    def test_the_strips_and_the_page_come_from_one_definition(self):
+        page = theme.rgb("page")
+        band = theme.rgb("band")
+        for name in self.SURFACES:
+            image = self.frame(name)
+            with self.subTest(template=name):
+                if name in self.STRIPS:
+                    self.assertEqual(image.getpixel((80, 540)), band,
+                                     "gesture strip missing or moved")
+                    self.assertEqual(image.getpixel((1900, 540)), band,
+                                     "right strip missing (not mirrored)")
+                self.assertEqual(image.getpixel((960, 540)), page,
+                                 "content band is not the page token")
+
+    def test_the_eyebrow_wears_the_accent_on_every_surface(self):
+        accent = theme.rgb("accent")
+        for name in self.SURFACES:
+            counts = dict((colour, count) for count, colour
+                          in self.frame(name).getcolors(1 << 24))
+            with self.subTest(template=name):
+                self.assertGreater(counts.get(accent, 0), 40,
+                                   "the eyebrow lost the accent token")
 
 
 @requires_native

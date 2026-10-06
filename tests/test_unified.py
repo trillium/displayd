@@ -22,8 +22,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
 from PIL import Image, ImageChops
 
 import _html_native
+import theme
 import touch_audit
-from renderers import home_chrome
+from renderers.ui import system_buttons as buttons
 from renderers import unified as un
 from renderers import unified_dock as dock
 
@@ -331,16 +332,18 @@ class DockPixelsTest(unittest.TestCase):
                 self.assertGreater(self.lit(frame, box), 300)
 
     def test_the_live_dot_and_tap_hint_are_accent(self):
+        # The dock's live colour is the palette's slot, not a dock literal.
         frame = frame_with_dock(live_state(), False)
-        self.assertGreater(self.count(frame, dock.ACCENT,
+        self.assertGreater(self.count(frame, theme.rgb("dock"),
                                      (80, 770, 1840, 1000)), 0)
 
     def test_stale_marks_the_dock_in_amber(self):
         live = frame_with_dock(live_state(), False)
         stale = frame_with_dock(live_state(ts=time.time() - 99), True)
         zone = (80, 770, 1840, 1000)
-        self.assertEqual(self.count(live, dock.ALERT, zone), 0)
-        self.assertGreater(self.count(stale, dock.ALERT, zone), 0)
+        amber = theme.rgb("attention")
+        self.assertEqual(self.count(live, amber, zone), 0)
+        self.assertGreater(self.count(stale, amber, zone), 0)
 
     def test_a_custom_dock_rect_gets_its_own_strip(self):
         # The strip is authored once and scaled to the rect it is given,
@@ -402,9 +405,9 @@ class RunLoopTest(unittest.TestCase):
 
 class HomeWiringTest(unittest.TestCase):
     def test_unified_is_home(self):
-        self.assertEqual(home_chrome.HOME_VIEW, "unified")
-        self.assertIn("unified", home_chrome.SUPPRESSED_VIEWS)
-        self.assertIn("picker", home_chrome.SUPPRESSED_VIEWS)
+        self.assertEqual(buttons.HOME_VIEW, "unified")
+        self.assertIn("unified", buttons.HOME_SUPPRESSED)
+        self.assertIn("picker", buttons.HOME_SUPPRESSED)
         self.assertNotIn("unified", ("sleep", "reload", "notice"))
 
     def test_audit_expects_tiles_plus_dock(self):

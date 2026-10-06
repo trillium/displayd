@@ -10,11 +10,21 @@ A view that silently shows nothing is indistinguishable from a dead
 panel, and every failure here (no template root, missing native library,
 unknown variable) is operator-fixable, so each one says what to do about
 it instead of just what went wrong.
+
+The colours are the palette's alert family (`renderers/theme.py`), not
+literals: this card is one of the places the Pillow path and the
+templates show the same role, so the red has to have one owner.
 """
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PIL import ImageDraw
 
 import _html_native
+import theme
 
 
 def _columns(screen, margin, font):
@@ -53,10 +63,10 @@ def error_strip(screen, rect, title, detail):
     still loud where the user is already looking.
     """
     x, y, w, h = (int(v) for v in rect)
-    img = screen.new_image((28, 10, 14))
+    img = screen.new_image(theme.rgb("alert-page"))
     draw = ImageDraw.Draw(img)
     rule = max(4, h // 24)
-    draw.rectangle([x, y, x + w, y + rule], fill=(214, 74, 74))
+    draw.rectangle([x, y, x + w, y + rule], fill=theme.rgb("alert"))
     margin = max(8, w // 74)
     title_font = _html_native.ui_font(max(14, h // 8), bold=True)
     body_font = _html_native.ui_font(max(11, h // 12), bold=False)
@@ -65,31 +75,34 @@ def error_strip(screen, rect, title, detail):
     line_y = y + rule + max(6, h // 32)
     for line in _wrap(title, columns)[:2]:
         draw.text((x + margin, line_y), line, font=title_font,
-                  fill=(255, 196, 196))
+                  fill=theme.rgb("alert-ink"))
         line_y += _line_height(title_font)
     for line in _wrap(detail, columns)[:2]:
         if line_y > y + h:
             break
         draw.text((x + margin, line_y), line, font=body_font,
-                  fill=(226, 216, 220))
+                  fill=theme.rgb("alert-body"))
         line_y += _line_height(body_font)
     return img
 
 
 def error_frame(screen, title, detail):
     """Loud, readable failure on the panel -- never a blank, never a crash."""
-    img = screen.new_image((28, 10, 14))
+    img = screen.new_image(theme.rgb("alert-page"))
     draw = ImageDraw.Draw(img)
     margin = max(20, screen.W // 26)
     title_font = _html_native.ui_font(max(20, screen.H // 18), bold=True)
     body_font = _html_native.ui_font(max(16, screen.H // 30), bold=False)
-    draw.rectangle([0, 0, screen.W, max(8, screen.H // 48)], fill=(214, 74, 74))
+    draw.rectangle([0, 0, screen.W, max(8, screen.H // 48)],
+                   fill=theme.rgb("alert"))
     y = margin
     for line in _wrap(title, _columns(screen, margin, title_font))[:3]:
-        draw.text((margin, y), line, font=title_font, fill=(255, 196, 196))
+        draw.text((margin, y), line, font=title_font,
+                  fill=theme.rgb("alert-ink"))
         y += _line_height(title_font) + 6
     y += 8
     for line in _wrap(detail, _columns(screen, margin, body_font))[:5]:
-        draw.text((margin, y), line, font=body_font, fill=(226, 216, 220))
+        draw.text((margin, y), line, font=body_font,
+                  fill=theme.rgb("alert-body"))
         y += _line_height(body_font) + 4
     return img

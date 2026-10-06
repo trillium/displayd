@@ -19,7 +19,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
                                 "renderers"))
 
 import displayd
-import home_chrome
+from ui import base
+from ui import system_buttons as buttons
 from PIL import Image
 
 
@@ -99,12 +100,12 @@ class ChainTest(unittest.TestCase):
             calls.append("second")
             return img
 
-        out = home_chrome.chain_overlays(first, second)(black(64, 64))
+        out = base.chain(first, second)(black(64, 64))
         self.assertEqual(calls, ["first", "second"])
         self.assertIsNotNone(out)
 
     def test_none_entries_skipped(self):
-        out = home_chrome.chain_overlays(None, None)(black(64, 64))
+        out = base.chain(None, None)(black(64, 64))
         self.assertIsNotNone(out)
 
     def test_failing_layer_never_blanks(self):
@@ -115,7 +116,7 @@ class ChainTest(unittest.TestCase):
             img.putpixel((5, 5), (255, 255, 255))
             return img
 
-        out = home_chrome.chain_overlays(bad, good)(black(64, 64))
+        out = base.chain(bad, good)(black(64, 64))
         self.assertEqual(out.getpixel((5, 5)), (255, 255, 255))
 
     def test_none_return_keeps_frame(self):
@@ -123,34 +124,34 @@ class ChainTest(unittest.TestCase):
             return None
 
         img = black(64, 64)
-        self.assertIs(home_chrome.chain_overlays(nothing)(img), img)
+        self.assertIs(base.chain(nothing)(img), img)
 
 
 class BadgeTest(unittest.TestCase):
     def test_badge_draws_top_left(self):
-        img = home_chrome.draw_home_button(black())
+        img = buttons.draw_home_button(black())
         self.assertTrue(top_left_differs(img))
 
     def test_badge_reads_on_light_background(self):
-        img = home_chrome.draw_home_button(
+        img = buttons.draw_home_button(
             Image.new("RGB", (1920, 1080), (255, 255, 255)))
         self.assertTrue(top_left_differs(img, side=160))
 
     def test_badge_never_raises(self):
-        img = home_chrome.draw_home_button(None, rect="bogus")
+        img = buttons.draw_home_button(None, rect="bogus")
         self.assertIsNone(img)
 
     def test_home_rect_inside_left_strip(self):
-        rect = home_chrome.home_rect(1920, 1080)
+        rect = buttons.home_rect(1920, 1080)
         self.assertEqual(rect, [0, 0, 160, 160])
-        small = home_chrome.home_rect(160, 90)
+        small = buttons.home_rect(160, 90)
         self.assertEqual(small[0:2], [0, 0])
         self.assertTrue(small[2] <= 160 and small[3] <= 160)
 
 
 class RegionTest(unittest.TestCase):
     def test_home_region_reuses_select_view(self):
-        region = home_chrome.home_region()
+        region = buttons.home_region()
         self.assertEqual(region["id"], "home")
         self.assertEqual(region["rect"], [0, 0, 160, 160])
         self.assertEqual(region["action"],
@@ -158,7 +159,7 @@ class RegionTest(unittest.TestCase):
 
     def test_home_region_wins_overlap_by_order(self):
         import touch
-        regions = [home_chrome.home_region(),
+        regions = [buttons.home_region(),
                    {"id": "screen-on", "rect": [0, 0, 160, 1080]}]
         self.assertEqual(touch.hit_test(10, 10, regions), "home")
         self.assertEqual(touch.hit_test(10, 500, regions), "screen-on")
@@ -166,7 +167,7 @@ class RegionTest(unittest.TestCase):
     def test_home_region_misses_picker_tiles(self):
         import touch
         from picker import picker_regions
-        regions = ([home_chrome.home_region()] +
+        regions = ([buttons.home_region()] +
                    picker_regions(1920, 1080) +
                    [{"id": "screen-on", "rect": [0, 0, 160, 1080]}])
         # A tap in the first tile's middle still selects that tile.
@@ -180,7 +181,7 @@ class RegionTest(unittest.TestCase):
 class SuppressionTest(unittest.TestCase):
     def test_suppressed_views_stay_clean(self):
         screen = types.SimpleNamespace(current_view="clock")
-        overlay = home_chrome.home_overlay(screen)
+        overlay = buttons.system_overlay(screen, None, which=("home",))
         self.assertTrue(top_left_differs(overlay(black()), side=160))
         for view in ("unified", "picker", "reload", "notice"):
             screen.current_view = view
@@ -188,7 +189,7 @@ class SuppressionTest(unittest.TestCase):
                              view)
 
     def test_overlay_never_raises(self):
-        overlay = home_chrome.home_overlay(None)
+        overlay = buttons.system_overlay(None, None, which=("home",))
         self.assertIsNotNone(overlay(black(64, 64)))
 
 

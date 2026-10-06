@@ -16,25 +16,31 @@
   images, and text. No grid, no gradients, no @import, no webfonts.
   Note: litehtml drops `gap` on a flex row whose children grow, so the
   cards below space themselves with margin-right instead.
+
+  Colours are design tokens, not literals: `var(--page)`, `var(--ink)`,
+  `var(--panel)`, `var(--accent)` and the rest of the palette in
+  `renderers/theme.py`, spliced into the document as a `:root` block by
+  `renderers/_html_compose.py`. Copy this file and use those names -- a
+  literal hex here is the duplication the token layer removes.
 -->
 <html>
 <head>
 <meta charset="utf-8">
 <style>
   * { margin: 0; padding: 0; }
-  html, body { background: #0b0d10; color: #e9ecf3; font-family: sans-serif; }
+  html, body { background: var(--page); color: var(--ink); font-family: sans-serif; }
   .wrap  { padding: 34px 40px; }
   .head  { display: flex; justify-content: space-between; align-items: baseline;
-           border-bottom: 3px solid #24405c; padding-bottom: 12px; }
-  .title { font-size: 40px; font-weight: bold; color: #7fd1ff; }
-  .sub   { font-size: 24px; color: #8b93a7; }
+           border-bottom: 3px solid var(--rule); padding-bottom: 12px; }
+  .title { font-size: 40px; font-weight: bold; color: var(--accent); }
+  .sub   { font-size: 24px; color: var(--muted); }
   .cards { display: flex; margin-top: 26px; }
-  .card  { background: #161b22; border: 1px solid #2b3240; padding: 20px 24px;
+  .card  { background: var(--panel); border: 1px solid var(--edge); padding: 20px 24px;
            margin-right: 18px; }
   .card.last { margin-right: 0; }
   .value { font-size: 72px; font-weight: bold; }
-  .unit  { font-size: 20px; color: #9aa3b5; }
-  .note  { margin-top: 28px; font-size: 26px; color: #cfd6e4; }
+  .unit  { font-size: 20px; color: var(--muted); }
+  .note  { margin-top: 28px; font-size: 26px; color: var(--muted-soft); }
 </style>
 </head>
 <body>
