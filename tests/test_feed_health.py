@@ -14,9 +14,14 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
+                                "renderers"))
 
 import displayd
 from displayd import FeedStore
+
+import theme
+from ui import shell
 
 
 def load_feed_health(name="feed_health_mod"):
@@ -157,14 +162,22 @@ class TestFeedHealthHelpers(unittest.TestCase):
     def setUp(self):
         self.mod = load_feed_health("fh_helpers")
 
-    def test_format_age(self):
-        self.assertEqual(self.mod.format_age(None), "never")
-        self.assertEqual(self.mod.format_age(12.4), "12s")
-        self.assertEqual(self.mod.format_age(180), "3m")
-        self.assertEqual(self.mod.format_age(7200), "2h")
-        self.assertEqual(self.mod.format_age(86400 * 3), "3d")
+    def source(self):
+        with open(os.path.join(displayd.RENDERER_DIR, "feed_health.py"),
+                  encoding="utf-8") as handle:
+            return handle.read()
 
-    def test_collect_rows_sorts_and_colors(self):
+    def test_age_buckets_are_the_component_s(self):
+        # The five copies of this rule are now one, in ui.shell, and this
+        # view no longer owns a bucket of its own.
+        self.assertEqual(shell.short_age(None), "never")
+        self.assertEqual(shell.short_age(12.4), "12s")
+        self.assertEqual(shell.short_age(180), "3m")
+        self.assertEqual(shell.short_age(7200), "2h")
+        self.assertEqual(shell.short_age(86400 * 3), "3d")
+        self.assertFalse(hasattr(self.mod, "format_age"))
+
+    def test_collect_rows_sorts_and_wears_the_palette_roles(self):
         snap = {"chat": {"message": {"count": 2, "updated_at": 1,
                                      "age_seconds": 5, "health": "warm"}},
                 "beads": {"detail": {"count": 0, "updated_at": None,
@@ -173,32 +186,42 @@ class TestFeedHealthHelpers(unittest.TestCase):
         self.assertEqual([r["name"] for r in rows],
                          ["beads.detail", "chat.message"])
         by_name = {r["name"]: r for r in rows}
-        self.assertEqual(by_name["chat.message"]["color"], (80, 220, 120))
-        self.assertEqual(by_name["beads.detail"]["color"], (128, 128, 128))
+        # The old per-view map held (80, 220, 120) / (128, 128, 128); both
+        # are the component's roles now.
+        self.assertEqual(by_name["chat.message"]["ink"], theme.rgb("ok"))
+        self.assertEqual(by_name["beads.detail"]["ink"], theme.rgb("muted"))
         self.assertEqual(by_name["chat.message"]["age"], "5s")
         self.assertEqual(by_name["beads.detail"]["age"], "never")
 
     def test_summarize(self):
-        text, color = self.mod.summarize([])
+        text, ink = self.mod.summarize([])
         self.assertIn("NO FEEDS", text)
-        text, color = self.mod.summarize(
+        text, ink = self.mod.summarize(
             [{"health": "warm"}, {"health": "warm"}])
         self.assertIn("ALL HEALTHY", text)
-        self.assertEqual(color, (80, 220, 120))
-        text, color = self.mod.summarize(
+        self.assertEqual(ink, theme.rgb("ok"))
+        text, ink = self.mod.summarize(
             [{"health": "warm"}, {"health": "stale"}])
         self.assertIn("DEGRADED", text)
-        self.assertEqual(color, (240, 200, 60))
-        text, color = self.mod.summarize(
+        self.assertEqual(ink, theme.rgb("attention"))
+        text, ink = self.mod.summarize(
             [{"health": "warm"}, {"health": "error"}])
         self.assertIn("DEGRADED", text)
-        self.assertEqual(color, (255, 80, 80))
+        self.assertEqual(ink, theme.rgb("alert"))
 
-    def test_health_colors_match_contract(self):
-        self.assertEqual(self.mod.HEALTH_COLORS["warm"], (80, 220, 120))
-        self.assertEqual(self.mod.HEALTH_COLORS["stale"], (240, 200, 60))
-        self.assertEqual(self.mod.HEALTH_COLORS["error"], (255, 80, 80))
-        self.assertEqual(self.mod.HEALTH_COLORS["cold"], (128, 128, 128))
+    def test_the_view_owns_no_colour_map_of_its_own(self):
+        src = self.source()
+        self.assertNotIn("HEALTH_COLORS", src)
+        self.assertNotIn("Color", src)
+        self.assertNotIn("ImageDraw", src)
+        self.assertNotIn("from PIL", src)
+        self.assertNotIn("def _font", src)
+        self.assertIn("from ui import", src)
+        # The four words are the component's vocabulary, and it is total.
+        for word, role in (("warm", "ok"), ("stale", "attention"),
+                           ("error", "alert"), ("cold", "muted")):
+            with self.subTest(word=word):
+                self.assertEqual(shell.health_ink(word), theme.rgb(role))
 
 
 class TestFeedHealthRenderer(unittest.TestCase):
@@ -213,15 +236,15 @@ class TestFeedHealthRenderer(unittest.TestCase):
         rows = mod.collect_rows({"chat": {"message": {
             "count": 1, "updated_at": time.time(),
             "age_seconds": 3, "health": "warm"}}})
-        summary, color = mod.summarize(rows)
-        img = mod._draw(screen, "FEED HEALTH", rows, summary, color, (10, 10, 14))
+        summary, ink = mod.summarize(rows)
+        img = mod._draw(screen, "FEED HEALTH", rows, summary, ink, (10, 10, 14))
         self.assertEqual(img.size, (screen.W, screen.H))
 
     def test_draw_empty_snapshot(self):
         mod = load_feed_health("fh_empty")
         screen = self.make_screen()
-        summary, color = mod.summarize([])
-        img = mod._draw(screen, "FEED HEALTH", [], summary, color, (10, 10, 14))
+        summary, ink = mod.summarize([])
+        img = mod._draw(screen, "FEED HEALTH", [], summary, ink, (10, 10, 14))
         self.assertEqual(img.size, (screen.W, screen.H))
         small = img.resize((160, 90)).convert("L")
         self.assertGreater(sum(1 for p in small.getdata() if p > 24), 20)

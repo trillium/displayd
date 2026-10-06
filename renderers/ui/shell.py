@@ -15,6 +15,10 @@ declare it), and three views each held their own map from those four
 words to four colours. One map, in the palette's roles: a health word
 this module has never seen is a grey dot, not a crash.
 
+The age vocabulary does too: the buckets behind ``"12s"`` / ``"3m"`` /
+``"2h"`` were implemented five times, in this module's ``age`` and in
+``feed_health``, ``row_draw``, ``beads_age`` and ``activity``.
+
 Nothing here raises: a band that cannot be drawn is a missing band, never
 a blank panel.
 """
@@ -63,22 +67,44 @@ def health_ink(health):
         return theme.rgb("muted")
 
 
+def short_age(seconds):
+    """The compact age of a sample: ``12s``, ``3m``, ``2h``, ``3d``,
+    ``never``.
+
+    The bucket rule behind every age the panel shows: the band's own
+    ``updated ... ago`` line and the per-entry ages on the health
+    dashboard. One copy, so retuning the buckets cannot move one surface
+    and leave the other. Never raises: no age at all says ``never``
+    rather than pretending to be zero.
+    """
+    if seconds is None:
+        return "never"
+    try:
+        secs = max(0.0, float(seconds))
+    except (TypeError, ValueError):
+        return "never"
+    if secs < 60:
+        return "%ds" % int(secs)
+    if secs < 3600:
+        return "%dm" % int(secs // 60)
+    if secs < 86400:
+        return "%dh" % int(secs // 3600)
+    return "%dd" % int(secs // 86400)
+
+
 def age(updated):
     """The honest age line every polled view shows.
 
     No timestamp -> says so rather than inventing "0s ago"; garbage -> same.
+    Built on :func:`short_age`, so the buckets have one owner.
     """
+    if not updated:
+        return "no data yet"
     try:
-        if not updated:
-            return "no data yet"
         secs = max(0.0, time.time() - float(updated))
     except (TypeError, ValueError):
         return "no data yet"
-    if secs < 60:
-        return "updated %ds ago" % int(secs)
-    if secs < 3600:
-        return "updated %dm ago" % int(secs // 60)
-    return "updated %dh ago" % int(secs // 3600)
+    return "updated %s ago" % short_age(secs)
 
 
 def status_line(health, updated=None):
@@ -100,12 +126,15 @@ def rule(img, screen, y=RULE_Y, pad=PAD):
 
 
 def head(img, screen, title, detail="", health=None, updated=None,
-         status=None, pad=PAD, rule_y=RULE_Y):
+         status=None, status_ink=None, pad=PAD, rule_y=RULE_Y):
     """The header band: title (and an optional detail), health status, rule.
 
     ``status`` overrides the derived ``"<health> · <age>"`` line; passing
-    neither leaves the band as title plus rule. The title is fitted to the
-    room the status leaves it, so a long title can never run under it.
+    neither leaves the band as title plus rule. ``status_ink`` colours
+    that line (a dashboard's summary says its own health in its own
+    colour); the default is the palette's ``muted``. The title is fitted
+    to the room the status leaves it, so a long title can never run under
+    it.
     """
     try:
         title_text = str(title if title is not None else "")
@@ -122,7 +151,9 @@ def head(img, screen, title, detail="", health=None, updated=None,
         if line:
             ui_text.write(img, screen,
                           (int(screen.W) - pad - drawn_status - STATUS_GAP, 34),
-                          line, theme.rgb("muted"), STATUS_SIZE)
+                          line,
+                          theme.rgb("muted") if status_ink is None
+                          else status_ink, STATUS_SIZE)
         if health is not None:
             _dot(img, screen, health, pad)
         rule(img, screen, rule_y, pad=pad)

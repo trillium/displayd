@@ -77,16 +77,18 @@ picker and the options name grid both ask it, so the two can no longer
 disagree about where a box goes; a narrow 288px band is ONE application
 column. See §2f.
 - `renderers/ui/text.py` — one font resolution, one measurement, one
-  fitting rule (`font`/`face`/`width`/`fit`/`write`/`line`). `_font`,
-  `_font_or_default`, `_fit` and a truncation loop used to exist in five
-  views.
+  fitting rule (`font`/`face`/`width`/`fit`/`write`/`line`) and one wrap
+  (`wrap`). `_font`, `_font_or_default`, `_fit`, a truncation loop and a
+  `textwrap` column count used to exist in five views.
 - `renderers/ui/shell.py` — the band a full-panel view wears: `head`
-  (title, detail, health dot, its honest age, the rule under it), `foot`,
-  `rule`, `health_ink` (the poll-health vocabulary → palette role) and
-  `age`.
+  (title, detail, health dot, its honest age, the rule under it, an
+  optional coloured status), `foot`, `rule`, `health_ink` (the poll-health
+  vocabulary → palette role), `age` and `short_age` (the one bucket rule,
+  5 copies before it).
 - `renderers/ui/stat.py` — a label plus a value line: `label`/`value`/
-  `body`, `row` (the component itself), `meter` (a clamped fraction bar)
-  and `width`. See §2c.
+  `body`, `row` (the component itself), `list_row` (one horizontal entry:
+  dot, name, right-aligned value), `meter` (a clamped fraction bar) and
+  `width`. See §2c and §2g.
 
 ### 2b. The tile component (this increment)
 
@@ -269,9 +271,10 @@ What `tests/test_panel.py` (21 tests) pins:
   honours an explicit `size` and `background`, and draws nothing when there
   is no message; `sleep` names the way back in the `faint` role.
 
-The gate's exemption list went **22 → 19** (`renderers/notice.py`,
-`renderers/text.py`, `renderers/sleep.py` removed): the gate now prints
-`19 shipped module(s) still draw by hand`.
+The gate's exemption list is now **17**: section 2g migrated
+`renderers/feed_health.py` and `renderers/activity.py` off it (22 → 19 →
+17), and the gate prints
+`17 shipped module(s) still draw by hand`.
 
 ### 2e. The accent token — the last per-view colour constants (this increment)
 
@@ -368,6 +371,50 @@ text across its width, so a box taller than it is wide is the wrong shape
 for one. At the band's 224px the label fit is 20px; at the old 69px it was
 the 12px floor.
 
+### 2g. The list dashboards: `stat.list_row`, `text.wrap`, `shell.short_age` (this increment)
+
+`feed_health` and `activity` were the last two *list* views drawing by
+hand, and they were two more copies of the band the layer already owned
+(§2c): each loaded its own fonts, drew its own title + rule, and held its
+own type sizes. `feed_health` also carried a four-entry colour map and
+its own age formatter; `activity` carried two outcome colours and a
+`textwrap` rule. Three components gained the piece that was missing:
+
+| new component rule | replaces |
+| --- | --- |
+| `ui.stat.list_row` — one list entry: an optional status dot, a bold name fitted to the room its value leaves, a right-aligned value | `feed_health._draw`'s dot + name + right-aligned `HEALTH 12s ago x2` |
+| `ui.text.wrap` — a paragraph broken to `room` px, at most `rows` lines, never empty | `activity._wrap` (and the pattern shared with `beads_common`, `macbook_strip`, `_html_error`) |
+| `ui.shell.short_age` — the compact buckets `12s`/`3m`/`2h`/`3d`/`never`; `shell.age` is now built on it | `feed_health.format_age`, and the same buckets in `row_draw._age` and `beads_age._age` |
+
+`ui.shell.head` also learned `status_ink` (a dashboard's summary says its
+own health in its own colour; the default is still `muted`).
+
+The two views are now "which feed goes where":
+`renderers/feed_health.py` 151 → 120 lines, `renderers/activity.py`
+199 → 174, with no `ImageDraw`, no font loader, no colour map and no wrap
+or age arithmetic between them. Both now declare
+`CAPABILITY = "partial"`, which is the objective's "declared, not
+assumed" in the useful direction: `POST /layout` will refuse them in a
+bad slot, and the preset slots now *offer* them (they appear in
+`GET /layout/presets`'s per-slot lists). The claim is verified by a
+reduced render (both in a `split-50-50`), not just asserted.
+
+**Deliberate pixel changes** (all "one colour, one owner", the same move
+as notice's severity in §2d):
+
+    health colour   before (per-view literal)   now (palette role)
+    warm            (80, 220, 120)              theme.rgb("ok")        (80, 220, 120)  same
+    stale           (240, 200, 60)              theme.rgb("attention") (255, 180, 80)  amber
+    error           (255, 80, 80)               theme.rgb("alert")     (214, 74, 74)   the card's red
+    cold            (128, 128, 128)             theme.rgb("muted")     (139, 147, 167)
+    activity ok     (110, 220, 130)             theme.rgb("ok")        (80, 220, 120)
+    activity error  (255, 110, 100)             theme.rgb("alert")     (214, 74, 74)
+
+The band's geometry is unified too (title 54 → 72px at `shell.PAD` 60,
+the summary line right-aligned as the band's status instead of a second
+left column) and the age line gained a day bucket, so a three-day-old
+sample reads `updated 3d ago` rather than `updated 72h ago`.
+
 ### 3. The shared chrome, composed at load time — `html-templates/_chrome.html`
 
 **litehtml has no `@import` and a template cannot inherit from another**, so
@@ -462,7 +509,7 @@ paste in after a migration; `--root PATH` inspects another tree, which is
 what `tests/test_components.py` uses to exercise both failure directions.
 Wired into `tools/check-repo-health.py` as step 3.
 
-19 exemptions remain (the list is in the tool, sorted).
+17 exemptions remain (the list is in the tool, sorted).
 
 ## Adding a new view from the layer
 
@@ -491,10 +538,12 @@ Wired into `tools/check-repo-health.py` as step 3.
      a grid of them is `ui.tile.layer` (markup) with the look from the
      shared stylesheet, and where the boxes go is `ui.grid` (the column
      count and the rects); the band a full-panel view wears is `ui.shell`
-     (`head`/`foot`/`rule` + the health dot); a label with its value is
-     `ui.stat.row`, a fraction is `ui.stat.meter`; centred words are
+     (`head`/`foot`/`rule` + the health dot + `short_age`/`age`); a label
+     with its value is `ui.stat.row`, one list entry is
+     `ui.stat.list_row`, a fraction is `ui.stat.meter`; centred words are
      `ui.text.write`/`ui.panel.card` (a title, an optional body, a corner
-     tag, an accent bar, and the one scale-to-fit rule).
+     tag, an accent bar, and the one scale-to-fit rule), and a paragraph
+     broken to a width is `ui.text.wrap`.
 4. Never let a draw raise: return the frame unchanged. If the view
    composes several layers, compose them with `ui.base.chain`.
 5. Remove the view's path from `EXEMPTIONS` in
@@ -616,19 +665,47 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   20px) instead of three 69px ones (12px floor), `cols` is a real param,
   and `picker_regions` generates the matching tap rects. A dedicated
   narrow-band renderer is no longer needed.
-- **The remaining hand-drawing views** (the gate's 19 exemptions) are the
+- **The remaining hand-drawing views** (the gate's 17 exemptions) are the
   bigger migration: `beads*`, `row_draw`, `macbook_draw`/`macbook_strip`,
-  `qr`/`qr_common`, `reload`, `stream`, `activity`, `clock`,
-  `retro_grid_draw`, `touch_confidence_draw`, `feed_health`, `life`,
-  `playlist`/`playlist_bar` and the two `_html_*` non-views. The vocabulary
-  they need all exists now (`tile` + `grid`, `text`, `shell`, `stat`,
-  `panel`), so
+  `qr`/`qr_common`, `reload`, `stream`, `clock`, `retro_grid_draw`,
+  `touch_confidence_draw`, `life`, `playlist`/`playlist_bar` and the two
+  `_html_*` non-views. The vocabulary they need all exists now (`tile` +
+  `grid`, `text` + `wrap`, `shell`, `stat` + `list_row`, `panel`), so
   each is a straight migration with its own test story, not new design.
 - **Layout-mode taps.** While a layout owns the panel the touch service
   evaluates global regions only (view-scoped regions are skipped), so a
   band's tiles need global `touch.json` entries at the band geometry
   (`picker.picker_regions(w, h, views, rect=<absolute band rect>)`
   produces them). Not wired into a shipped config yet.
+- **Three copies of “broken to a width” survive** in exempt views:
+  `beads_common._wrap`, `macbook_strip._wrap` and `_html_error._wrap`
+  (activity's was deleted this increment, section 2g). They take a PIL
+  `draw` + `font` rather than a screen + size, so folding them onto
+  `ui.text.wrap` means changing their call sites and their own tests:
+  its own increment.
+- **Two copies of the band's age line survive** in `row_draw._age` and
+  `beads_age._age` (both `"updated 3m ago"`, section 2g moved the shared
+  bucket rule into `ui.shell.short_age`). They are inside exempt views, so
+  they go with those views' migrations.
+- **A layout switch still shows the panel fill in region by region.**
+  `daemon_layout._composite_now()` presents a black composite immediately
+  (so the first pixel is not delayed by any renderer) and every region's
+  own present then recomposites; a region that has not drawn yet is black
+  in that composite. Measured this increment: a snapshot taken between
+  two regions' presents shows the top half drawn and the bottom half
+  black. The single-view path cannot do this (compose-then-swap), so it is
+  a layout-mode-only seam, and the two options are to keep the previous
+  full frame until every region has drawn once (adds the slowest
+  renderer's first draw to `first_pixel_ms`) or to leave it as it is. Not
+  changed here: it is a deliberate trade from section 7's increment and
+  the fix belongs with the switch-latency budget, not with a view
+  migration.
+- **Two tests had to stop reading one snapshot.** Because of that seam,
+  `test_bands_render_and_the_panel_is_not_black` and this increment's
+  split test now retry until every region's own band rule is on the
+  frame; a single snapshot can legitimately catch a half-black composite
+  under load, which is how the full `discover` run reddened the former
+  once (it passes on its own and in the 524-test prefix sweep).
 - **PR**: this run's branch is pushed by the orchestrator; the PR itself
   has not been opened from here.
 
@@ -640,12 +717,18 @@ Full objective suite (the stop-condition command), after this increment:
         tests.test_unified tests.test_chat tests.test_html \
         tests.test_html_runtime_install tests.test_control tests.test_options \
         tests.test_layout && python3 tools/check-lines.py
-    component layer ok: 19 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 331 tests in 52.5s
+    component layer ok: 17 shipped module(s) still draw by hand; all exempt, none stale
+    Ran 331 tests in 52.8s
     OK
     line budget ok: all source files within 250 lines
     $ echo $?
     0
+
+(The 331 is the same count as section 2f's run: this increment added five
+tests to `tests/test_shell.py`, two to `tests/test_feed_health.py` and two
+to `tests/test_layout_presets.py`, and the stop-condition set does not
+include those modules — the modules it does include are unchanged and
+still pass. The affected modules were run separately, below.)
 
     Also run this increment (not part of the gate, all affected):
     tests.test_grid      Ran 17 tests, OK      (new: the grid component)
@@ -1270,14 +1353,151 @@ _registry` raises `KeyError: 'accent_slot'` on the first entry;
 only pass on HEAD because `dock.ACCENT`/`glance.ACCENT` still existed —
 those two are pins on the new owner, not new-behaviour proofs).
 
+### The list dashboards on the component layer (this increment)
+
+`DISPLAYD_FAKE_FB=1 python3 /tmp/view_evidence.py` — real daemon on a
+loopback ephemeral port, temp policy/feedback paths, real HTTP at
+1920x1080:
+
+    feed_health (full panel, one warm feed pushed over /feed/chat/message)
+      size (1920, 1080)          band rule at y128 (36, 64, 92) = theme.rgb("rule")
+      warm dot in theme.rgb("ok") px 1610     cold dot in theme.rgb("muted") px 14453
+      old yellow (240, 200, 60) absent: True   old grey (128, 128, 128) absent: True
+      old rule (60, 60, 70) absent: True       capability advertised: partial
+
+    feed_health, the stale case (rendered directly, no wait involved)
+      theme.rgb("attention") px 2541           old yellow (240, 200, 60) absent: True
+
+    activity (full panel, one ok + one failed event over /feed/activity/event)
+      size (1920, 1080)          band rule at y128 (36, 64, 92) = theme.rgb("rule")
+      ok px 1954                 alert px 1913
+      old green (110, 220, 130) absent: True   old red (255, 110, 100) absent: True
+
+    the two views in reduced regions (both declare `partial`)
+      split-50-50  top=feed_health bottom=activity  -> 200
+        top half inked 70368 px, bottom half 1036800 px (the bottom's own
+        page fill plus its content; the band rule of each region is the
+        assertion in the test, because black would satisfy a raw ink count)
+      15-70-15     left=feed_health center=row right=activity -> 200
+        left band inked 56790 px, right band inked 32065 px
+
+    every layout style, region by region (badges over all of them)
+      full                 request_to_first_pixel_ms (daemon /state) 9.4  badges True  errors []
+      split-50-50          (same)                                     badges True  errors []
+      split-50-50-columns  (same)                                     badges True  errors []
+      15-70-15             (same)                                     badges True  errors []
+
+    system buttons over a template view (html/status.html)
+      error card absent: True    accent px 1804    badge fill px 29416
+
+    what a preset slot offers now
+      offered: [activity, chat, clock, feed_health, html, options, picker, row, solid]
+      newly offered by this increment: [feed_health, activity]
+
+Frames saved: `/tmp/panel-feed-health-1920x1080.png`,
+`/tmp/panel-feed-health-stale-1920x1080.png`,
+`/tmp/panel-activity-1920x1080.png`,
+`/tmp/panel-split-dashboards-1920x1080.png`,
+`/tmp/panel-bands-dashboards-1920x1080.png`,
+`/tmp/panel-status-buttons-1920x1080.png`,
+`/tmp/panel-style-{full,split-50-50,split-50-50-columns,15-70-15}-t11.png`.
+
+Reading it: both views paint the band's own rule token at the band's own
+y; the four health words and the two outcome colours are palette roles,
+and the literals they replaced are *absent from the frame*; both render
+under HTTP in a 1920x540 half (so the `partial` claim is real); every
+style still paints with both badges and no region error; and the status
+template is a real render (no error card) with the buttons over it. The
+`/state` first-pixel figure is the daemon's own record of its last
+**`/show`** switch (9.4ms, budget 100ms) — layout switches are not
+recorded there, so the honest layout statement is the one section 7's
+evidence made (3–11ms) plus this run's region-by-region renders above.
+
+### The whole suite after this increment, and the one flake it exposed
+
+    $ python3 -m unittest discover -s tests
+    Ran 1477 tests in 364.323s
+    FAILED (failures=3, errors=1, skipped=10)
+
+That is the three known-red modules this box always carries
+(`test_mac_zoom`'s ffmpeg path, `test_deploy_reload_proof`,
+`test_talon_apps`) plus TWO others that this increment ran into and both
+turned out to be load-sensitive, not code:
+
+- `test_layout_presets.test_bands_render_and_the_panel_is_not_black`
+  reddened once in an earlier full run **before** the hardening below,
+  when a single snapshot legitimately caught the half-black composite of
+  the layout seam ("Still owed"). It now retries until every band has
+  content; on HEAD's archive it never reddened, so the seam is timing, not
+  a regression, and the mechanism is visible in
+  `/tmp/panel-split-dashboards-1920x1080.png` (top half drawn, bottom
+  half black) — the frame this evidence run captured by accident.
+- `test_obs_poll.TestLiveWire.test_against_real_tcp_obs_server` (a real
+  TCP socket and a frame deadline, nothing this increment touched): red
+  under the full run's load, green alone. Not changed here; recorded so
+  the next reader does not chase it.
+
+    $ python3 -m unittest tests.test_obs_poll       -> Ran 18 tests, OK
+    $ python3 -m unittest tests.test_layout_presets -> Ran 26 tests, OK
+
+### The list-dashboard assertions fail before, pass after
+
+No execution needed: the pre-change state is HEAD, and these are what the
+new assertions read there.
+
+    $ git show HEAD:renderers/feed_health.py | grep -n 'ImageDraw\|HEALTH_COLORS\|def _font\|def format_age\|(240, 200, 60)\|(60, 60, 70)\|(128, 128, 128)'
+    13:from PIL import ImageDraw, ImageFont
+    32:HEALTH_COLORS = {
+    34:    "stale": (240, 200, 60),   # yellow
+    36:    "cold": (128, 128, 128),   # grey
+    40:def _font(screen, name, size):
+    47:def format_age(age_seconds):
+    76:                "color": HEALTH_COLORS.get(health, HEALTH_COLORS["cold"]),
+    100:    draw = ImageDraw.Draw(img)
+    109:              fill=(60, 60, 70), width=2)
+
+    $ git show HEAD:renderers/activity.py | grep -n 'ImageDraw\|C_OK\|C_ERR\|def _font\|def _wrap\|textwrap'
+    15:import textwrap
+    18:from PIL import ImageDraw, ImageFont
+    60:C_OK = (110, 220, 130)
+    61:C_ERR = (255, 110, 100)
+    64:def _font(screen, name, size):
+    110:def _wrap(draw, text, font, max_w, rows=2, width=52):
+    119:        out.extend(textwrap.wrap(para, width) or [""])
+
+    $ git show HEAD:renderers/feed_health.py | grep -n '"warm"\|"error"'
+    33:    "warm": (80, 220, 120),    # green
+    35:    "error": (255, 80, 80),    # red
+
+    $ python3 -c "import sys; sys.path.insert(0,'renderers'); import theme; \
+        print((240,200,60) == theme.rgb('attention'), (60,60,70) == theme.rgb('rule'), \
+              (110,220,130) == theme.rgb('ok'), (255,110,100) == theme.rgb('alert'))"
+    False False False False
+
+So on the pre-change tree `tests/test_feed_health.py`'s new
+`test_the_view_owns_no_colour_map_of_its_own` fails on both
+`HEALTH_COLORS` and the `ImageDraw` import, its
+`test_age_buckets_are_the_component_s` fails (no `format_age` importable
+from the view — the assertion is `assertFalse(hasattr(...))`), the two
+`ink` assertions read a `KeyError: 'color'`, and
+`tests/test_shell.py`'s `MigratedViewsTest` fails on the two views
+(`ImageDraw`, no `from ui import`) and on the rendered-role assertions,
+whose old colours the four inequalities above prove are not the tokens.
+`tests/test_layout_presets.py`'s split test fails on HEAD for the simpler
+reason that the two views are declared `full` there, so
+`POST /layout {"preset": "split-50-50", ...}` is a 400.
+
 ## Note on the stop condition
 
 The command above exits zero, but that is a **floor, not the finish line**:
-the gate is a ratchet with 19 exemptions, most views still hand-draw, and
+the gate is a ratchet with 17 exemptions, most views still hand-draw, and
 the component vocabulary exists (`system_buttons`, `ui.tile` + `ui.grid`,
 `ui.shell` + `ui.stat` + `ui.text`, `ui.panel`, and the `ui.base.chain`
-primitive) but the larger views have not been migrated onto it. What is
-left is those migrations, the control page's style picker and the
-layout-mode tap entries. The stop condition became reachable because the
-gate exists and the health gate stays green while the migration is in
-flight — which is exactly what it was designed to allow.
+primitive) but the larger views (`beads*`, `row_draw`, `macbook_*`, `qr`,
+`reload`, `stream`, `clock`, `retro_grid`, `touch_confidence`, `life`)
+have not been migrated onto it. What is left is those migrations, the
+control page's style picker, the layout-mode tap entries, and the layout
+composite seam recorded in "Still owed". The stop condition became
+reachable because the gate exists and the health gate stays green while
+the migration is in flight — which is exactly what it was designed to
+allow.
