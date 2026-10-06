@@ -598,13 +598,17 @@ fill left-to-right, side edges fill bottom-to-top. Thickness defaults to
 animated views directly and is repainted on a short tick (`tick_seconds`,
 default 0.2s) for static views that park after one frame.
 
-The bar wears the page's colours: a renderer may declare an `ACCENT`
-module attribute (`"#rrggbb"`, a colour name, or an `(r, g, b)` tuple)
-and the bar uses it; a per-view `color` in the playlist item overrides it
-(handy for views owned by other tasks), then the playlist-level `color`,
-then a white fallback. The fill always carries a contrast border over a
-dark track, so it reads on dark and light views alike. Renderers that
-declare no `ACCENT` work exactly as before.
+The bar wears the page's colours: a view's accent is its palette slot
+(`theme.ACCENT_SLOTS`, resolved into the renderer entry by
+`renderer_registry` and read by `playlist_color.accent_for`), so a
+shipped view declares no colour of its own. A renderer from outside this
+tree may still declare an `ACCENT` module attribute (`"#rrggbb"`, a
+colour name, or an `(r, g, b)` tuple) to opt in, and a per-view `color` in
+the playlist item overrides either (handy for views owned by other
+tasks); then the playlist-level `color`, then a white fallback. The fill
+always carries a contrast border over a dark track, so it reads on dark
+and light views alike. Renderers with no slot and no `ACCENT` work exactly
+as before.
 
 Rotation yields: a notice or chat-attention transient pauses it (bar
 hidden) and it resumes with a fresh dwell on return; a blanked panel

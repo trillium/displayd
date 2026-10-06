@@ -222,6 +222,14 @@ out carries one generated `<style>` block:
 - **Pillow renderers** `import theme` and call `theme.rgb("badge")` for
 the role they mean. `rgb()` is the one conversion point.
 
+A view's identity accent is part of the palette too
+(`theme.ACCENT_SLOTS`), not a per-view constant: `renderer_registry`
+resolves the slot into every renderer entry it loads and
+`playlist_color.accent_for` reads it, so the playlist bar, the renderer
+listing and the picker all agree without a renderer declaring a colour.
+A renderer from outside this tree may still declare its own `ACCENT`, which
+takes precedence over the slot.
+
 A migrated template carries **no** colour literal: `layout.html` and
 `status.html` are the first two, and `tests/test_theme.py` fails on any
 `#rrggbb` in a migrated style, so a template cannot quietly re-author a

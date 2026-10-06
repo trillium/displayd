@@ -1,10 +1,16 @@
 """Playlist bar colours: parsing and per-view resolution.
 
 Single concept: what colour the progress bar wears. Resolution order is
-per-view item ``color`` (operator override) > renderer ``ACCENT`` >
-playlist-level ``color`` default > white fallback. A renderer declares
-``ACCENT = "#rrggbb"`` (or a colour name, or an ``(r, g, b)`` tuple) to
-opt in; declaring nothing keeps working exactly as before.
+per-view item ``color`` (operator override) > the renderer's own ``ACCENT``
+> the view's palette accent slot (``theme.ACCENT_SLOTS``, resolved by
+``renderer_registry`` into the entry's ``accent_slot``) > the playlist-level
+``color`` default > white fallback.
+
+A shipped view owns no colour constant: its accent is its palette slot, so
+nothing here repeats ``theme.py``. A renderer may still declare
+``ACCENT = "#rrggbb"`` (or a colour name, or an ``(r, g, b)`` tuple) to opt
+in, which is how a plugin outside this repo keeps its identity colour; a
+renderer that declares neither resolves exactly as before.
 """
 
 DEFAULT_COLOR = (255, 255, 255)
@@ -52,13 +58,17 @@ def accent_for(renderer_entry, item_color=None, default=DEFAULT_COLOR):
     """Resolve the bar colour for one view.
 
     ``renderer_entry`` is a registry entry as built by
-    ``displayd.load_renderers`` (``{"module": mod, ...}``); entries without
-    a module (broken plugins) fall through to the default. Precedence:
-    per-view item ``color`` > renderer ``ACCENT`` > playlist default.
-    Never raises: garbage resolves to the default."""
+    ``displayd.load_renderers`` (``{"module": mod, "accent_slot": ...}``);
+    entries without a module (broken plugins) fall through to the default.
+    Precedence: per-view item ``color`` > the module's own ``ACCENT`` >
+    the entry's palette ``accent_slot`` > the default. The order puts a
+    plugin's declared identity first and the palette second, so a shipped
+    view (which declares no ``ACCENT``) reads ``theme.py`` and nothing
+    else. Never raises: garbage resolves to the default."""
+    entry = renderer_entry if isinstance(renderer_entry, dict) else {}
     for candidate in (item_color,
-                      getattr((renderer_entry or {}).get("module"), "ACCENT", None)
-                      if isinstance(renderer_entry, dict) else None,
+                      getattr(entry.get("module"), "ACCENT", None),
+                      entry.get("accent_slot"),
                       default):
         parsed = parse_color(candidate, None)
         if parsed is not None:

@@ -28,6 +28,7 @@ from touch_confidence_regions import (
     format_label,
 )
 from touch_confidence_taps import _last_line, summarize, valid_taps
+import theme
 
 NAME = "touch_confidence"
 DESCRIPTION = (
@@ -35,7 +36,6 @@ DESCRIPTION = (
     "(feed POST /feed/touch_confidence/tap)"
 )
 STATIC = False
-ACCENT = "#50DC78"
 PARAMS = {
     "title": {"type": "string", "help": "header text, default TOUCH CONFIDENCE"},
     "instructions": {
@@ -86,7 +86,6 @@ __all__ = [
     "NAME",
     "DESCRIPTION",
     "STATIC",
-    "ACCENT",
     "PARAMS",
     "INPUTS",
     "POLL",
@@ -112,7 +111,7 @@ def run(screen, params, stop):
     title = str(params.get("title") or DEFAULT_TITLE)
     instructions = str(params.get("instructions") or DEFAULT_INSTRUCTIONS)
     bg = screen.color(params.get("background"), (10, 10, 14))
-    accent = screen.color(ACCENT, (80, 220, 120))
+    accent = theme.accent_rgb(NAME)
     regions = coerce_regions(params, screen.W, screen.H)
 
     last_key = None

@@ -24,6 +24,10 @@ constants: surfaces (`page`, `band`, `panel`, `pane`, `edge`, `rule`,
   rendered pixels rather than trusting the text.
 - **Pillow** imports `theme` and reads `theme.rgb("<role>")`;
   `rgb()` is the only hex-to-tuple conversion point.
+- **The view accents** are tokens too: `ACCENT_SLOTS` (one accent per view
+  name) is resolved by `renderer_registry` into every renderer entry and
+  read by `playlist_color.accent_for`, so no shipped renderer module holds
+  an `ACCENT` literal any more (section 2e).
 
 ### 2. The component layer — `renderers/ui/`
 
@@ -249,9 +253,9 @@ What `tests/test_panel.py` (21 tests) pins:
 - `card` returns the frame unchanged on a broken screen and returns `None`
   for a `None` frame (the layer's never-blank obligation);
 - the three views hold no `from PIL`, no `ImageDraw`/`ImageFont`, no
-  `_font`/`_fits`/`_autofit`/`_shrink_to_fit`, and the only hex literal left
-  in them is the view's playlist accent that `theme.ACCENT_SLOTS` also
-  carries (the one remaining per-view colour constant; see "Still owed");
+  `_font`/`_fits`/`_autofit`/`_shrink_to_fit`, no hex literal **and no
+  `ACCENT` at all** (the assertion was tightened this increment: their
+  identity colour is the palette slot, not a literal they carry);
 - `notice.severity_ink` is a role lookup for every severity and is total on
   an unknown word, and the rendered bar is exactly `theme.rgb("alert")` /
   `attention` / `accent` for critical / warn / info;
@@ -262,6 +266,51 @@ What `tests/test_panel.py` (21 tests) pins:
 The gate's exemption list went **22 → 19** (`renderers/notice.py`,
 `renderers/text.py`, `renderers/sleep.py` removed): the gate now prints
 `19 shipped module(s) still draw by hand`.
+
+### 2e. The accent token — the last per-view colour constants (this increment)
+
+`ACCENT = "#rrggbb"` lived in **sixteen** renderer modules and
+`playlist_color.accent_for` read it off the module by name, while
+`theme.ACCENT_SLOTS` already held the same table. That is defect 2 in
+miniature: one colour, two owners, and the palette one was dead.
+
+Now the palette is the only owner:
+
+| step | what owns it |
+| --- | --- |
+| the value | `theme.ACCENT_SLOTS[view]` (one entry per view identity) |
+| the declaration | `renderer_registry.load_renderers` resolves the slot into each entry it loads as `accent_slot` (a view the palette does not know gets `None`) |
+| the resolution | `playlist_color.accent_for`: per-view item `color` > a renderer's **own** `ACCENT` (a plugin's opt-in, still honoured) > the entry's `accent_slot` > the playlist default |
+| the drawing | a view that paints with its accent calls `theme.accent_rgb(NAME)` / `theme.rgb("dock")`, never a local copy |
+
+Sixteen literals deleted (`activity`, `chat` (a tuple), `clock`, `macbook`,
+`macbook_glance_color`, `notice`, `options`, `picker`, `reload`,
+`retro_grid`, `row`, `stream`, `text`, `touch_confidence`, `unified`,
+`unified_dock`). `macbook_glance_color` was a values-only colour module and
+is now values-only without the accent; `unified_dock`'s stale amber
+`(255, 180, 80)` was the palette's `attention` to the byte, so it became
+`theme.rgb("attention")` while its own grey step `DIM` stayed (the palette
+has no role that equals it). Every slot value is byte-identical to the
+literal it replaced, so **this is a pure ownership change: not one panel
+pixel moves** — which is why the evidence below checks equality rather than
+a diff.
+
+What pins it (`tests/test_theme.py::AccentOwnershipTest`, 4 tests, plus the
+tightened `tests/test_panel.py` assertions):
+
+- no shipped renderer module declares `^ACCENT =` (offenders named);
+- every loaded entry's `accent_slot` equals `theme.accent(name, None)`, and
+  for a slotted view `accent_for(entry)` equals `theme.accent_rgb(name)`
+  while an un-slotted view still falls through to the playlist default;
+- a hand-built entry with a module `ACCENT` still beats the slot (the
+  plugin opt-in);
+- the four modules that *draw* with an accent (`reload`,
+  `touch_confidence`, `unified_dock`, `macbook_glance_map`) reference
+  `theme.` and name no `ACCENT`;
+- `tests/test_panel.py` now fails on **any** hex literal or `ACCENT` in
+  `notice`/`text`/`sleep`, and `tests/test_unified.py` /
+  `tests/test_macbook_preview.py` read `theme.rgb("dock")` /
+  `theme.rgb("macbook")` instead of `dock.ACCENT` / `glance.ACCENT`.
 
 ### 3. The shared chrome, composed at load time — `html-templates/_chrome.html`
 
@@ -366,8 +415,13 @@ Wired into `tools/check-repo-health.py` as step 3.
    `STATIC`, and `CAPABILITY` when it can render into a region smaller
    than the panel (`partial`, or `primary` if it may be a preset's centre;
    omitted means `full`, and `POST /layout` will refuse it in a band).
-2. Take every colour from `renderers/theme.py`. A `#rrggbb` in a view is a
-   defect; in a migrated template `tests/test_theme.py` fails on one.
+2. Take every colour from `renderers/theme.py`, including the view's own
+   identity accent: do **not** declare `ACCENT` — add the view to
+   `theme.ACCENT_SLOTS` and the registry resolves it into the renderer
+   entry, so the playlist bar, `GET /renderers` and the picker all agree.
+   A `#rrggbb` in a view is a defect; in a migrated template
+   `tests/test_theme.py` fails on one, and no shipped module may declare
+   `ACCENT` (`tests/test_theme.py::AccentOwnershipTest`).
 3. Draw through the component layer:
    - a template view renders a named template from `html-templates/`. The
      token block reaches it automatically. If it draws panel chrome, it
@@ -472,13 +526,11 @@ the pre-change tree (red instead of the badge fill at the badge tile).
 
 ## Still owed (with the reason)
 
-- **Per-view colour constants** — `ACCENT = "#rrggbb"` still lives in
-  ~12 renderer modules, and `playlist_color.accent_for` reads a renderer's
-  `ACCENT` attribute by name. Folding that into `theme.ACCENT_SLOTS` (the
-  table already exists) is the rest of the token migration, and it is a
-  behaviour change, so it wants its own increment and its own test. It is
-  now the ONLY colour left in the three migrated card views, and the
-  structural test names it as the exception rather than ignoring it.
+- ~~**Per-view colour constants**~~ — **done this increment** (section
+  2e): no shipped renderer declares `ACCENT`, `theme.ACCENT_SLOTS` is the
+  only owner, and `accent_for` resolves the slot through the renderer
+  entry. A plugin from outside this tree may still declare its own
+  `ACCENT`, which is honoured ahead of the slot.
 - **The card vocabulary could still pull more views**: `feed_health`'s
   cold-start/error cards and `beads_detail_card` are a title plus a body,
   and `touch_confidence_draw`'s bar/title/diagnostics is the other obvious
@@ -497,12 +549,21 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   publishes them and `POST /layout {"preset": ...}` applies them, but the
   phone page has no style picker and no per-slot view selects. That is the
   operator surface for the “offered per style” rule and the next UI step.
+  (The per-view colours are no longer part of that surface's work: a
+  renderer list now carries the palette accent, not a view literal.)
 - **A narrow-band application column.** `picker` in a 288px band reflows but
   is cramped (3 columns of ~69px tiles); a `cols` param is the fix and it is
   now a one-place change in `ui.tile.layer` (the tile component owns the
   grid's label fit); a dedicated narrow-band renderer would be the
   alternative. The presets are already honest about it: the band is the
   tappable application list, just not yet a pretty one.
+- **The remaining hand-drawing views** (the gate's 19 exemptions) are the
+  bigger migration: `beads*`, `row_draw`, `macbook_draw`/`macbook_strip`,
+  `qr`/`qr_common`, `reload`, `stream`, `activity`, `clock`,
+  `retro_grid_draw`, `touch_confidence_draw`, `feed_health`, `life`,
+  `playlist`/`playlist_bar` and the two `_html_*` non-views. The vocabulary
+  they need all exists now (`tile`, `text`, `shell`, `stat`, `panel`), so
+  each is a straight migration with its own test story, not new design.
 - **Layout-mode taps.** While a layout owns the panel the touch service
   evaluates global regions only (view-scoped regions are skipped), so a
   band's tiles need global `touch.json` entries at the band geometry
@@ -520,19 +581,23 @@ Full objective suite (the stop-condition command), after this increment:
         tests.test_html_runtime_install tests.test_control tests.test_options \
         tests.test_layout && python3 tools/check-lines.py
     component layer ok: 19 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 326 tests in 52.486s
+    Ran 326 tests in 52.3s
     OK
     line budget ok: all source files within 250 lines
+    $ echo $?
+    0
+
+    Also run this increment (not part of the gate, all affected):
+    tests.test_theme     Ran 27 tests, OK      (was 23; +4 AccentOwnershipTest)
+    tests.test_panel     Ran 21 tests, OK      (tightened assertions)
+    tests.test_playlist  Ran 19 tests, OK
+    tests.test_macbook_preview  Ran 29 tests, OK
+
+    $ python3 tools/check-repo-health.py
+    line budget ok: all source files within 250 lines
+    ok: no generated native artifacts tracked
+    component layer ok: 19 shipped module(s) still draw by hand; all exempt, none stale
     rc=0
-
-    (with tests.test_layout_presets added to the same run: Ran 351 tests, OK)
-
-    $ python3 tools/check-repo-health.py      -> rc=0
-    (line budget, no tracked generated artifacts, component layer)
-
-    $ python3 -m unittest tests.test_components -v      -> Ran 15 tests, OK
-    $ python3 -m unittest tests.test_panel -v           -> Ran 21 tests, OK
-    $ python3 -m unittest tests.test_layout_presets -v  -> Ran 25 tests, OK
 
     Full `discover` this increment (the three known-red modules on this box
     are never run as a gate: tests.test_mac_zoom,
@@ -945,13 +1010,110 @@ colour tuples) and every pixel assertion that reads `theme.rgb("rule")` at
 the band's rule row (the old line was `C_LINE = (60, 60, 70)`, not the
 palette's `(36, 64, 92)`) fail on the old tree and pass now.
 
+### The accent is one owner (this increment)
+
+`DISPLAYD_FAKE_FB=1 python3 /tmp/accent_evidence.py` — real daemon on a
+loopback ephemeral port, temp policy/feedback paths, real HTTP:
+
+    == daemon ==
+    display: {'width': 1920, 'height': 1080, 'bpp': 32, 'stride': 7680, ...}  version: 0.8.0
+
+    == the advertised accent is the palette slot ==
+      activity           advertised=#50dc78 slot=#50DC78 ok
+      chat               advertised=#7fd1ff slot=#7FD1FF ok
+      clock              advertised=#4dc3ff slot=#4DC3FF ok
+      macbook            advertised=#4da3ff slot=#4DA3FF ok
+      notice             advertised=#5ac8ff slot=#5AC8FF ok
+      options            advertised=#9cc8ff slot=#9CC8FF ok
+      picker             advertised=#7bdff2 slot=#7BDFF2 ok
+      reload             advertised=#50dc78 slot=#50DC78 ok
+      retro_grid         advertised=#ffd23f slot=#FFD23F ok
+      row                advertised=#5cff9d slot=#5CFF9D ok
+      stream             advertised=#ff4d4d slot=#FF4D4D ok
+      text               advertised=#ffffff slot=#FFFFFF ok
+      touch_confidence   advertised=#50dc78 slot=#50DC78 ok
+      unified            advertised=#7bdff2 slot=#7BDFF2 ok
+      14 slotted view(s) advertised; mismatches: 0
+
+    == the playlist bar paints the token (clock -> row) ==
+      clock  bar row(,1076): token (77, 195, 255) present=True  filled=1003px (52%)
+      row    bar row(,1076): token (92, 255, 157) present=True  filled=1074px (56%)
+
+    == a view that draws its own accent reads the token (reload) ==
+      reload bar px(x,9) all == theme.accent_rgb('reload') (80, 220, 120): True
+      bar colour count: 48
+
+    == layout styles at 1920x1080 (system buttons over every one) ==
+      full                   style=full                 first_pixel_ms=3.1 badges=(True, True)
+          regions: view=(0, 0, 1920, 1080)
+      split-50-50            style=split-50-50          first_pixel_ms=3.0 badges=(True, True)
+          regions: top=(0, 0, 1920, 540), bottom=(0, 540, 1920, 540)
+      split-50-50-columns    style=split-50-50-columns  first_pixel_ms=3.3 badges=(True, True)
+          regions: left=(0, 0, 960, 1080), right=(960, 0, 960, 1080)
+      15-70-15               style=15-70-15             first_pixel_ms=5.9 badges=(True, True)
+          regions: left=(0, 0, 288, 1080), center=(288, 0, 1344, 1080), right=(1632, 0, 288, 1080)
+
+    == system buttons over a template view (html/status) ==
+      home+sleep badge tiles on the frame: (True, True)
+      error card on the frame: False (False = a real template render)
+      accent px: 1998  panel px: 29852  badge px: 29416
+      first_pixel_ms=6.1
+
+Reading it: all fourteen slotted views advertise exactly their palette slot
+(the sixteen deleted literals were byte-identical, so nothing moved), the
+playlist bar really paints `theme.accent_rgb(<view>)` for two different
+views, `reload`'s own accent bar is the token to the pixel, every layout
+style renders 1920x1080 in 3–6 ms with both badges over it, and the html
+status template is a real render (no error card) with the buttons over it.
+Frames saved: `/tmp/accent-evi-*.png`.
+
+### The accent assertions fail before, pass after (this increment)
+
+    $ git grep -c '^ACCENT = ' HEAD -- 'renderers/*.py'
+    HEAD:renderers/activity.py:1      HEAD:renderers/notice.py:1
+    HEAD:renderers/chat.py:1          HEAD:renderers/options.py:1
+    HEAD:renderers/clock.py:1         HEAD:renderers/picker.py:1
+    HEAD:renderers/macbook.py:1       HEAD:renderers/reload.py:1
+    HEAD:renderers/macbook_glance_color.py:1  HEAD:renderers/retro_grid.py:1
+    HEAD:renderers/row.py:1           HEAD:renderers/stream.py:1
+    HEAD:renderers/text.py:1          HEAD:renderers/theme.py:1
+    HEAD:renderers/touch_confidence.py:1  HEAD:renderers/unified.py:1
+    HEAD:renderers/unified_dock.py:1
+
+    $ git show HEAD:renderer_registry.py | sed -n '78,90p'
+        found[getattr(mod, "NAME", name)] = {
+            "module": mod,
+            ... "capability": capability.coerce(getattr(mod, "CAPABILITY", None)),
+        }        <- no accent_slot key at all
+
+    $ git show HEAD:playlist_color.py | sed -n '58,64p'
+        for candidate in (item_color,
+                          getattr((renderer_entry or {}).get("module"), "ACCENT", None)
+                          if isinstance(renderer_entry, dict) else None,
+                          default):
+
+    $ git show HEAD:renderers/notice.py | grep -n '^ACCENT'   -> 29:ACCENT = "#5AC8FF"
+    $ git show HEAD:renderers/text.py   | grep -n '^ACCENT'   -> 22:ACCENT = "#FFFFFF"
+
+So on the pre-change tree: `test_no_shipped_renderer_declares_its_own_accent`
+names sixteen offenders; `test_the_accent_is_resolved_from_the_palette_by_the
+_registry` raises `KeyError: 'accent_slot'` on the first entry;
+`test_the_views_that_draw_their_accent_read_the_palette` fails on `reload`,
+`touch_confidence`, `unified_dock` and `macbook_glance_map`; and
+`test_panel.py`'s tightened `assertEqual(HEX_RE.findall(src), [])` /
+`assertNotIn("ACCENT", src)` fails on `notice` and `text` (and both new
+`tests/test_unified.py` / `tests/test_macbook_preview.py` assertions would
+only pass on HEAD because `dock.ACCENT`/`glance.ACCENT` still existed —
+those two are pins on the new owner, not new-behaviour proofs).
+
 ## Note on the stop condition
 
 The command above exits zero, but that is a **floor, not the finish line**:
-the gate is a ratchet with 22 exemptions, most views still hand-draw, and the
-component vocabulary has four of its five components (`system_buttons`,
-`ui.tile`, `ui.shell`+`ui.stat`+`ui.text`, and the `ui.base.chain`
-primitive; `panel` is still owed). What is left is those components and the migration of the
-views that need them. The stop condition became reachable because the gate
-exists and the health gate stays green while the migration is in flight —
-which is exactly what it was designed to allow.
+the gate is a ratchet with 19 exemptions, most views still hand-draw, and
+the component vocabulary exists (`system_buttons`, `ui.tile`, `ui.shell` +
+`ui.stat` + `ui.text`, `ui.panel`, and the `ui.base.chain` primitive) but
+the larger views have not been migrated onto it. What is left is those
+migrations, the control page's style picker, the narrow-band tile column
+and the layout-mode tap entries. The stop condition became reachable
+because the gate exists and the health gate stays green while the
+migration is in flight — which is exactly what it was designed to allow.

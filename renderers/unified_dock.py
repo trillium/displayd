@@ -28,6 +28,7 @@ import _html_error
 import _html_native
 import _html_templates as templates
 import talon_apps as ta
+import theme
 
 TEMPLATE = "dock.html"
 BUILD_HINT = "build it: tools/build_litehtml.sh"
@@ -44,9 +45,9 @@ STALE_BODY = "feed quiet >30s -- last known"
 # marker from the title it introduces.
 STALE_MARKER = "STALE\u00a0\u00a0"
 
-DIM = (140, 150, 175)     # secondary text
-ACCENT = (110, 200, 135)  # live green: the head dot, the tap hint
-ALERT = (255, 180, 80)    # stale amber
+DIM = (140, 150, 175)     # secondary text: this strip's own grey step
+# The dock's live green and stale amber are palette identity, not this
+# file's: theme.ACCENT_SLOTS["dock"] and theme.rgb("attention").
 
 
 def dock_summary(state):
@@ -107,8 +108,8 @@ def dock_variables(state, stale, bg=(8, 10, 16), fg=(255, 255, 255)):
         "footer_right": TAP,
         "marker": marker,
         "dim": colour(DIM),
-        "accent": colour(ACCENT),
-        "alert": colour(ALERT),
+        "accent": colour(theme.rgb("dock")),
+        "alert": colour(theme.rgb("attention")),
         "line": colour(ta.C_LINE),
     }
 

@@ -13,9 +13,10 @@ This pins the one definition:
 - the card's bar, headline, body and tag come from the palette, and the
   palette's alert red is exactly what the old ``(255, 70, 70)`` literal is
   no longer;
-- the three migrated views hold no font loader, no fitting search and no
-  drawing primitive of their own -- only the per-view playlist accent,
-  which ``theme.ACCENT_SLOTS`` also carries and a later increment folds in.
+- the three migrated views hold no font loader, no fitting search, no
+  drawing primitive and no colour of their own: ``notice``, ``text`` and
+  ``sleep`` declare no ``ACCENT`` at all, because their identity colour is
+  the palette slot ``theme.ACCENT_SLOTS`` and nothing else.
 
 Run from the repo root:  python3 -m unittest tests.test_panel -v
 """
@@ -41,8 +42,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 MIGRATED = ("renderers/notice.py", "renderers/text.py",
             "renderers/sleep.py")
-CARDS = {"renderers/notice.py": "notice", "renderers/text.py": "text",
-         "renderers/sleep.py": "sleep"}
 
 
 class FakeScreen:
@@ -222,10 +221,10 @@ class MigratedCardViewsTest(unittest.TestCase):
                 self.assertNotIn("def _fits", src)
                 self.assertNotIn("def _autofit", src)
                 self.assertIn("from ui import panel", src)
-                # The only colour left is the view's playlist accent, which
-                # theme.ACCENT_SLOTS also carries (and sleep declared none).
-                self.assertLessEqual(set(HEX_RE.findall(src)),
-                                     {theme.accent(CARDS[rel])})
+                # Not one colour: the view's identity accent is the
+                # palette slot the registry resolves, never a literal here.
+                self.assertEqual(HEX_RE.findall(src), [])
+                self.assertNotIn("ACCENT", src)
 
 
 class NoticeCardTest(unittest.TestCase):

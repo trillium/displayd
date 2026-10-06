@@ -283,6 +283,79 @@ class TokenPixelTest(unittest.TestCase):
                          "var(--label-shade) did not resolve")
 
 
+class AccentOwnershipTest(unittest.TestCase):
+    """A view's identity colour lives in the palette, not in the view.
+
+    ``theme.ACCENT_SLOTS`` is the single owner of every accent. A shipped
+    renderer module that declares its own ``ACCENT`` is holding a colour
+    the palette already owns, and the playlist bar would then follow the
+    literal instead of the token. These pin both directions: no shipped
+    module declares one, and the registry resolves the slot so the bar,
+    the picker and ``GET /renderers`` all read the palette.
+    """
+
+    def shipped_sources(self):
+        out = {}
+        for name in sorted(os.listdir(displayd.RENDERER_DIR)):
+            if not name.endswith(".py") or name == "theme.py":
+                continue
+            with open(os.path.join(displayd.RENDERER_DIR, name),
+                      encoding="utf-8") as handle:
+                out[name] = handle.read()
+        return out
+
+    def test_no_shipped_renderer_declares_its_own_accent(self):
+        offenders = [name for name, src in self.shipped_sources().items()
+                     if re.search(r"(?m)^ACCENT\s*=", src)]
+        self.assertEqual(
+            offenders, [],
+            "accent literal(s) belong in theme.ACCENT_SLOTS: %s" % offenders)
+
+    def test_the_accent_is_resolved_from_the_palette_by_the_registry(self):
+        import playlist_color
+        from renderer_registry import load_renderers
+
+        entries = load_renderers(displayd.RENDERER_DIR)
+        slotted = 0
+        for name, entry in sorted(entries.items()):
+            if "module" not in entry:
+                continue
+            with self.subTest(view=name):
+                slot = theme.accent(name, None)
+                self.assertEqual(entry["accent_slot"], slot)
+                if slot is None:
+                    # A view the palette does not know keeps falling
+                    # through to the playlist default, exactly as before.
+                    self.assertEqual(playlist_color.accent_for(entry),
+                                     playlist_color.DEFAULT_COLOR)
+                else:
+                    slotted += 1
+                    self.assertEqual(playlist_color.accent_for(entry),
+                                     theme.accent_rgb(name))
+        self.assertGreater(slotted, 10, "the slots stopped resolving")
+
+    def test_a_plugin_declaration_still_beats_the_slot(self):
+        import playlist_color
+        import types
+
+        module = types.ModuleType("plugin_clock")
+        module.ACCENT = "#112233"
+        entry = {"module": module, "accent_slot": theme.accent("clock")}
+        self.assertEqual(playlist_color.accent_for(entry), (17, 34, 51))
+
+    def test_the_views_that_draw_their_accent_read_the_palette(self):
+        sources = self.shipped_sources()
+        # These four are not plain declarations: they paint with the view's
+        # accent (a bar, a focus rect, a dock variable), so they must read
+        # the token where they draw rather than hold a copy of it.
+        for name in ("reload.py", "touch_confidence.py", "unified_dock.py",
+                     "macbook_glance_map.py"):
+            with self.subTest(module=name):
+                self.assertIn("theme.", sources[name])
+                self.assertNotIn("ACCENT", sources[name].replace(
+                    "ACCENT_SLOTS", ""))
+
+
 class PillowConsumerTest(unittest.TestCase):
     """The path that has not migrated still reads the palette."""
 

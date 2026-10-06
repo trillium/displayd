@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import qr_common
 import reload_highlights
+import theme
 from _qrcodegen import QrCode
 
 from PIL import ImageDraw
@@ -45,8 +46,6 @@ from PIL import ImageDraw
 NAME = "reload"
 DESCRIPTION = "Deploy confirmation: RELOADED + commit SHA + commit QR (transient)"
 STATIC = True
-# Playlist progress-bar colour for this view (see playlist.accent_for).
-ACCENT = "#50DC78"
 PARAMS = {
     "sha": {"type": "string", "required": True,
             "help": "full 40-character deployed commit SHA; the QR encodes "
@@ -172,7 +171,7 @@ def run(screen, params, stop):
         _prompt(screen, TITLE, "could not encode the commit QR")
         return
 
-    accent = screen.color(ACCENT, (80, 220, 120))
+    accent = theme.accent_rgb(NAME)
     bg = (10, 10, 14)
     fg = (255, 255, 255)
     img = screen.new_image(bg)

@@ -25,8 +25,11 @@ surfaces and the four text steps (``INK``/``MUTED``/``MUTED_SOFT``/
 job, and add it here -- never in a view.
 
 Renderer accents live here too (``ACCENT_SLOTS``): the per-view colour a
-progress bar wears, keyed by view name. A renderer that keeps its own
-``ACCENT = "#rrggbb"`` is holding a colour the palette already owns.
+progress bar wears, keyed by view name. ``renderer_registry`` resolves the
+slot into every entry it loads (``accent_slot``) and
+``playlist_color.accent_for`` reads it, so a shipped view declares no
+colour at all; a renderer from outside this tree may still declare its own
+``ACCENT = "#rrggbb"``, which wins over the slot.
 """
 
 # ---------------------------------------------------------------- palette

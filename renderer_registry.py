@@ -8,7 +8,10 @@ takes the daemon down.
 
 This is also where a view's capability declaration is normalized: an
 undeclared or misspelled one becomes ``full`` (see capability.py), so a
-view that has not said it can be reduced cannot land in a layout slot.
+view that has not said it can be reduced cannot land in a layout slot --
+and where its palette accent slot is resolved: the view's identity colour
+lives in ``theme.ACCENT_SLOTS``, never as a per-view literal, and the entry
+carries it so a plugin's own ``ACCENT`` declaration can still win.
 """
 
 import importlib.util
@@ -57,6 +60,25 @@ try:
     macbook_layout_module = _load_shared_helper("macbook_layout")
 except Exception:
     macbook_layout_module = None
+try:
+    theme_module = _load_shared_helper("theme")
+except Exception:
+    theme_module = None
+
+
+def _accent_slot(name):
+    """The palette accent slot for a view name, or ``None``.
+
+    ``None`` means the palette does not know this view (a plugin, a
+    synthetic test entry), which is a legitimate answer: the playlist bar
+    then falls through to the plugin's own declaration and the default.
+    """
+    if theme_module is None:
+        return None
+    try:
+        return theme_module.accent(name, None)
+    except Exception:  # a palette must never stop a renderer loading
+        return None
 
 
 def load_renderers(directory):
@@ -78,7 +100,8 @@ def load_renderers(directory):
             continue
         if not hasattr(mod, "run"):
             continue
-        found[getattr(mod, "NAME", name)] = {
+        view_name = getattr(mod, "NAME", name)
+        found[view_name] = {
             "module": mod,
             "description": getattr(mod, "DESCRIPTION", ""),
             "params": getattr(mod, "PARAMS", {}),
@@ -86,5 +109,6 @@ def load_renderers(directory):
             "static": getattr(mod, "STATIC", True),
             "capability": capability.coerce(
                 getattr(mod, "CAPABILITY", None)),
+            "accent_slot": _accent_slot(view_name),
         }
     return found

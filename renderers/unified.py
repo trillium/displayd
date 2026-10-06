@@ -27,7 +27,6 @@ NAME = "unified"
 DESCRIPTION = ("Merged home: view tiles plus a live apps dock; "
                "one dock tap opens the merged macbook screen")
 STATIC = False
-ACCENT = "#7BDFF2"
 PARAMS = {
     "views": {"type": "array", "help": "tile views (absent: live "
                                        "set minus this view, max 24)"},
