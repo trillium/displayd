@@ -5,7 +5,7 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
-## 0.7.0
+## 0.8.0
 
 The chat panel is the two-pane panel the captain asked for: the viewers in the
 channel on the left, the chat on the right, and user-join events on the chat
@@ -61,6 +61,87 @@ The chat view therefore needs the built engine, exactly as `html`, `picker`,
 `bridges/install-mac.sh` deploys it with the bridge it belongs to -- until the
 MacBook's bridge is reinstalled the panel honestly shows no roster rather than a
 stale one.
+
+Minor bump: a new user-visible feature (the two-pane panel and join
+events) landing after 0.7.0. No public endpoint shape changed, no other
+view's behaviour changed, and the chat view's own contract only gained an
+input (`roster`) and a flag (`join` on `message`).
+
+## 0.7.0
+
+The panel's UI shell renders through litehtml. The chrome every view sits
+inside is one template now, `html-templates/layout.html` -- header, the two
+side gesture strips, the content band and the footer -- with a fixed,
+documented variable contract that the html renderer fills; an empty
+variable set on that template draws `DEFAULT_VARS`, so the default view is
+a usable panel rather than a red card the instant it is tapped. The html
+view needs no required param any more, and that is what puts it in the live
+picker/home set and in rotation beside every other view.
+
+Three surfaces that used to draw in Pillow moved onto that engine, each
+keeping its rect exactly where its touch regions already were: the picker
+(`html-templates/picker.html` + `renderers/_picker_tiles.py`), the merged
+home screen's apps dock (`html-templates/dock.html` +
+`renderers/unified_dock.py`), and the options screen
+(`html-templates/options.html` + `renderers/_options_grid.py`). The picker
+compensates for the one way litehtml and the touch layer disagree about a
+tile: a declared width is the CONTENT box, so an uncompensated tile would
+be 12px wider than the region that taps it. The dock keeps its authored
+`DESIGN` size and is drawn by pasting only the dock rect, so
+`renderers/unified.py` and `renderers/unified_dock.py` are both
+Pillow-free. The options grid allocates a rect per name, so its count is
+now total AND bounded (`MAX_CELLS`): a huge count can no longer become a
+runaway allocation -- `10**9` cells OOM-killed the suite before that bound
+existed.
+
+Unescaping gained exactly one slot, and no caller can reach it.
+`{{name|raw}}` is the ONE markup slot, filled only from a separate `raw`
+mapping that the html renderer never passes -- so a caller value named
+after a raw slot still arrives escaped. Raw slot names and values are
+validated (a bad name, a non-string, or markup that will not render is an
+error), and an unfilled raw slot is a missing variable that names itself
+rather than drawing a hole. Every other `{{value}}` is escaped as before.
+A failed render is one shared card (`renderers/_html_error.py`):
+`error_frame` for a view that owns the panel, `error_strip` for a view
+composited into a bigger frame, so a dock failure is a strip card and
+never a full-screen card, and never a silent gap.
+
+The 250-line gate is a real gate now rather than a baseline of known
+exceptions. Nine files over budget were split into single-concept modules
+(the largest, `renderers/beads_common.py` at 663 lines, became six), then
+the last two: `displayd.py` (4396 lines) is the composition root, 203
+lines composing `DisplayDaemon` from single-concept mixins and binding the
+runtime globals the route mixins read; `touch.py` (1727 lines) is the CLI
+entry point and re-export facade over thirteen single-concept modules. No
+behaviour change: every moved function and class body is byte-identical to
+its previous source -- `CONTROL_PAGE` still reassembles byte-for-byte from
+its four parts -- every name another module imports still resolves, and
+the documented monkeypatch contracts (`displayd.Framebuffer` /
+`displayd.DAEMON` / `displayd.API_TOKEN`) are preserved by the composition
+root binding them. The seven new Mac-side libs joined
+`bridges/mac-set.manifest`, because the Mac set deploys as a unit.
+`tests/test_repo_health.py` now asserts the green gate instead of the old
+two-file exception.
+
+One regression arrived with the migration and is fixed on its own
+evidence. `FramesTest::test_empty_and_stale_differ_in_dock_only` compares
+rendered dock pixels, and with the engine unbuilt empty and stale both
+fall back to the same strip, so there was no difference to find: it failed
+on any clean checkout. It now carries the file's own `@native_built` gate,
+the one the other engine-dependent tests in that file already had. The
+assertion is untouched -- wherever the engine is built, empty and stale
+must still differ inside the dock rect -- and the two sibling tests stay
+ungated on evidence rather than by omission: one checks frame size only,
+and the other compares the grid zone, which the fallback strip cannot
+reach.
+
+Minor bump: how the home screen renders changed, and that change is
+additive and backwards compatible -- no API and no view contract changed,
+and every migrated surface keeps its existing touch geometry. One
+bookkeeping note travels with it: `APP_VERSION` now lives in
+`daemon_config.py`, where the split moved it, and `displayd.py` only
+re-exports it, so a reader looking for the version line will not find it
+in the composition root.
 
 ## 0.6.1
 
