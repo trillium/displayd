@@ -15,9 +15,11 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 
 
 class TestLineBudget(unittest.TestCase):
-    def test_line_budget_script_reports_current_offenders(self):
-        # The existing checker is the source of truth; it must be runnable
-        # from repo root and return non-zero if there are offenders.
+    def test_line_budget_script_is_clean(self):
+        # The existing checker is the source of truth; runnable from repo
+        # root, it must find no offender and exit 0. Every authored file is
+        # now inside the budget, so this is the real gate rather than a
+        # baseline of known exceptions.
         res = subprocess.run(
             [sys.executable, os.path.join(REPO, 'tools', 'check-lines.py')],
             cwd=REPO,
@@ -25,10 +27,11 @@ class TestLineBudget(unittest.TestCase):
             stderr=subprocess.STDOUT,
             text=True,
         )
-        self.assertEqual(res.returncode, 1)
+        self.assertEqual(res.returncode, 0)
         out = res.stdout
-        self.assertIn('over the 250-line budget', out)
-        self.assertTrue(any(n in out for n in ('displayd.py', 'touch.py')))
+        self.assertIn('line budget ok', out)
+        self.assertNotIn('over the 250-line budget', out)
+        self.assertFalse(any(n in out for n in ('displayd.py', 'touch.py')))
 
 
 class TestGeneratedArtifactsNotTracked(unittest.TestCase):
@@ -53,10 +56,11 @@ class TestRepoHealthCheckWrapper(unittest.TestCase):
             stderr=subprocess.STDOUT,
             text=True,
         )
-        # In current state it reports offenders and exits 1
-        self.assertEqual(res.returncode, 1)
+        # Both checks pass now: the wrapper exits clean.
+        self.assertEqual(res.returncode, 0)
         out = res.stdout
-        self.assertIn('over the 250-line budget', out)
+        self.assertIn('line budget ok', out)
+        self.assertNotIn('over the 250-line budget', out)
         self.assertIn('no generated native artifacts tracked', out)
 
 

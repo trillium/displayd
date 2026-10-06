@@ -60,7 +60,7 @@ By hand, the equivalent is:
 
     python3 -m pip install -r requirements.txt
     sudo install -d /opt/displayd/renderers
-    sudo install -m 0644 displayd.py /opt/displayd/
+    sudo install -m 0644 *.py /opt/displayd/
     sudo install -m 0644 renderers/*.py /opt/displayd/renderers/
     sudo install -m 0644 displayd.service /etc/systemd/system/
     sudo systemctl daemon-reload && sudo systemctl enable --now displayd
@@ -157,7 +157,7 @@ is `0.1.0` — deliberately `0.x`, because the project has not yet made any
 stability promise a `1.0.0` would imply.
 
 The version has one source of truth: `APP_VERSION` at the top of
-`displayd.py`. It lives there (rather than in `pyproject.toml`'s `[project]`)
+`daemon_config.py`. It lives there (rather than in `pyproject.toml`'s `[project]`)
 because the daemon ships as a plain script over rsync — never pip-installed —
 and still supports Python 3.8+, so it cannot read a `[project]` table at
 runtime. A running daemon reports its own version three ways: `GET /version`,

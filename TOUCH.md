@@ -53,7 +53,8 @@ The structure mirrors trillium/parlay's chat guard
 - `index.ts` applies the policy with silent denies (refusals carrying no CORS
   headers, so a refused caller learns nothing back).
 
-Mapped onto touch (`touch.py`):
+Mapped onto touch (`touch_actions.py` for the table, `touch_client.py`
+for the caller rule and the dispatcher):
 
 - **Action table (`ACTION_TABLE`)** = WHICH named actions may ever run. Each
   entry maps an action name to its handler effect: the displayd endpoint the
@@ -68,8 +69,8 @@ Mapped onto touch (`touch.py`):
   tailnet only. Deliberately stricter than parlay's `origin.ts` (which also
   admits private-LAN for the phone panel): touch has no LAN caller, so LAN
   literals fail closed here.
-- **Named residue** (deliberately outside the table, recorded in `touch.py`
-  next to `ACTION_TABLE`): no generic "POST any path" action, no shell-out
+- **Named residue** (deliberately outside the table, recorded in
+  `touch_actions.py` next to `ACTION_TABLE`): no generic "POST any path" action, no shell-out
   action, no free-text feedback notes/params passthrough, no MagicDNS / LAN
   / public endpoint. Each stays out until a named action with a fixed body
   shape justifies it.
@@ -79,8 +80,8 @@ How to add a named action (all four, no shortcuts):
 1. Add one `ACTION_TABLE` entry: name, one-sentence `effect` (the panel
    state it changes -- this is the classification), `method`/`path`, and
    the `params` it reads.
-2. Validate its parameters in `_resolve()` in `touch.py`: required fields,
-   types, and ranges (ratings are `int` 1-5, `bool` excluded); build a
+2. Validate its parameters in `_resolve()` in `touch_resolve.py`: required
+   fields, types, and ranges (ratings are `int` 1-5, `bool` excluded); build a
    fixed-shape body and ignore everything else in the dict.
 3. Add tests in `tests/test_touch.py`: valid dispatch, malformed payloads
    denied by both `action_request()` (raises) and `resolve_action()`
@@ -177,7 +178,7 @@ across reboots, write a udev rule pinning a symlink (e.g.
 
 ## Event record size (64-bit Linux only)
 
-`touch.py` reads `struct input_event` as 24-byte records (`EVENT_FORMAT
+`touch_events.py` reads `struct input_event` as 24-byte records (`EVENT_FORMAT
 = "<qqHHi"`: two 8-byte `timeval` longs + type + code + signed value).
 The kernel validates `read()` counts against its native record size, so a
 shorter read fails with `EINVAL` instead of returning data.
