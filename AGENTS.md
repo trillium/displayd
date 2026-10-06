@@ -61,13 +61,18 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - One template owns it: `CONTROL_PAGE` in `control_page.py` (presentation
   only -- every control drives an existing API endpoint, no page-specific
   routes). Sections top-to-bottom: Views (one-tap grid, big four pinned:
-  clock/chat/row/stream, current view highlighted) / Playback / Proof
-  (reload + deploy stamp, also pinned in the sticky top bar) / Feedback
-  (rate + summary) / Now showing / Notify / Policy / Tap actions.
+  clock/chat/row/stream, current view highlighted) / Playback / Layout
+  (style grid + one select per slot, both filled from `GET
+  /layout/presets`) / Proof (reload + deploy stamp, also pinned in the
+  sticky top bar) / Feedback (rate + summary) / Now showing / Notify /
+  Policy / Tap actions.
 - Guardrails in `tests/test_control.py` (`TestPhoneFirstRebuild`): no
-  hardcoded renderer names, tap-action list matches `touch.ACTION_TABLE`,
-  every fetched path has a daemon route. Verify against a live headless
-  daemon (`DISPLAYD_FAKE_FB=1`) by curling each button's endpoint.
+  hardcoded renderer names (the layout section's slots list `slot.views`
+  only -- never the advertised set), tap-action list matches
+  `touch.ACTION_TABLE`, every fetched path has a daemon route, and the
+  one `<script>` parses (`node --check`, skipped where node is absent).
+  Verify against a live headless daemon (`DISPLAYD_FAKE_FB=1`) by curling
+  each button's endpoint.
 
 ## MCP + display feedback
 
@@ -136,8 +141,11 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Bar is composited via `Screen.overlay` (`overlay_image` hook) +
   `repaint_overlay()` tick; hidden whenever rotation holds (transient,
   screen-off, manual hold). Rotation never touches the activity clock.
-- Colour precedence: per-view `color` > renderer `ACCENT` attr >
-  playlist `color` > white fallback, always with a contrast border.
+  The bar itself is the component `renderers/ui/progress.py`;
+  `playlist.py` composes it and holds no drawing code.
+- Colour precedence: per-view `color` > renderer `ACCENT` attr > the
+  renderer's palette slot (`theme.ACCENT_SLOTS`, resolved into its entry)
+  > playlist `color` > white fallback, always with a contrast border.
   A renderer declares `ACCENT = "#rrggbb"` to opt in (additive).
 - Manual `/show`/`/clear` holds rotation until `POST /playlist/resume`;
   boot-time `clear()` is followed by `playlist.boot()` so a persisted
@@ -417,10 +425,11 @@ keeps running the old tick until the installer runs (`install-mac.sh
   the panel's bottom-right corner black. Verified 1px-tile-over-full-HD in
   ~2ms.
 - The failure card lives in `renderers/_html_error.py`, NOT in either view:
-  `renderers/picker.py` must not import `ImageDraw`, so the html view and the
-  picker share one `error_frame`. A view composited INTO a bigger frame (the
-  home screen's dock) shares the other one, `error_strip`, which confines the
-  same red rule and message to that view's own rect.
+  `renderers/picker.py` must not import a drawing primitive, so the html view
+  and the picker share one `error_frame`. It is `ui.panel.card` in the alert
+  family -- and `ui.panel.strip`, the same card confined to a rect, for a view
+  composited INTO a bigger frame (the home screen's dock) -- so a failure
+  cannot drift away from how every other card is drawn.
 - Cost (`python3 tools/bench_html.py`, 1920x1080 `status.html`): ~7ms cold,
   ~5.6ms warm median, and RSS per render falls 9.6 -> 4.3 -> 0.6 -> 0.2 KiB as
   the font/image caches fill, i.e. flat in steady state. A leak holds a

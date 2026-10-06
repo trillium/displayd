@@ -96,7 +96,8 @@ def expected_for_view(view, params=None, w=1920, h=1080,
                           "rect": [int(v) for v in e["rect"]],
                           "action": e["action"], "required": True}
                          for e in mod.picker_regions(
-                              w, h, views, mod.coerce_rect(params, w, h))]
+                              w, h, views, mod.coerce_rect(params, w, h),
+                              cols=mod.coerce_cols(params))]
             note = " + %d tile(s)" % len(exact)
         except Exception as exc:
             return {"view": view, "checkable": False,

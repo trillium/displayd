@@ -25,9 +25,12 @@ text only, and a missing/malformed field renders today's four-element
 view unchanged.
 
 Encoding/drawing reuse the shared pieces (renderers/qr_common.py for the
-code, renderers/reload_highlights.py for fonts and highlights): the
-vendored Nayuki generator, integer module scaling, and a 4-module quiet
-zone, black on white regardless of the panel's dark theme.
+code) and the component layer for every pixel: the placeholder and the
+headline are ``ui.panel``, the fitted SHA/hint lines are ``ui.text``, the
+highlights summary is ``ui.paragraph``, and every colour is a ``theme``
+role. This view owns which words go where and nothing else; the vendored
+Nayuki generator, integer module scaling, and a 4-module quiet zone stay
+black on white regardless of the panel's dark theme.
 """
 
 import os
@@ -40,8 +43,9 @@ import qr_common
 import reload_highlights
 import theme
 from _qrcodegen import QrCode
-
-from PIL import ImageDraw
+from ui import panel as ui_panel
+from ui import paragraph as ui_paragraph
+from ui import text as ui_text
 
 NAME = "reload"
 DESCRIPTION = "Deploy confirmation: RELOADED + commit SHA + commit QR (transient)"
@@ -86,8 +90,16 @@ SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 TITLE_SIZE = 130
 SHA_SIZE = 46
-load_font = reload_highlights.load_font
-fit_font = reload_highlights.fit_font
+SHA_ROOM = 0.90      # fraction of the width the SHA line may use
+SHA_FLOOR = 20
+HINT_SIZE = 30
+HINT_ROOM = 0.90
+HINT_FLOOR = 16
+PROMPT_TITLE = 110   # the placeholder's headline
+PROMPT_BODY = 48     # ... and its explanation
+# Where the three bands sit, as fractions of the panel.
+TITLE_Y, QR_TOP, QR_BOTTOM = 0.14, 0.24, 0.82
+SHA_Y, HINT_Y = 0.90, 0.955
 
 
 def validate_sha(sha):
@@ -131,22 +143,14 @@ def qr_payload(sha, relay_url=None):
 
 def _prompt(screen, title, body):
     """Sensible placeholder: never a crash, never a blank panel."""
-    bg = (10, 10, 14)
-    img = screen.new_image(bg)
-    draw = ImageDraw.Draw(img)
-    title_font = load_font(screen, "DejaVuSans-Bold", 110)
-    body_font = load_font(screen, "DejaVuSans", 48)
-    draw.multiline_text(
-        (screen.W // 2, screen.H // 2 - 40), title,
-        font=title_font or body_font, fill=(255, 255, 255),
-        anchor="mm", align="center",
-    )
+    img = screen.new_image(theme.rgb("page"))
+    ui_panel.block(img, screen, title, ink=theme.rgb("ink-strong"),
+                   size=PROMPT_TITLE,
+                   centre=(screen.W // 2, screen.H // 2 - 40), bold=True)
     if body:
-        draw.multiline_text(
-            (screen.W // 2, screen.H // 2 + 120), body,
-            font=body_font or title_font, fill=(200, 200, 205),
-            anchor="ma", align="center", spacing=10,
-        )
+        ui_panel.block(img, screen, body, ink=theme.rgb("muted-soft"),
+                       size=PROMPT_BODY,
+                       centre=(screen.W // 2, screen.H // 2 + 120), top=True)
     screen.present(img)
 
 
@@ -172,36 +176,31 @@ def run(screen, params, stop):
         return
 
     accent = theme.accent_rgb(NAME)
-    bg = (10, 10, 14)
-    fg = (255, 255, 255)
-    img = screen.new_image(bg)
-    draw = ImageDraw.Draw(img)
+    img = screen.new_image(theme.rgb("page"))
 
     # Accent bar across the top: the glanceable bit from across the room.
-    draw.rectangle([0, 0, screen.W, 18], fill=accent)
+    ui_panel.bar(img, screen, ink=accent)
 
-    title_font = fit_font(screen, draw, "DejaVuSans-Bold", TITLE_SIZE,
-                          TITLE, 0.86, 40, 8)
-    title_y = int(screen.H * 0.14)
-    draw.text((screen.W // 2, title_y), TITLE,
-              font=title_font, fill=fg, anchor="mm")
+    ui_panel.headline(img, screen, TITLE, ink=theme.rgb("ink-strong"),
+                      size=TITLE_SIZE,
+                      centre=(screen.W // 2, int(screen.H * TITLE_Y)))
 
     # The QR symbol: as large as fits between the title and the SHA line,
     # integer module scaling only (qr_common never smooth-scales). With
     # highlights the code takes the left half at full height-bounded size
     # -- never smaller than scannable -- and the text takes the right;
     # without them the code stays centered exactly as before.
-    qr_top = int(screen.H * 0.24)
-    qr_bottom = int(screen.H * 0.82)
+    qr_top = int(screen.H * QR_TOP)
+    qr_bottom = int(screen.H * QR_BOTTOM)
     qr_half = screen.W // 2 if highlights else screen.W
     target = min(qr_half - 80, qr_bottom - qr_top)
     scale, actual = qr_common.fit_scale(qr, max(120, target))
     symbol = qr_common.render_symbol(qr, scale=scale)
     img.paste(symbol, ((qr_half - actual) // 2, qr_top))
     if highlights:
-        reload_highlights.draw(draw, screen, highlights,
-                               screen.W // 2 + 40, screen.W - 40,
-                               qr_top, qr_bottom)
+        ui_paragraph.paragraph(img, screen,
+                               (screen.W // 2 + 40, qr_top,
+                                screen.W - 40, qr_bottom), highlights)
 
     # The full SHA under the code, shrunk to fit rather than clipped.
     try:
@@ -209,14 +208,20 @@ def run(screen, params, stop):
                  if screen.font_path("DejaVuSansMono") else "DejaVuSans")
     except Exception:
         probe = "DejaVuSans"
-    sha_font = fit_font(screen, draw, probe, SHA_SIZE, sha, 0.9, 20, 2)
-    draw.text((screen.W // 2, int(screen.H * 0.90)), sha,
-              font=sha_font, fill=(200, 200, 205), anchor="mm")
+    ui_text.write(img, screen, (screen.W // 2, int(screen.H * SHA_Y)), sha,
+                  theme.rgb("muted-soft"),
+                  ui_text.fit_size(screen, sha, SHA_SIZE,
+                                   int(screen.W * SHA_ROOM),
+                                   floor=SHA_FLOOR, step=2, family=probe),
+                  family=probe, anchor="mm")
 
     # Confirm hint: how this view clears early (scan and/or tap). Small
     # and shrunk to fit -- it labels the view honestly, never clipped.
-    hint_font = fit_font(screen, draw, "DejaVuSans", 30, hint, 0.9, 16, 2)
-    draw.text((screen.W // 2, int(screen.H * 0.955)), hint,
-              font=hint_font, fill=(140, 140, 150), anchor="mm")
+    ui_text.write(img, screen, (screen.W // 2, int(screen.H * HINT_Y)),
+                  hint, theme.rgb("muted"),
+                  ui_text.fit_size(screen, hint, HINT_SIZE,
+                                   int(screen.W * HINT_ROOM),
+                                   floor=HINT_FLOOR, step=2),
+                  anchor="mm")
 
     screen.present(img)

@@ -14,6 +14,11 @@ renderer pipeline is built for (one JPEG decode + fullscreen resize +
 framebuffer write per present). fps clamps to 0.5..5 (default 2); the
 measured present rate is drawn on screen next to LIVE.
 
+Presentation is the component layer's: the idle frame is ``ui.panel``'s
+block, and the live tag is ``ui.stat``'s pill, so its words read over
+whatever frame is underneath. This module owns the frame pipeline and the
+fps arithmetic; it used to hold its own font loaders and dot colours.
+
 Start/stop is one action: POST /show {"renderer": "stream", "params": {...}}
 to start, POST /show (another view) or /clear to stop.
 
@@ -25,10 +30,18 @@ unauthenticated endpoint -- the same trust model as displayd itself.
 import base64
 import hashlib
 import io
+import os
+import sys
 import time
 import urllib.request
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import theme
+from ui import panel as ui_panel
+from ui import shell as ui_shell, stat as ui_stat
 
 NAME = "stream"
 DESCRIPTION = ("Live stream monitor: latest pushed frame or polled snapshot, "
@@ -62,6 +75,7 @@ MIN_FPS = 0.5
 MAX_FPS = 5.0
 DEFAULT_FPS = 2.0
 FETCH_TIMEOUT = 5.0
+IDLE_SIZE = 44  # the idle frame's two lines of type
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 
 
@@ -122,39 +136,30 @@ def _frame_from_payload(payload, timeout):
     raise ValueError("frame needs 'data' or 'url'")
 
 
-def _draw_status(base, label, fps_measured, stale):
-    draw = ImageDraw.Draw(base)
-    try:
-        font = ImageFont.truetype("DejaVuSans-Bold", 34)
-    except Exception:
-        font = None
-    dot = (255, 70, 70) if not stale else (120, 120, 130)
+def _draw_status(screen, base, label, fps_measured, stale):
+    """The live tag: a status pill on the frame's top-left corner.
+
+    The dot is the view's palette accent while frames arrive and the
+    palette's muted role when the source is quiet; the label wears the ink
+    that reads on the pill's page surface. The pill starts after the
+    gesture strips, because the home badge is painted over them on every
+    frame -- a tag drawn at the panel's own corner is half covered by it.
+    """
     text = "%s  %.1f fps" % (label, fps_measured) if fps_measured else label
-    x, y, pad = 28, 22, 14
-    if font is not None:
-        tw = draw.textlength(text, font=font)
-        draw.rounded_rectangle([x - pad, y - pad, x + 44 + tw + pad, y + 44 + pad],
-                               radius=10, fill=(0, 0, 0))
-        draw.ellipse([x, y + 8, x + 28, y + 36], fill=dot)
-        draw.text((x + 44, y), text, font=font, fill=(255, 255, 255))
-    else:
-        draw.text((x, y), "o " + text, fill=(255, 255, 255))
-    return base
+    dot_ink = theme.rgb("muted") if stale else theme.accent_rgb(NAME)
+    return ui_stat.pill(base, screen, (ui_shell.band_pad(screen), 8), text,
+                        dot_ink=dot_ink, bold=True)
 
 
 def _draw_idle(screen, bg, hint):
+    """No frame yet: the panel component's block, never a blank panel."""
     img = screen.new_image(bg)
-    draw = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.truetype(screen.font_path("DejaVuSans") or "", 44)
-    except Exception:
-        font = None
-    lines = ["waiting for stream", hint]
-    y = screen.H // 2 - 60
-    for line in lines:
-        draw.text((screen.W // 2, y), line, font=font, fill=(120, 120, 130),
-                  anchor="mm")
-        y += 60
+    cx, cy = screen.W // 2, screen.H // 2
+    ui_panel.block(img, screen, "waiting for stream",
+                   ink=theme.rgb("muted"), size=IDLE_SIZE,
+                   centre=(cx, cy - 60))
+    ui_panel.block(img, screen, hint, ink=theme.rgb("muted"),
+                   size=IDLE_SIZE, centre=(cx, cy + 60))
     return img
 
 
@@ -224,7 +229,8 @@ def run(screen, params, stop):
                                         else 0.3 * gap + 0.7 * ema_interval)
                     last_present_at = now
                     shown_fps = (1.0 / ema_interval) if ema_interval else 0.0
-                    last_frame = _draw_status(canvas, label, shown_fps, False)
+                    last_frame = _draw_status(screen, canvas, label,
+                                              shown_fps, False)
                     last_bytes = digest
                     errors = 0
                     screen.present(last_frame)

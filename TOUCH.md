@@ -365,6 +365,19 @@ Reference wiring (`touch-picker.json.example`, 1920x1080):
 
   Paste the output FIRST under `"regions"`: `hit_test()` gives earlier
   entries every overlap, so tiles must precede the gesture strips.
+- The column count follows the REGION's shape (`ui.grid.columns`), so the
+  same command pointed at a side band generates one column of wide tiles
+  instead of three narrow ones; `--cols N` forces a shape. Generate a
+  band's tiles from the band, not the panel:
+
+        python3 renderers/picker.py --width 288 --height 1080 \
+            --views "$(cat /tmp/views.csv)"
+
+  Those rects are band-local. A tap while a layout owns the panel is
+  evaluated as a GLOBAL region (view-scoped sets are skipped), so a
+  `15-70-15` band's tiles have to be pasted into the global set with the
+  band's origin added -- for the left band at x=0 that is the origin, for
+  the right band add x=1632. No shipped `touch.json` carries them yet.
 - The default grid rect leaves side strips plus a bottom button bar: left
   strip `screen_on`, right strip `playlist_next`, and NO fullscreen
   `reload_confirm` region -- deliberately. A fullscreen confirm region

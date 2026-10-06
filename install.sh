@@ -35,6 +35,12 @@ mkdir -p "$PREFIX/renderers"
 # holding only displayd.py cannot even import it.
 install -m 0644 "$HERE"/*.py "$PREFIX/"
 install -m 0644 "$HERE"/renderers/*.py "$PREFIX/renderers/"
+# The component layer is part of the shipped UI, not a developer extra: every
+# view imports it by name ("from ui import tile"), and the daemon's playlist
+# imports its bar component, so a prefix without renderers/ui/ cannot load the
+# picker, the home screen or the progress bar at all.
+mkdir -p "$PREFIX/renderers/ui"
+install -m 0644 "$HERE"/renderers/ui/*.py "$PREFIX/renderers/ui/"
 # Shipped renderer data (e.g. renderers/beads_stores.json): install whatever
 # exists, without failing when there is nothing to copy.
 for extra in "$HERE"/renderers/*.json; do

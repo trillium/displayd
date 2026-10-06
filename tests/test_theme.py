@@ -395,5 +395,35 @@ class PillowConsumerTest(unittest.TestCase):
         self.assertEqual(frame.getpixel((320, 1)), theme.rgb("alert"))
 
 
+class InkOnSurfaceTest(unittest.TestCase):
+    """The token layer owns which ink reads on which surface.
+
+    One view (the QR card) paints a page colour the *caller* chose, so it
+    cannot name a single ink; the rule that decides used to be a literal
+    threshold in that view with two grey literals beside it.
+    """
+
+    def test_a_bright_surface_gets_a_dark_ink_and_back(self):
+        self.assertTrue(theme.bright((255, 255, 255)))
+        self.assertTrue(theme.bright("#ffffff"))
+        self.assertFalse(theme.bright("#07080c"))
+        self.assertEqual(theme.ink_on((255, 255, 255)), theme.rgb("on-accent"))
+        self.assertEqual(theme.ink_on((7, 8, 12)), theme.rgb("muted"))
+
+    def test_an_unreadable_surface_takes_the_light_ink(self):
+        for surface in (None, "not a colour", (1, 2), object()):
+            with self.subTest(surface=surface):
+                self.assertFalse(theme.bright(surface))
+                self.assertEqual(theme.ink_on(surface), theme.rgb("muted"))
+
+    def test_both_candidates_can_be_stated_by_the_caller(self):
+        self.assertEqual(
+            theme.ink_on((255, 255, 255), dark=(1, 1, 1), light=(2, 2, 2)),
+            (1, 1, 1))
+        self.assertEqual(
+            theme.ink_on((0, 0, 0), dark=(1, 1, 1), light=(2, 2, 2)),
+            (2, 2, 2))
+
+
 if __name__ == "__main__":
     unittest.main()

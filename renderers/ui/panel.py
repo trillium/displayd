@@ -1,19 +1,17 @@
 """The panel component: a titled region with a body.
 
-Three views were the same card with different words. ``notice`` drew a
-severity bar across the top, a headline centred above a body and a
-severity tag in the bottom corner; ``text`` drew one auto-fitted message
-centred on the panel; ``sleep`` drew a centred hint. Each owned its own
-font loader, its own "make the words fit" search and its own colour
-literals -- ``notice``'s severity map alone held three RGB tuples.
+Three views were the same card with different words -- ``notice`` (a
+severity bar, a headline, a body, a tag), ``text`` (one auto-fitted
+message) and ``sleep`` (a centred hint) -- each with its own font
+loader, its own "make the words fit" search and its own colour
+literals.
 
 What this owns:
 
 - ``fit_size`` -- the one rule for "these words must fit this region":
   the largest size up to the declared one whose *whole* block fits, never
-  a truncation. ``notice`` searched only the first line's width and
-  ``text`` searched the whole block's box; those are two halves of one
-  rule.
+  a truncation (``notice`` searched one line's width, ``text`` the whole
+  block's box -- two halves of one rule).
 - ``headline`` -- the title, scaled to the region and centred.
 - ``block`` -- a centred multi-line body, hung from a stated top when
   something sits above it.
@@ -21,11 +19,12 @@ What this owns:
 - ``bar`` -- the accent band across the top of the region.
 - ``card`` -- the component itself: an optional accent bar, a title
   scaled to the region, an optional body under it, an optional tag.
+- ``strip`` -- the card confined to a rect of a bigger frame, for a view
+  composited into a larger one.
 
 Nothing here raises and nothing here is a colour literal: the caller may
-pass an ink (a severity accent, an operator's chosen text colour) and
-every other role is read from ``theme`` at draw time, so a card that
-cannot draw is a missing card, never a blank panel.
+pass an ink, and every other role is read from ``theme`` at draw time --
+a card that cannot draw is a missing card, never a blank panel.
 """
 
 import os
@@ -39,6 +38,8 @@ from ui import text as ui_text
 PAD = 60            # the tag's inset from the region's own edge
 BAR = 18            # the accent bar's height, across the top
 FLOOR = 12          # the smallest headline worth drawing
+STRIP_MARGIN = 74   # a strip's side margin, as a fraction of its width
+STRIP_RULE = 24     # a strip's bar height, as a fraction of its height
 MARGIN = 0.88       # the room a block may use, as a fraction of the region
 SPACING_DIV = 4     # line spacing as a fraction of the size
 TITLE_SIZE = 110    # a card headline
@@ -158,12 +159,14 @@ def headline(img, screen, text, ink=None, size=None, centre=None,
                  size=drawn, centre=centre, bold=bold, family=family)
 
 
-def bar(img, screen, ink=None, height=BAR):
-    """The accent band across the top of the region."""
+def bar(img, screen, ink=None, height=BAR, rect=None):
+    """The accent band across the top of the region, or of ``rect``."""
     try:
         from PIL import ImageDraw
+        x, y, w = (0, 0, int(screen.W)) if rect is None else (
+            int(rect[0]), int(rect[1]), int(rect[2]))
         ImageDraw.Draw(img).rectangle(
-            [0, 0, max(1, int(screen.W)) - 1, max(1, int(height)) - 1],
+            [x, y, x + max(1, w) - 1, y + max(1, int(height)) - 1],
             fill=theme.rgb("accent") if ink is None else ink)
     except Exception:
         pass
@@ -182,9 +185,41 @@ def tag(img, screen, text, ink=None, size=TAG_SIZE, family=None):
     return img
 
 
+def strip(img, screen, rect, title, detail="", title_size=None,
+          body_size=None, bar_ink=None, title_ink=None, body_ink=None):
+    """The card confined to ``rect`` -- the failure card's own shape.
+    Same vocabulary as :func:`card`, but the region is a rect of a bigger
+    frame and the copy reads left to right, so a view composited into the
+    dock can be loud in its own strip without hiding the tiles around it.
+    """
+    try:
+        x, y, w, h = (int(v) for v in rect)
+        w, h = max(1, w), max(1, h)
+        rule, margin = max(4, h // STRIP_RULE), max(8, w // STRIP_MARGIN)
+        room = max(1, w - 2 * margin)
+        bar(img, screen, theme.rgb("alert") if bar_ink is None else bar_ink,
+            height=rule, rect=(x, y, w, h))
+        y += rule + max(6, h // 32)
+        blocks = (
+            (max(14, int(title_size or h // 8)), True, title,
+             theme.rgb("alert-ink") if title_ink is None else title_ink),
+            (max(11, int(body_size or h // 12)), False, detail,
+             theme.rgb("alert-body") if body_ink is None else body_ink))
+        for size, bold, text, ink in blocks:
+            for line in ui_text.wrap(screen, text, size, room, rows=None):
+                if y + size > int(rect[1]) + h:
+                    break
+                ui_text.write(img, screen, (x + margin, y), line, ink, size,
+                              bold=bold)
+                y += size + _spacing(size)
+    except Exception:
+        pass
+    return img
+
+
 def card(img, screen, title, body="", ink=None, tag_text=None, tag_ink=None,
          accent=None, family=None, bold=True, title_size=TITLE_SIZE,
-         body_size=BODY_SIZE):
+         body_size=BODY_SIZE, body_ink=None):
     """The component: a titled region with a body.
 
     Draws, in order: an accent ``bar`` across the top (``True`` for the
@@ -205,7 +240,8 @@ def card(img, screen, title, body="", ink=None, tag_text=None, tag_ink=None,
                  centre=(int(screen.W) // 2, middle), bold=bold,
                  family=family)
         if body_text:
-            block(img, screen, body_text, size=body_size, family=family,
+            block(img, screen, body_text, ink=body_ink, size=body_size,
+                  family=family,
                   centre=(int(screen.W) // 2, middle + BODY_GAP), top=True)
         if tag_text:
             tag(img, screen, tag_text, ink=tag_ink, family=family)

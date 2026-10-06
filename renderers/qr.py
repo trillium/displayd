@@ -8,6 +8,10 @@ large (default 800px incl. quiet zone), with integer module scaling
 (crisp edges, never smooth-scaled), a 4-module quiet zone, and
 near-black on near-white by default regardless of the panel's dark
 theme. See renderers/qr_common.py for the shared piece.
+
+Presentation is the component layer's: the placeholder is ``ui.panel``,
+the caption is the layer's one line-of-type rule, and the ink on the
+card's own page colour is ``theme.ink_on`` -- this module draws nothing.
 """
 
 import os
@@ -16,9 +20,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import qr_common
+import theme
 from _qrcodegen import QrCode
-
-from PIL import ImageDraw, ImageFont
+from ui import panel as ui_panel
+from ui import text as ui_text
 
 NAME = "qr"
 DESCRIPTION = "Scannable QR code, centred large with a caption"
@@ -44,37 +49,20 @@ PROMPT_TITLE_SIZE = 120
 PROMPT_BODY_SIZE = 48
 
 
-def _font(screen, name, size):
-    try:
-        path = screen.font_path(name)
-    except Exception:
-        return None
-    if path is None:
-        return None
-    try:
-        return ImageFont.truetype(path, size)
-    except Exception:
-        return None
-
-
 def _prompt(screen, bg, title, body):
-    """Sensible placeholder: never a crash, never a blank panel."""
+    """Sensible placeholder: never a crash, never a blank panel.
+
+    Drawn by the panel component on the caller's own page colour, with
+    the ink the token layer picks for that surface -- a white QR card gets
+    dark type instead of white-on-white.
+    """
     img = screen.new_image(bg)
-    draw = ImageDraw.Draw(img)
-    title_font = _font(screen, "DejaVuSans-Bold", PROMPT_TITLE_SIZE)
-    body_font = _font(screen, "DejaVuSans", PROMPT_BODY_SIZE)
-    ink = (90, 90, 100) if sum(bg) > 384 else (160, 160, 170)
-    draw.multiline_text(
-        (screen.W // 2, screen.H // 2 - 40), title,
-        font=title_font or body_font, fill=ink,
-        anchor="mm", align="center",
-    )
+    ink = theme.ink_on(bg)
+    ui_panel.block(img, screen, title, ink=ink, size=PROMPT_TITLE_SIZE,
+                   centre=(screen.W // 2, screen.H // 2 - 40), bold=True)
     if body:
-        draw.multiline_text(
-            (screen.W // 2, screen.H // 2 + 120), body,
-            font=body_font or title_font, fill=ink,
-            anchor="ma", align="center", spacing=10,
-        )
+        ui_panel.block(img, screen, body, ink=ink, size=PROMPT_BODY_SIZE,
+                       centre=(screen.W // 2, screen.H // 2 + 120), top=True)
     screen.present(img)
 
 
@@ -116,31 +104,18 @@ def run(screen, params, stop):
     symbol = qr_common.render_symbol(qr, fg=fg, bg=bg, scale=scale)
 
     img = screen.new_image(bg)
-    cap_font = _font(screen, "DejaVuSans", CAPTION_SIZE)
-    cap_h = 0
-    if caption:
-        cap_h = CAPTION_SIZE + 36
+    cap_h = CAPTION_SIZE + 36 if caption else 0
     total_h = actual + cap_h
     top = (screen.H - total_h) // 2
     left = (screen.W - actual) // 2
     img.paste(symbol, (left, top))
 
     if caption:
-        draw = ImageDraw.Draw(img)
-        # Shrink the caption to fit rather than clipping it.
-        font = cap_font
-        if font is not None:
-            try:
-                size_px = CAPTION_SIZE
-                while (size_px > 20 and
-                       draw.textlength(caption, font=font) > screen.W * 0.9):
-                    size_px -= 4
-                    font = _font(screen, "DejaVuSans", size_px)
-                    if font is None:
-                        break
-            except Exception:
-                font = cap_font
-        draw.text((screen.W // 2, top + actual + 24), caption,
-                  font=font, fill=fg, anchor="ma")
+        # Shrink the caption to fit rather than clipping it: the layer's
+        # one fit rule, centred on the panel by its top edge.
+        size = ui_text.fit_size(screen, caption, CAPTION_SIZE,
+                                int(screen.W * 0.9), floor=20, step=4)
+        ui_text.write(img, screen, (screen.W // 2, top + actual + 24),
+                      caption, ink=fg, size=size, anchor="ma")
 
     screen.present(img)

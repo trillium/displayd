@@ -75,7 +75,8 @@ async function refreshState() {
       " \u00b7 " + Object.keys(SCHEMAS).length + " renderers";
     CURRENT = s.renderer || null;
     markCurrent();
-    document.getElementById("cur-renderer").textContent = s.renderer || "(blank)";
+    document.getElementById("cur-renderer").textContent = s.renderer ||
+      (s.layout ? ("regions (" + s.layout.regions.length + ")") : "(blank)");
     document.getElementById("cur-age").textContent =
       s.age_seconds == null ? "\u2013" : Math.round(s.age_seconds) + "s";
     document.getElementById("cur-power").textContent = s.screen.power;

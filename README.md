@@ -102,7 +102,7 @@ publishes an unauthenticated control surface to everything that can route to it.
 
 | Method | Path | Body | Meaning |
 | --- | --- | --- | --- |
-| GET | `/` | – | web control panel (live preview, renderer picker, power) |
+| GET | `/` | – | web control panel (live preview, renderer picker, layout styles, power) |
 | GET | `/health` | – | liveness |
 | GET | `/version` | – | application semver (`{"version": ...}`); same value is in `/state`'s `"version"` key and the startup log |
 | GET | `/state` | – | what is showing, screen power, display facts |
@@ -151,6 +151,36 @@ Every mutating call returns the new `/state` payload, so a caller never has to
 poll to find out what happened. `/state` also carries `feeds` (per-input
 buffer counts, last-update age, and `cold`/`warm`/`stale` health) and `switch`
 (request-to-first-pixel and request-to-fresh-frame timings in milliseconds).
+
+## Layout styles
+
+`POST /layout` takes either raw region geometry or one of four named styles --
+named region specs in the same grammar (`layout_presets.py`), not a second
+layout system:
+
+| Style | Geometry | Slots |
+| --- | --- | --- |
+| `full` | whole panel | `view` (primary) |
+| `split-50-50` | two equal rows | `top`, `bottom` |
+| `split-50-50-columns` | two 50-wide columns | `left`, `right` |
+| `15-70-15` | 15% / 70% / 15% columns | `left` and `right` (navigation), `center` (primary) |
+
+`GET /layout/presets` answers each style's slots, their geometry, the view each
+slot defaults to, and the views that slot may be *given*. That last list is
+deliberately not "every renderer": it is the views that declare they render
+reduced (`CAPABILITY`), are loaded, and need no parameters, so a view that
+needs the whole panel is never offered in a band -- and `POST /layout` refuses
+it by name if it is named anyway. The `15-70-15` centre is the primary slot
+(the `row` view: Talon's streak row fits it) and the two side bands are
+navigation: the tappable application list, each band carrying its own
+applicable list explicitly.
+
+The control page's Layout section is the operator surface for this -- one tap
+per style, one select per slot listing exactly that slot's applicable views,
+"Apply style" (`POST /layout`) and "Single view" (`DELETE /layout`). The
+selects are prefilled from the projection's `default`, which follows the same
+no-repeat rule a bare `{"preset": ...}` uses, so a style applied from the
+phone is the panel the API would have built.
 
 ## Versioning
 
@@ -279,21 +309,78 @@ drawing half (a Pillow view's labelled box). Its look is authored once in the
 shared stylesheet with palette tokens, and the component layer is the only
 place a renderer may draw by hand (`tools/check-components.py`).
 
+A **grid of tiles** is one component too, `renderers/ui/grid.py`: how many
+columns a region takes and where each box lands. The column count is read off
+the region's shape unless the caller states `cols`, so the picker in a 288px
+application band (the outer regions of the `15-70-15` style) draws one column
+of 224px tiles rather than three 69px ones, and the options name grid and the
+picker can no longer disagree about where a box goes. `picker_regions()` — the
+`touch.json` generator — asks the same component, so a drawn tile and its tap
+target stay the same four numbers.
+
 The band a full-panel view wears is a component too, `renderers/ui/shell.py`
-(title, detail, the health dot and its honest age, the rule under it, the
-footer line), and the label/value rows under it are `renderers/ui/stat.py`
-(`row`, the supporting `body` line, and a clamped `meter` for a fraction of a
-whole). Both draw through `renderers/ui/text.py` — the layer's one font,
-measurement and trim-to-room rule. The two views that used to carry that band
-twice (`resources`, `services`) are now composers over them, and carry no
-colour, font or truncation rule of their own.
+(title, detail, the health dot, the footer line, and the one bucket rule
+behind every age — `short_age`/`age`), and it owns the space the always-on
+badges leave: the band's inset comes from the badge component's gesture
+strip (`band_pad`), so the home badge no longer covers the first letters of a
+title and the sleep badge no longer covers the health dot. The entries under
+the band are `renderers/ui/stat.py` (`row` for a label over its value,
+`list_row` for one horizontal entry: status dot, name, right-aligned value,
+a clamped `meter` for a fraction of a whole, and `pill` — a dot and a line
+of type on the panel's own page surface, which is what a view wears over a
+frame it did not paint: the stream view's live tag is that pill, placed
+after the gesture strips so the home badge cannot cover its dot, and its
+idle frame is the panel component's block). Both draw through
+`renderers/ui/text.py` — the layer's one font, measurement, trim-to-room rule,
+`fit_size` for a line that shrinks to its column, and `wrap` for a paragraph
+broken to a width — and a fitted paragraph *block* inside a rect (wrap,
+shrink until the whole block fits, first line emphasised) is one component
+too, `renderers/ui/paragraph.py`, which is what the reload view's commit
+highlights summary is drawn with. The five views that used to carry that
+band and those rows by hand (`resources`, `services`, `row`, `feed_health`,
+`activity`) are now composers over them, and carry no colour, font,
+truncation, wrap or age rule of their own.
 
 A **panel** — a titled region with a body — is `renderers/ui/panel.py`: one
 scale-to-fit rule (the whole block is scaled to the region and never cut), a
-centred headline and body, the corner tag and the accent bar. `notice`, `text`
-and `sleep` are composers over it and hold no font, fitting search or colour
-of their own; the notice's severity is a palette role lookup
-(`accent`/`attention`/`alert`) rather than a fourth copy of red.
+centred headline and body, the corner tag and the accent bar. `notice`, `text`,
+`sleep` and `clock` are composers over it and hold no font, fitting search or
+colour of their own; the notice's severity is a palette role lookup
+(`accent`/`attention`/`alert`) rather than a fourth copy of red, and the clock's
+digits are the component's headline instead of the view's own binary-search
+fitter. The same module's `strip` is the card confined to a rect of a bigger
+frame, which is how the failure card is drawn now: `renderers/_html_error.py`
+is a thin adapter over `ui.panel.card`/`strip` in the alert family, so "what
+went wrong" is the same card as everything else instead of its own private
+wrap, column count and font loader. `touch_confidence` is a composer too:
+every line of its frame is the panel's `block` and its region boxes are the
+tile component's `draw`, with the palette's `attention`/`alert`/`accent` roles
+where it used to hold six RGB literals and a private font loader.
+
+A **progress bar** is a component as well, `renderers/ui/progress.py`: the
+playlist's bar is one definition of where the track strip and the fill land on
+any of the four edges, the `drain`/`fill` direction rule, and the contrast
+border — drawn from the palette's `track` token and the border roles. The
+daemon's `playlist.py` composes it; it used to carry a second, byte-identical
+copy of the same three functions, which shadowed its own import of the module
+its docstring named as the owner.
+
+A **status pill** is that same `stat.pill`: `stream` draws its live tag with
+it (the view's own accent as the dot while frames arrive, the palette's muted
+role when its source is quiet) and its idle frame with the panel component's
+block, and `qr` draws its prompt and caption through the panel component and
+the layer's one line-of-type rule. Both views no longer hold a font loader, an
+image-drawing primitive or a colour literal; the ink a caller-coloured page
+needs is `theme.ink_on`, the token layer's one rule for "what reads on this
+surface".
+
+The reload confirmation view is a pure composer as well: its placeholder and
+headline are `ui.panel` (the block, and the accent bar the view's own palette
+slot fills), its SHA and hint lines are `ui.text` fitted and written at their
+anchors, and its highlights summary is `ui.paragraph`. `renderers/reload.py`
+holds no drawing primitive and no colour; `renderers/reload_highlights.py` is
+the sanitising rule alone — text only, no pixels — so the same file can be
+run as `deploy.sh`'s extraction script on a host with no Pillow installed.
 
 The apps dock under the merged home screen is a template too
 (`html-templates/dock.html`), composited into the picker frame inside the rect
@@ -607,7 +694,9 @@ colour name, or an `(r, g, b)` tuple) to opt in, and a per-view `color` in
 the playlist item overrides either (handy for views owned by other
 tasks); then the playlist-level `color`, then a white fallback. The fill
 always carries a contrast border over a dark track, so it reads on dark
-and light views alike. Renderers with no slot and no `ACCENT` work exactly
+and light views alike — both the track and the border are the progress
+component's palette roles (`renderers/ui/progress.py`), not playlist
+literals. Renderers with no slot and no `ACCENT` work exactly
 as before.
 
 Rotation yields: a notice or chat-attention transient pauses it (bar

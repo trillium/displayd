@@ -23,6 +23,7 @@ Pixel facts this depends on, both verified live:
 """
 
 import _html_templates as templates
+from ui import grid as ui_grid
 
 DEFAULT_COLS = 2
 # Hard ceiling on the number of name cells. The old Pillow loop drew every
@@ -31,8 +32,9 @@ DEFAULT_COLS = 2
 # function allocates a rect per name, so the count is bounded twice: once
 # at the parse boundary (options.coerce_views drops the overflow, so the
 # header's count stays honest) and once here, because grid_geometry is
-# public and must stay total and bounded on any input at all.
-MAX_CELLS = 48
+# public and must stay total and bounded on any input at all. The
+# component places no more boxes than this either (`ui.grid.TILE_CAP`).
+MAX_CELLS = ui_grid.TILE_CAP
 
 # Chrome slots the options surface draws that are not content: the
 # gesture-strip labels and the foot. Kept as constants so the template
@@ -75,25 +77,16 @@ def cell_count(value):
 
 
 def grid_geometry(rect, count, cols=None, gutter=None):
-    """Name rects row-major inside `rect`. Pure, bounded and total -- the
-    one place a name is placed, so the drawn cell and the geometry a
-    caller would read are the same four numbers by construction."""
+    """Name rects row-major inside `rect`. Pure, bounded and total --
+    the arithmetic is the tile component's (`ui.grid.grid`), so the picker's
+    grid and this one can no longer disagree about where a box goes; this
+    function keeps the surface's own name-count policy (`cell_count`) and
+    its column rule (`cols_for`), and must stay total on any input, which
+    is why the count is bounded here and not only at the parse boundary."""
     count = cell_count(count)
     if cols is None:
-        cols = max(1, min(DEFAULT_COLS, count))
-    else:
-        try:
-            cols = max(1, min(DEFAULT_COLS, int(cols)))
-        except (TypeError, ValueError):
-            cols = 1
-    rows = (count + cols - 1) // cols
-    rx, ry, rw, rh = (int(v) for v in rect)
-    g = max(8, min(rw, rh) // 45) if gutter is None else max(0, int(gutter))
-    cw = max(1, (rw - (cols + 1) * g) // cols)
-    ch = max(1, (rh - (rows + 1) * g) // rows)
-    return [(rx + g + (i % cols) * (cw + g),
-             ry + g + (i // cols) * (ch + g), cw, ch)
-            for i in range(count)]
+        cols = cols_for(count)
+    return ui_grid.grid(rect, count, cols, gutter=gutter)
 
 
 def chrome(names, bg, fg, title, instructions, footer):

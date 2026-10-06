@@ -166,6 +166,71 @@ class TestPhoneFirstRebuild(unittest.TestCase):
             self.assertIn(action, page,
                           "tap-action list omits %r" % action)
 
+    def test_layout_style_picker(self):
+        """Styles, their slots and each slot's views come from the daemon;
+        nothing in the layout script hardcodes a renderer."""
+        import control_page_script_layout as lay
+        page = displayd.CONTROL_PAGE
+        for token in ('id="laystyles"', 'id="layslots"', 'id="layapply"',
+                      'id="layclear"', 'id="lay-status"',
+                      '"/layout/presets"', '"/layout"'):
+            self.assertIn(token, page, "layout section missing %r" % token)
+        self.assertIn(lay._SCRIPT_LAYOUT, page)
+        # No preset name and no renderer name is spelled out: the buttons
+        # and every slot's options come from GET /layout/presets.
+        for name in ("full", "split-50-50", "split-50-50-columns",
+                     "15-70-15"):
+            self.assertNotIn('data-style="%s"' % name, page)
+            self.assertNotIn(">%s<" % name, page)
+        for name in ("picker", "row", "clock", "chat"):
+            self.assertNotIn(">%s<" % name, lay._SCRIPT_LAYOUT)
+        self.assertIn("slot.views", lay._SCRIPT_LAYOUT)
+        self.assertNotIn("SCHEMAS", lay._SCRIPT_LAYOUT,
+                         "the layout slots must not fall back to all views")
+
+    def test_layout_applies_and_clears_through_existing_shapes(self):
+        import control_page_script_layout as lay
+        src = lay._SCRIPT_LAYOUT
+        self.assertIn('preset: style.name', src)
+        self.assertIn('views: views', src)
+        self.assertIn('method: "DELETE"', src)
+        # Geometry and capability fit stay the daemon's: the page never
+        # sends regions or rects of its own.
+        self.assertNotIn("regions:", src)
+        self.assertNotIn("rect", src)
+
+    def test_layout_shows_the_live_style(self):
+        import control_page_script_layout as lay
+        src = lay._SCRIPT_LAYOUT
+        self.assertIn('classList.add("live")', src)
+        self.assertIn("LAY_LIVE.regions", src)
+        self.assertIn("layout: loading", displayd.CONTROL_PAGE)
+
+    def test_client_script_parses(self):
+        """The whole page is one <script>; a syntax error in any half
+        would leave the phone with dead controls and no server-side
+        signal. Skipped where node is unavailable."""
+        import shutil
+        import subprocess
+        import tempfile
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is not installed")
+        js = displayd.CONTROL_PAGE.split("<script>", 1)[1]
+        js = js.rsplit("</script>", 1)[0]
+        self.assertTrue(js.strip(), "no client script in the page")
+        with tempfile.NamedTemporaryFile("w", suffix=".js",
+                                         delete=False) as fh:
+            fh.write(js)
+            path = fh.name
+        try:
+            done = subprocess.run([node, "--check", path],
+                                  capture_output=True, text=True)
+        finally:
+            os.unlink(path)
+        self.assertEqual(done.returncode, 0,
+                         "client script does not parse:\n" + done.stderr)
+
     def test_thumb_targets_single_column(self):
         page = displayd.CONTROL_PAGE
         self.assertIn("max-width: 520px", page)
@@ -182,6 +247,7 @@ class TestPhoneFirstRebuild(unittest.TestCase):
         page = displayd.CONTROL_PAGE
         paths = set(re.findall(r'"(/(?:health|state|renderers|snapshot|show|'
                                r'clear|screen/[a-z]+|policy|playlist(?:/[a-z]+)?|'
+                               r'layout(?:/[a-z]+)?|'
                                r'notify|reload|feedback(?:/[a-z]+)?))"', page))
         self.assertTrue(paths, "no API paths found in page")
         routes = (inspect.getsource(displayd.Handler.do_GET)

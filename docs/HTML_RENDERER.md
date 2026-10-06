@@ -196,7 +196,8 @@ route to the composition step, so the trust boundary below is unchanged.
 
 `renderers/theme.py` owns every colour the panel shows. It is not a
 stylesheet and not a per-view constant: it is a table of roles --
-`page`, `band`, `panel`, `pane`, `edge`, `rule`, `badge`, `ink`,
+| `page`, `band`, `panel`, `pane`, `edge`, `rule`, `badge`, `track`,
+`ink`,
 `ink-strong`, `ink-soft`, `muted`, `muted-soft`, `faint`, `accent`, the
 alert family (`alert`, `alert-ink`, `alert-body`, `alert-page`),
 `attention`, `ok` -- plus one accent per view under
@@ -229,6 +230,12 @@ resolves the slot into every renderer entry it loads and
 listing and the picker all agree without a renderer declaring a colour.
 A renderer from outside this tree may still declare its own `ACCENT`, which
 takes precedence over the slot.
+
+Which ink reads on a surface is a rule of the palette, not of the view:
+`theme.ink_on(surface)` answers with `on-accent` on a bright fill and
+`muted` on a dark one, so a view that paints a surface the *caller* chose
+(`qr`'s card page, an operator's `background` param) can pick a legible ink
+without holding a colour literal or its own brightness test.
 
 A migrated template carries **no** colour literal: `layout.html` and
 `status.html` are the first two, and `tests/test_theme.py` fails on any
@@ -333,10 +340,11 @@ Two things differ from the other templates, both deliberate:
   custom dock keeps the same type at the same relative size instead of
   overflowing the way a fixed-px document would.
 - **its failure is a strip, not a card.** The dock is pasted into a finished
-  frame, so `error_strip()` in `renderers/_html_error.py` draws the red rule
-  and the message *inside the dock rect only* -- a full-screen card would hide
-  the tiles around it, and a silently missing strip would be indistinguishable
-  from a home screen that simply has no apps.
+  frame, so `error_strip()` in `renderers/_html_error.py` (the card component
+  confined to a rect) draws the alert rule and the message *inside the dock
+  rect only* -- a full-screen card would hide the tiles around it, and a
+  silently missing strip would be indistinguishable from a home screen that
+  simply has no apps.
 
 litehtml has no `border-radius`, so the strip's corners are square rather than
 rounded, and the head "dot" is a 20px square. Everything else -- three states
@@ -535,8 +543,10 @@ that only survives polite input is not a budget.
 | `renderers/picker.py` | the picker view: params, views, touch geometry |
 | `renderers/_picker_tiles.py` | the picker's chrome variables |
 | `renderers/ui/tile.py` | the tile component: box geometry, label fit, the markup half and the drawing half |
-| `renderers/ui/shell.py`, `renderers/ui/stat.py`, `renderers/ui/text.py` | the band a Pillow view wears, the label/value row and its meter, and the layer's one font/measure/fit rule (the template path takes its band from the shared stylesheet instead) |
-| `renderers/ui/panel.py` | the panel component: a titled region with a body -- one scale-to-fit rule, a centred headline and body, the corner tag and the accent bar (`notice`, `text`, `sleep` are composers over it) |
+| `renderers/ui/grid.py` | the grid of tiles: the column count (shape-derived when no `cols` is given) and the row-major rects, asked by the picker and the options name grid alike |
+| `renderers/ui/shell.py`, `renderers/ui/stat.py`, `renderers/ui/text.py`, `renderers/ui/paragraph.py` | the band a Pillow view wears (inset clear of the badges via `band_pad`), the label/value row, its meter and the `pill` overlay tag, the layer's one font/measure/fit rule plus `fit_size` and the anchored one-line writer, and the fitted multi-line paragraph block (`reload`'s highlights; the template path takes its band from the shared stylesheet instead) |
+| `renderers/ui/panel.py` | the panel component: a titled region with a body -- one scale-to-fit rule, a centred headline and body, the corner tag and the accent bar (`notice`, `text`, `sleep`, `clock` are composers over it; `touch_confidence` composes its lines and its region boxes from `panel` + `tile`) |
+| `renderers/ui/progress.py` | the progress component: a fraction of a whole across a flush edge strip (`boxes`/`shown`/`contrast`/`draw`), the playlist bar's one definition, drawn from the `track` token and the contrast border roles -- `playlist.py` composes it and does not draw |
 | `html-templates/dock.html` | the apps dock strip under the home screen |
 | `renderers/unified_dock.py` | dock feed state -> the strip's variables + composite |
 | `html-templates/options.html` | the selection screen: chrome plus one name layer |
@@ -547,7 +557,7 @@ that only survives polite input is not a budget.
 | `renderers/chat_panes.py` | geometry -> pane/row/line markup + the chrome variables |
 | `renderers/chat_fit.py` | measurement and wrapping: text -> measured rows |
 | `renderers/_html_templates.py` | the trust boundary: name, root, escaping, raw slots |
-| `renderers/_html_error.py` | the red rule and its message, shared by both views |
+| `renderers/_html_error.py` | the failure card: the panel card in the alert family, shared by both views |
 | `renderers/_html_native.py` | ctypes + Pillow; fonts, images, clipping, tiling |
 | `renderers/native/displayd_html.h` | the C ABI between them |
 | `renderers/native/pil_container.cpp` | the litehtml container |
@@ -565,6 +575,12 @@ the root is still one `POST /show` away.
 The picker itself is now a template surface too: `picker.html` is the same
 chrome plus a tile layer, and `renderers/picker.py` holds the view contract
 while `renderers/ui/tile.py` -- the tile component -- turns geometry into that
-layer. Nothing
+layer and `renderers/ui/grid.py` decides where the boxes go. The column count
+is read off the region's shape unless the caller states `cols`, so a 288px
+application band (the 15-70-15 side bands) draws ONE column of 224px tiles
+instead of three 69px ones, and the drawn tiles and the generated touch
+regions stay the same numbers because both come from that one grid. Nothing
 draws in Pillow on that path any more, which is also why the failure card lives
-in `renderers/_html_error.py`: both views share one.
+in `renderers/_html_error.py`: it is `ui.panel.card` (or `ui.panel.strip`,
+confined to a rect of a bigger frame) in the alert family, so both views share
+one definition.

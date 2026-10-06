@@ -45,10 +45,8 @@ PARAMS = {
     "background": {"type": "string", "help": "background colour, default near-black"},
 }
 
-from row_draw import (BIG_SIZE, C_BG, C_DIM, C_FAILED, C_FIRE, C_LINE,
-                    C_TEXT, C_UP, C_WARN, FOOT_SIZE, HEADER_SIZE, LABEL_SIZE,
-                    PAD, ROW_SIZE, SUB_SIZE, _age, _draw, _draw_message, _fit,
-                    _font, _font_or_default, _snapshot_key)
+import theme
+from row_draw import _draw, _draw_message, _snapshot_key
 
 POLL_DEFAULT_INTERVAL = 60
 DRAW_REFRESH = 60  # re-render at least this often so the age line stays honest
@@ -69,7 +67,7 @@ from row_poll import (HTTP_MAX_BYTES, MIN_ROW_DISTANCE_M, fetch_http_text,
 def run(screen, params, stop):
     params = params or {}
     title = str(params.get("title") or "ROWING").upper()
-    bg = screen.color(params.get("background"), C_BG)
+    bg = screen.color(params.get("background"), theme.rgb("page"))
     try:
         interval = int(params.get("interval") or POLL_DEFAULT_INTERVAL)
     except (TypeError, ValueError):
@@ -84,7 +82,8 @@ def run(screen, params, stop):
 
     if kind == "file" and not target and path is None:
         _draw_message(screen, title, bg, "NO LOG CONFIGURED",
-                      "set source param or $%s" % ENV_SOURCE, None, C_WARN)
+                      "set source param or $%s" % ENV_SOURCE, None,
+                      theme.rgb("attention"))
         while not stop.is_set():
             stop.wait(interval)
             now_source = resolve_source(params.get("source"))
@@ -125,7 +124,7 @@ def run(screen, params, stop):
         health = "error"
         _draw_message(screen, title, bg, "LOG NOT READABLE",
                       label, ("last error: %s" % error) if error else None,
-                      C_FAILED)
+                      theme.rgb("alert"))
 
     if snap is not None:
         _draw(screen, title, bg, snap, label, health, error, updated)
@@ -157,7 +156,7 @@ def run(screen, params, stop):
                 if snap is None:
                     _draw_message(screen, title, bg, "LOG NOT READABLE",
                                   label, ("last error: %s" % error) if error else None,
-                                  C_FAILED)
+                                  theme.rgb("alert"))
                 else:
                     _draw(screen, title, bg, snap, label, health, error, updated)
             except Exception:
