@@ -279,6 +279,15 @@ drawing half (a Pillow view's labelled box). Its look is authored once in the
 shared stylesheet with palette tokens, and the component layer is the only
 place a renderer may draw by hand (`tools/check-components.py`).
 
+The band a full-panel view wears is a component too, `renderers/ui/shell.py`
+(title, detail, the health dot and its honest age, the rule under it, the
+footer line), and the label/value rows under it are `renderers/ui/stat.py`
+(`row`, the supporting `body` line, and a clamped `meter` for a fraction of a
+whole). Both draw through `renderers/ui/text.py` — the layer's one font,
+measurement and trim-to-room rule. The two views that used to carry that band
+twice (`resources`, `services`) are now composers over them, and carry no
+colour, font or truncation rule of their own.
+
 The apps dock under the merged home screen is a template too
 (`html-templates/dock.html`), composited into the picker frame inside the rect
 its `apps-dock` tap region covers. It is authored once at the standard dock

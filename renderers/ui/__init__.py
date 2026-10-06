@@ -29,11 +29,20 @@ Layout of the package:
 - ``base`` -- the composition primitive (``chain``), no pixels.
 - ``system_buttons`` -- the home and sleep badges: one module, one
   definition, composable by every view regardless of which path it uses.
+- ``text`` -- one font resolution, one measurement, one fitting rule, so
+  a line of type is asked for rather than re-implemented per view.
+- ``shell`` -- the band a full-panel view wears: title, detail, health
+  dot and its honest age, the rule under it, and the footer line.
+- ``stat`` -- a label plus a value line (``row``), a supporting ``body``
+  line, and the ``meter`` bar for a fraction of a whole.
 - ``tile`` -- a bounded box with a label: the declared-box rule, the label
   fit and centring, plus a markup half (``cell``/``layer``, what the
   picker and options fill their raw slot with) and a drawing half
   (``draw``, for the Pillow views). Its look is authored once in the
   shared stylesheet, from palette tokens.
+
+Still owed by the vocabulary: ``panel`` (a titled region with a body --
+what ``notice`` and the cold-start cards want).
 
 Adding a component: give it its own module here, take every colour from
 ``theme``, return the frame unchanged on any failure, and add it to the

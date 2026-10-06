@@ -26,7 +26,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from services_draw import C_BG, _draw
+import theme
+from services_draw import _draw
 from services_poll import (
     DEFAULT_URL,
     FETCH_TIMEOUT,
@@ -66,7 +67,7 @@ def _snapshot_key():
 def run(screen, params, stop):
     params = params or {}
     title = str(params.get("title") or "SERVICES").upper()
-    bg = screen.color(params.get("background"), C_BG)
+    bg = screen.color(params.get("background"), theme.rgb("page"))
     url = str(params.get("url") or DEFAULT_URL)
     try:
         interval = int(params.get("interval") or POLL_DEFAULT_INTERVAL)

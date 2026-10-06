@@ -527,6 +527,7 @@ that only survives polite input is not a budget.
 | `renderers/picker.py` | the picker view: params, views, touch geometry |
 | `renderers/_picker_tiles.py` | the picker's chrome variables |
 | `renderers/ui/tile.py` | the tile component: box geometry, label fit, the markup half and the drawing half |
+| `renderers/ui/shell.py`, `renderers/ui/stat.py`, `renderers/ui/text.py` | the band a Pillow view wears, the label/value row and its meter, and the layer's one font/measure/fit rule (the template path takes its band from the shared stylesheet instead) |
 | `html-templates/dock.html` | the apps dock strip under the home screen |
 | `renderers/unified_dock.py` | dock feed state -> the strip's variables + composite |
 | `html-templates/options.html` | the selection screen: chrome plus one name layer |

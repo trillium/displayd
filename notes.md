@@ -66,6 +66,17 @@ drawing primitive may appear (rule enforced by the gate below).
   (`_chrome.html`): `.tile`/`.lab`/`.shade` for a filled tile,
   `.cell`/`.name` for a plain one, every colour a token (`--on-accent`,
   `--label-shade`). See §2b.
+- `renderers/ui/text.py` — one font resolution, one measurement, one
+  fitting rule (`font`/`face`/`width`/`fit`/`write`/`line`). `_font`,
+  `_font_or_default`, `_fit` and a truncation loop used to exist in five
+  views.
+- `renderers/ui/shell.py` — the band a full-panel view wears: `head`
+  (title, detail, health dot, its honest age, the rule under it), `foot`,
+  `rule`, `health_ink` (the poll-health vocabulary → palette role) and
+  `age`.
+- `renderers/ui/stat.py` — a label plus a value line: `label`/`value`/
+  `body`, `row` (the component itself), `meter` (a clamped fraction bar)
+  and `width`. See §2c.
 
 ### 2b. The tile component (this increment)
 
@@ -112,25 +123,73 @@ reaching a style attribute;
 Both halves keep the layer's obligation: `draw` returns the frame unchanged
 on any failure, and `cell`/`layer`/`content_size` are total on garbage.
 
+### 2c. The shell, stat and text components (this increment)
+
+Three components, one deletion each.
+
+`services_draw` and `resources_draw` were the same forty lines twice. Each
+carried its own `_font`/`_font_or_default`/`_fit`/`_age`, its own eight
+colour constants (`C_BG`, `C_TEXT`, `C_DIM`, `C_LINE`, `C_OK`, `C_WARN`,
+`C_BAD`, `C_UP`, `C_DOWN`, `C_FAILED` — sixteen tuples across the pair),
+and a header band that differed only in variable names. A third copy of the
+band sits in `row_draw`, and `stream`/`text` carry `_font`/`_fit` again.
+
+That duplication is gone:
+
+| component | what it owns |
+| --- | --- |
+| `ui/text.py` | the face at a size, the width of a string, the trim-to-room rule, one line of type and a hairline. `face` is never None (a host with no font package gets Pillow's bitmap face) and nothing raises. |
+| `ui/shell.py` | `PAD`/`HEAD_SIZE`/`RULE_Y`/`FOOT_SIZE`, `head` (title + detail, the health dot and its status line, the rule), `foot`, `rule`, `health_ink` (one map for the poll-health vocabulary `cold`/`warm`/`stale`/`error`) and `age`. |
+| `ui/stat.py` | the type scale (`44/170/130/40/36/30`), `label`/`value`/`body`, `row` (a label with its value under it — the component), `meter` (outline `edge`, fill the caller's ink, clamped so 300% cannot paint outside its rect) and `width`. |
+
+`resources_draw` went 209 → 159 lines and `services_draw` 229 → 189, with
+no colour, no font loader, no age line and no truncation rule left in
+either; both are now pure "which number goes where" over the layer. The
+gate's exemption list went **24 → 22**.
+
+The health map is the quiet win: the four health words are declared by
+`resources_poll`, `services_poll`, `row_poll` and `beads_poll`, and three
+views each held their own copy of the mapping to four colours. It is one
+table now (`shell.HEALTH_ROLE`), and an unknown word is a grey dot rather
+than a `KeyError`.
+
+What the tests pin (`tests/test_shell.py`, 26 tests):
+
+- the band's rule is the palette's **`rule` role** and the dot wears the
+  **health role** (`ok`/`attention`/`alert`/`muted`), on rendered pixels —
+  the pre-change colour was `C_LINE = (60, 60, 70)`;
+- `face` never returns None and every entry point returns the frame
+  unchanged on failure, including `meter` on a garbage rect;
+- the meter is clamped and empty-but-outlined when the fraction is unknown
+  (`0`, `None`, `"junk"`), so an unreadable source is an empty bar, not a
+  bar that spills;
+- **the one cross-path pin that holds today**: the rule under the band is
+  `--rule` in the shared stylesheet *and* `theme.rgb("rule")` in the Pillow
+  band, so the two paths cannot drift on the one thing both draw;
+- the two migrated views hold no `PIL` import, no hex literal and none of
+  the deleted helpers.
+
 ### Which views migrated, which are left
 
-Migrated: the persistent overlay chrome (both system buttons) — the
-always-on furniture that every view wears — and, in this increment, the
-panel's two tile layers (the picker's tile grid and the options name grid),
-which are now one component with two halves.
+Migrated so far, in order: the persistent overlay chrome (both system
+buttons); the panel's two tile layers (the picker grid, the options name
+grid), now one component with two halves; and this increment's two polled
+list views, `resources_draw` and `services_draw`, which are now composers
+over `ui.shell` + `ui.stat` (`ui.text` underneath both).
 
-Deliberately left (still Pillow, still drawing by hand): the other 24
-modules in the gate's exemption list — `beads`, `row`, `resources`,
-`services`, `macbook`, `qr`, `reload`, `stream`, `activity`, `clock`,
-`notice`, `text`, `retro_grid`, `touch_confidence`, `sleep`,
-`feed_health`, `life`, the `*_draw` helpers, `playlist`/`playlist_bar`
-(daemon-side progress bar), and `_html_error`/`_html_native`. Reason: the
-component vocabulary they need (`shell`, `panel`, `stat`/list row) does not
-exist yet, and inventing it view-by-view would re-create the duplication
-this run is deleting. `touch_confidence_draw` is partly migrated (its region
-boxes are `ui.tile.draw` now) but it keeps its own accent bar, title and
-diagnostics lines, so it stays on the list until `shell`/`stat` exist — a
-half-migrated file must not claim to have left the ratchet.
+Deliberately left (still Pillow, still drawing by hand): the other 22
+modules in the gate's exemption list — `beads` with its `beads_detail`/
+`beads_detail_card`/`services`-style draw helpers, `row_draw`, `macbook_draw`/
+`macbook_strip`, `qr`/`qr_common`, `reload`, `stream`, `activity`, `clock`,
+`notice`, `text`, `retro_grid_draw`, `touch_confidence_draw`, `sleep`,
+`feed_health`, `life`, `playlist`/`playlist_bar` (the daemon-side progress
+bar), and `_html_error`/`_html_native`. Reason: the vocabulary they need is
+only partly built — `shell` and `stat` landed in this increment, `panel` (a
+titled region with a body) has not, and `notice`, `row_draw` and `beads` are
+the pull for it. `touch_confidence_draw` is partly migrated (its region
+boxes are `ui.tile.draw` now) but keeps its own accent bar, title and
+diagnostics lines, so it stays on the list until `shell`/`stat` are applied
+to it — a half-migrated file must not claim to have left the ratchet.
 
 ### 3. The shared chrome, composed at load time — `html-templates/_chrome.html`
 
@@ -337,12 +396,21 @@ the pre-change tree (red instead of the badge fill at the badge tile).
 
 ## Still owed (with the reason)
 
-- **The remaining components** (`shell`, `panel`, `stat`) and the
-  migration of the views listed above. The `tile` component landed this
-  increment; `notice` (a titled region with a body) and the list views
-  (`services`, `resources`, `beads`) are the pull for the next two, and
-  migrating `touch_confidence_draw`'s bar/title/diagnostics off ImageDraw
-  is what takes it off the exemption list.
+- **The last component** (`panel`: a titled region with a body) and the
+  views that want it — `notice`, `row_draw`, `beads`, and the cold-start
+  cards (which are a title plus a body, drawn by hand in both polled views
+  today). `shell`, `stat` and `text` landed this increment with
+  `resources`/`services`; `touch_confidence_draw`'s bar/title/diagnostics
+  is the other obvious pull (its region boxes are already `ui.tile.draw`).
+- **The band still has two definitions, one per rendering path**: the shared
+  stylesheet's `.frame`/`.head`/`.title`/`.rule`/`.foot` rules for
+  templates, and `ui/shell.py`'s constants for the Pillow views. That is one
+  definition *per path* rather than one definition overall, and the numbers
+  genuinely differ (Pillow `PAD = 60` vs the chrome's `--inset: 64px`), so
+  only the rule colour is pinned across the paths (`--rule` ↔
+  `theme.rgb("rule")`, `tests/test_shell.py`). Unifying the geometry needs a
+  cross-language constant, the way `ui.tile.BORDER` ↔ the stylesheet's
+  `border-width` already works in `tests/test_tile.py`.
 - **Per-view colour constants** — `ACCENT = "#rrggbb"` still lives in
   ~12 renderer modules, and `playlist_color.accent_for` reads a renderer's
   `ACCENT` attribute by name. Folding that into `theme.ACCENT_SLOTS` (the
@@ -374,8 +442,8 @@ Full objective suite (the stop-condition command), after this increment:
         tests.test_unified tests.test_chat tests.test_html \
         tests.test_html_runtime_install tests.test_control tests.test_options \
         tests.test_layout && python3 tools/check-lines.py
-    component layer ok: 24 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 326 tests in 52.323s
+    component layer ok: 22 shipped module(s) still draw by hand; all exempt, none stale
+    Ran 326 tests in 52.301s
     OK
     line budget ok: all source files within 250 lines
     rc=0
@@ -637,13 +705,81 @@ sheet), `test_no_surface_restates_the_tile_look` (four restatements above) and
 `test_the_tile_tokens_resolve_on_the_panel` (no such token or rule) all fail on
 the old sources and pass now.
 
+### The shell, stat and text components, and the two views they pulled (this increment)
+
+    $ python3 tools/check-components.py
+    component layer ok: 22 shipped module(s) still draw by hand; all exempt, none stale
+
+    $ python3 -m unittest tests.test_shell -v        -> Ran 26 tests, OK
+    $ python3 -m unittest tests.test_shell tests.test_components \
+        tests.test_resources_services tests.test_theme tests.test_layout_presets
+      -> Ran 118 tests, OK (skipped=2)
+
+    $ python3 tools/check-repo-health.py            -> rc=0
+    (line budget, no tracked generated artifacts, component layer)
+
+`python3 /tmp/shell_evidence.py` — a real `DisplayDaemon` on the in-memory
+framebuffer (`DISPLAYD_FAKE_FB=1`), temp policy/feedback paths, 1920x1080,
+with a populated snapshot injected into each poll store and the view
+rendered through `daemon.show()` then `/state` and `/snapshot`:
+
+    resources  size=(1920, 1080) first_pixel_ms=11.0
+               tokens: page=1916041, rule=3230, edge=11588, ink=42114,
+                       muted=4856, ok=20419, alert=15741
+    services   size=(1920, 1080) first_pixel_ms=17.5
+               tokens: page=1964452, rule=3230, edge=7204, ink=9378,
+                       muted=10908, ok=5822, attention=2302, alert=5694
+    resources-cold size=(1920, 1080) first_pixel_ms=1.3   rule=3602
+    services-error size=(1920, 1080) first_pixel_ms=0.8   rule=3602
+
+    recorded:
+      resources      -> /tmp/shell-evidence-resources-1920x1080.png
+      services       -> /tmp/shell-evidence-services-1920x1080.png
+      resources-cold -> /tmp/shell-evidence-resources-cold-1920x1080.png
+      services-error -> /tmp/shell-evidence-services-error-1920x1080.png
+
+Every frame carries the band's `rule` token and the `edge` token (the row
+rules and the meter outlines); `ok`/`attention`/`alert` appear exactly where
+the state calls for them (CPU colour, memory meter, the failed-unit row, the
+stale status dot). The `rule` count is below the full 2x1800 on the populated
+frames because the always-on home and sleep badges cover the band's two ends
+— expected, and itself the component layer working. First pixel 0.8–17.5 ms
+against the 100 ms budget (the 17.5 ms is a cold first frame of a real view;
+steady ticks are 1–5 ms).
+
+### The new assertions fail before, pass after (this increment)
+
+    $ git show HEAD:renderers/resources_draw.py | grep -n '^C_LINE\|^C_OK\|ImageDraw.Draw\|def _fit\|def _age\|def _font_or_default\|def _bar'
+    20:C_DIM = (140, 140, 150)
+    21:C_LINE = (60, 60, 70)
+    22:C_OK = (80, 220, 120)
+    47:def _font_or_default(screen, name, size):
+    51:def _fit(draw, text, font, max_w, max_chars=90):
+    83:def _age(updated):
+    96:def _bar(draw, x, y, w, h, frac, color):
+    106:    draw = ImageDraw.Draw(img)
+
+    $ git show HEAD:renderers/services_draw.py | grep -c 'ImageDraw\|^C_'
+    10
+    $ git show HEAD:renderers/resources_draw.py | grep -c theme   -> 0
+    $ git show HEAD:renderers/services_draw.py  | grep -c theme   -> 0
+    $ python3 -c "import theme; print(theme.rgb('rule'), theme.rgb('edge'))"
+    (36, 64, 92) (43, 50, 64)
+
+So, evaluated against those pre-change sources:
+`test_neither_view_draws_or_owns_a_palette_of_its_own` (both modules import
+`PIL.ImageDraw`, define `_fit`/`_age`/`_font_or_default`, and hold `C_*`
+colour tuples) and every pixel assertion that reads `theme.rgb("rule")` at
+the band's rule row (the old line was `C_LINE = (60, 60, 70)`, not the
+palette's `(36, 64, 92)`) fail on the old tree and pass now.
+
 ## Note on the stop condition
 
 The command above exits zero, but that is a **floor, not the finish line**:
-the gate is a ratchet with 24 exemptions, most views still hand-draw, and the
-component vocabulary has three of its five components (`system_buttons`,
-`ui.tile`, and the `ui.base.chain` primitive; `shell`, `panel` and `stat`
-are still owed). What is left is those components and the migration of the
+the gate is a ratchet with 22 exemptions, most views still hand-draw, and the
+component vocabulary has four of its five components (`system_buttons`,
+`ui.tile`, `ui.shell`+`ui.stat`+`ui.text`, and the `ui.base.chain`
+primitive; `panel` is still owed). What is left is those components and the migration of the
 views that need them. The stop condition became reachable because the gate
 exists and the health gate stays green while the migration is in flight —
 which is exactly what it was designed to allow.
