@@ -29,7 +29,6 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.request
 from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
@@ -41,58 +40,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
 os.environ["DISPLAYD_FAKE_FB"] = "1"
 
 import displayd  # noqa: E402
-import macbook_layout  # noqa: E402
-import macbook_map  # noqa: E402
 import touch  # noqa: E402
 
-PANEL_W, PANEL_H = 1920, 1080
-DISPLAYS = [{"bounds": {"x": 0, "y": 0, "w": 1728, "h": 1117},
-             "main": True},
-            {"bounds": {"x": -355, "y": -1080, "w": 1920, "h": 1080},
-             "main": False}]
-
-
-def macbook_feed(ts=None):
-    return {
-        "ts": ts if ts is not None else time.time(),
-        "accessibility_trusted": True,
-        "focus": {"app_name": "WezTerm",
-                  "window_title": "macbookpro: fm-",
-                  "window_bounds": {"x": 0, "y": -1049,
-                                    "w": 1920, "h": 1049},
-                  "display_index": 1},
-        "mouse": {"x": 464, "y": -283, "display_index": 1},
-        "displays": [{"bounds": dict(d["bounds"]), "main": d["main"]}
-                     for d in DISPLAYS],
-        "talon": {"mode": "command", "muted": False},
-    }
-
-
-def http_post(base, path, body, timeout=5.0):
-    req = urllib.request.Request(
-        base + path, data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"})
-    t0 = time.perf_counter()
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode("utf-8", "replace"))
-    return (time.perf_counter() - t0) * 1000.0, payload
-
-
-def http_get(base, path, timeout=10.0):
-    t0 = time.perf_counter()
-    with urllib.request.urlopen(base + path,
-                                timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode("utf-8", "replace"))
-    return (time.perf_counter() - t0) * 1000.0, payload
-
-
-def panel_of(qx, qy):
-    box = macbook_map.union(DISPLAYS)
-    scale, ox, oy = macbook_map.frame(
-        box, PANEL_W, PANEL_H,
-        top=macbook_layout.header_bottom(), bottom=PANEL_H)
-    px, py = macbook_map.project(qx, qy, scale, ox, oy)
-    return int(round(px)), int(round(py))
+from tap_latency_fixtures import (PANEL_H, PANEL_W, http_get, http_post,
+                                  macbook_feed, panel_of)
+from tap_latency_poller import start_poller
 
 
 def main(argv=None):
@@ -142,39 +94,8 @@ def main(argv=None):
         stop = threading.Event()
         seen = {}
 
-        def poller(path, key):
-            # Same shape as the production bridge loop: hold the GET
-            # (long-poll when --wait is set), then sleep only the
-            # remainder of the tick -- except right after a command was
-            # acted on, when the next hold re-parks at once (0.05 floor)
-            # so a back-to-back tap wakes instead of riding the sleep.
-            since = [0.0]
-            while not stop.is_set():
-                t0 = time.monotonic()
-                acted = False
-                try:
-                    _, doc = http_get(
-                        base, "%s?since=%s%s" % (
-                            path, since[0],
-                            ("&wait=%s" % args.wait) if args.wait else ""),
-                        timeout=10.0)
-                    cmd = (doc.get("command") or {})
-                    if isinstance(cmd, dict) and cmd.get("ts", 0) > 0:
-                        since[0] = max(since[0], float(cmd["ts"]))
-                        seen[key] = (time.perf_counter(), dict(cmd))
-                        acted = True
-                except Exception:
-                    pass
-                if acted:
-                    time.sleep(0.05)
-                else:
-                    time.sleep(max(0.05, args.interval
-                                   - (time.monotonic() - t0)))
-
-        pt = threading.Thread(target=poller,
-                              args=("/macbook/mouse", "mouse"),
-                              daemon=True)
-        pt.start()
+        pt = start_poller(base, "/macbook/mouse", "mouse", args.interval,
+                          args.wait, stop, seen)
         # Refresh feeds each tap (production bridges POST state ~2Hz;
         # without this the freshness gates would refuse).
         for i in range(args.taps):

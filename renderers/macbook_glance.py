@@ -1,110 +1,28 @@
 """GLANCE drawing for the merged macbook feature (drawn pixels only).
 
 Slim full-width header (macbook_layout.HDR_H): state line, focused app +
-window, mouse position, and the tab-through app strip -- then the display
-map fills everything below it. No screenshot here; AIM owns review. Pure
-apart from PIL; geometry comes from macbook_layout so draw, tap, and
-region cannot drift.
+window, mouse position, and the tab-through app strip. No screenshot here;
+AIM owns review. Pure apart from PIL; geometry comes from macbook_layout so
+draw, tap, and region cannot drift.
+
+The other two thirds live next door and stay importable from here, because
+macbook.py and the tests import this module by name: the app-strip chip
+layer in macbook_strip.py and the display-map painter in
+macbook_glance_map.py.
 """
 
-import textwrap
+import os
+import sys
 
-from PIL import Image, ImageDraw
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import macbook_layout as lay
-import macbook_map
-import macbook_preview
 import talon_apps as ta
-
-ACCENT = "#4DA3FF"
-TITLE_SIZE = 30
-APP_SIZE = 44
-ROW_SIZE = 32
-META_SIZE = 30
-
-MODE_COLORS = {
-    "command": (110, 220, 130),
-    "dictation": (255, 200, 90),
-    "mixed": (120, 200, 255),
-    "sleep": (120, 120, 140),
-    "other": (150, 150, 150),
-}
-C_STALE = (255, 180, 80)
-C_DIM = (140, 140, 150)
-C_LINE = (60, 60, 70)
-C_ROW = (255, 255, 255)
-C_FOCUS_BG = (38, 66, 44)
-C_FOCUS = (110, 220, 130)
-
-
-def _chip_label(draw, name, font, max_w):
-    """Chip label fitted to the chip width: cleaned, truncated."""
-    text = ta.clean(name)
-    if not text:
-        return "unknown"
-    try:
-        if draw.textlength(text, font=font) <= max_w:
-            return text
-        while len(text) > 1:
-            text = text[:-1]
-            if draw.textlength(text + "\u2026", font=font) <= max_w:
-                return text + "\u2026"
-        return "\u2026"
-    except Exception:
-        return ta.label(name)
-
-
-def _chip(d, x, y, cw, ch, text, focused, font):
-    """One app chip at absolute x: filled when it is the Mac's live
-    focus (real feed state), outlined otherwise. No other emphasis --
-    a highlight that selects nothing is decoration, not a control."""
-    if focused:
-        d.rounded_rectangle([x, y, x + cw, y + ch],
-                            radius=10, fill=C_FOCUS_BG)
-    else:
-        d.rounded_rectangle([x, y, x + cw, y + ch],
-                            radius=10, outline=C_LINE, width=2)
-    mark = "*" if focused else " "
-    d.text((x + 14, y + 8), mark + text, font=font,
-           fill=C_FOCUS if focused else C_ROW)
-
-
-def _strip_layer(aw, ah, cw, old_slots, new_slots, labels, focused_set,
-                 font, offset_old, offset_new):
-    """Chip band for one slide frame: the old window sliding out and
-    the new window sliding in, composited on a transparent layer so no
-    chip can bleed over the steppers. Offsets are in layer px. The
-    layer is 2px wider than the band: chip_rect floats can round a
-    rightmost outline 1px past the band edge, and clipping it would
-    leave the landed frame 1px off the steady one."""
-    layer = Image.new("RGBA", (int(aw) + 2, int(ah) + 2), (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    for pos, index in enumerate(old_slots):
-        x = pos * (cw + lay.GAP) + offset_old
-        if x + cw < 0 or x > aw:
-            continue
-        _chip(d, x, 0, cw, ah, labels.get(index, ""),
-              index in focused_set, font)
-    for pos, index in enumerate(new_slots):
-        x = pos * (cw + lay.GAP) + offset_new
-        if x + cw < 0 or x > aw:
-            continue
-        _chip(d, x, 0, cw, ah, labels.get(index, ""),
-              index in focused_set, font)
-    return layer
-
-
-def _wrap(draw, text, font, max_w, rows=1, width=90):
-    if font is not None:
-        try:
-            avg = draw.textlength("0123456789", font=font) / 10.0
-            width = max(12, int(max_w / max(avg, 1)))
-        except Exception:
-            pass
-    out = []
-    for para in str(text or "").splitlines() or [""]:
-        out.extend(textwrap.wrap(para, width) or [""])
-    return out[:rows]
+from macbook_glance_color import (ACCENT, APP_SIZE, C_DIM, C_FOCUS_BG,
+                                  C_LINE, C_ROW, C_STALE, META_SIZE,
+                                  MODE_COLORS, ROW_SIZE, TITLE_SIZE)
+from macbook_glance_map import draw_map
+from macbook_strip import _chip, _chip_label, _strip_layer, _wrap
 
 
 def waiting(screen, img, draw, title, font):
@@ -237,65 +155,3 @@ def header(draw, screen, img, title, state, stale, apps, apps_stale,
     draw.line([(lay.PAD, lay.HDR_H - 12),
                (screen.W - lay.PAD, lay.HDR_H - 12)],
               fill=C_LINE, width=2)
-
-
-def draw_map(img, draw, screen, state, preview, meta_font):
-    """Display map filling header..base: live previews, focus rect, pointer.
-
-    Preview frames paste exact-fit into the display rects; the
-    focused-window rectangle and the pointer dot draw on top,
-    unchanged. No frames -> the old boxes + PREVIEW OFF badge."""
-    plain = meta_font
-    displays = state.get("displays") or []
-    box = macbook_map.union(displays)
-    if box is None:
-        draw.text((lay.PAD, lay.HDR_H + 20),
-                  "no display geometry in feed",
-                  font=plain, fill=C_DIM)
-        return
-    scale, ox, oy = macbook_map.frame(box, screen.W, screen.H,
-                                      top=lay.HDR_H, bottom=screen.H)
-    if scale <= 0:
-        return
-    focus, mouse = state.get("focus") or {}, state.get("mouse") or {}
-    active = focus.get("display_index")
-    frames = macbook_preview.by_display(preview)
-    for i, d in enumerate(displays):
-        if not isinstance(d, dict):
-            continue
-        r = macbook_map.rect((d.get("bounds") or {}), scale, ox, oy)
-        if r is None:
-            continue
-        is_active = (i == active)
-        shot = macbook_preview.decode(frames[i]) \
-            if i in frames else None
-        live = macbook_preview.paint(img, shot, r)
-        draw.rectangle(r, outline=ACCENT if is_active else (90, 90, 110),
-                       width=5 if is_active else 2)
-        tag = macbook_map.label(i, bool(d.get("main")))
-        if is_active:
-            tag += " FOCUS"
-        if live:
-            tag += " LIVE"
-            try:
-                tw = draw.textlength(tag, font=plain)
-            except Exception:
-                tw = 0
-            draw.rectangle([r[0] + 4, r[1] + 4,
-                            r[0] + 16 + tw, r[1] + 44],
-                           fill=(10, 10, 14))
-        draw.text((r[0] + 10, r[1] + 8), tag, font=plain,
-                  fill=(255, 255, 255) if is_active else C_DIM)
-    bounds = focus.get("window_bounds")
-    rect = macbook_map.rect(bounds, scale, ox, oy) \
-        if isinstance(bounds, dict) else None
-    if rect is not None:
-        draw.rectangle(rect, outline=ACCENT, width=3)
-    if isinstance(mouse.get("x"), (int, float)) and \
-            isinstance(mouse.get("y"), (int, float)):
-        px, py = macbook_map.project(mouse["x"], mouse["y"],
-                                     scale, ox, oy)
-        draw.ellipse([px - 9, py - 9, px + 9, py + 9],
-                     fill=(255, 255, 255), outline=(0, 0, 0), width=2)
-    macbook_preview.badge(draw, lay.PAD, lay.HDR_H + 8,
-                          macbook_preview.mode(preview), plain)

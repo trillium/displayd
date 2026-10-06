@@ -26,9 +26,16 @@
 #     the Mac LaunchAgent is the durable home, see AGENTS.md).
 macos_state.py            job:com.displayd.macos-state-bridge
 macos_state_format.py     lib:com.displayd.macos-state-bridge
+macos_observe.py          lib:com.displayd.macos-state-bridge
+macos_wire.py             lib:com.displayd.macos-state-bridge
 mac_preview.py            lib:com.displayd.macos-state-bridge
 mac_preview_plan.py       lib:com.displayd.macos-state-bridge
+mac_preview_capture.py    lib:com.displayd.macos-state-bridge
+mac_preview_wire.py       lib:com.displayd.macos-state-bridge
 mac_zoom.py               lib:com.displayd.macos-state-bridge
+mac_zoom_crop.py          lib:com.displayd.macos-state-bridge
+mac_zoom_capture.py       lib:com.displayd.macos-state-bridge
+mac_zoom_wire.py          lib:com.displayd.macos-state-bridge
 talon_channel.py          lib:com.displayd.macos-state-bridge,com.displayd.talon-apps-bridge
 talon_apps.py             job:com.displayd.talon-apps-bridge
 talon_windows.py          lib:com.displayd.talon-apps-bridge
