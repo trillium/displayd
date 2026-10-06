@@ -191,22 +191,24 @@ grid), now one component with two halves; the two polled list views
 `resources_draw` and `services_draw`, now composers over `ui.shell` +
 `ui.stat` (`ui.text` underneath both); the three card views, `notice`,
 `text` and `sleep`, now composers over `ui.panel`; the two list
-dashboards `feed_health` and `activity`; this increment's
-`row_draw`, the third copy of the band; and now `clock` (one headline) and
-`touch_confidence_draw` (its lines via `panel.block`, its boxes via
-`tile.draw`).
+dashboards `feed_health` and `activity`; `row_draw`, the third copy of the
+band; `clock` (one `panel.headline`); `touch_confidence_draw` (its lines
+via `panel.block`/`bar`, its boxes via `tile.draw`); the failure card
+`_html_error` (`panel.card`/`strip` in the alert family); and the
+playlist's progress bar, which was the last component living outside the
+layer and existed twice (`playlist` + `playlist_bar`), now
+`ui.progress` with `playlist.py` composing it.
 
-Deliberately left (still Pillow, still drawing by hand): the other 14
+Deliberately left (still Pillow, still drawing by hand): the other 11
 modules in the gate's exemption list — `beads` with its `beads_detail`/
 `beads_detail_card`/`services`-style draw helpers, `macbook_draw`/
 `macbook_strip`, `qr`/`qr_common`, `reload`, `stream`,
-`retro_grid_draw`, `life`, `playlist`/`playlist_bar` (the daemon-side
-progress bar), and `_html_error`/`_html_native`. Reason: the vocabulary
-they need is now built (`tile` + `grid`, `text` + `wrap` + `fit_size`,
-`shell`, `stat` + `list_row`, `panel`) but each of them is a real
-migration — `beads` is several surfaces, `reload` owns
-the QR proof and its scan relay, `stream` is a live frame at a capped fps,
-and `_html_native` is the engine shim rather than a view.
+`retro_grid_draw`, `life`, and `_html_native` (the engine shim rather
+than a view). Reason: the vocabulary they need is now built (`tile` +
+`grid`, `text` + `wrap` + `fit_size`, `shell`, `stat` + `list_row`,
+`panel` + `strip`, `progress`) but each of them is a real migration —
+`beads` is several surfaces, `reload` owns the QR proof and its scan
+relay, and `stream` is a live frame at a capped fps.
 
 ### 2d. The panel component, and the three card views it pulled (this increment)
 
@@ -567,6 +569,77 @@ rect (zero alert or alert-ink pixels above it, zero ink in its right
 quarter) and reads left to right, and a garbage rect is a missing card
 rather than a crash.
 
+### 2k. The playlist bar on the layer, and the install set it exposed (this increment)
+
+The gate's ratchet went **13 → 11**: the last component outside the layer
+was the playlist's progress bar, and it existed **twice** -- once in
+`playlist_bar.py` (the module `playlist.py`'s docstring names as the
+owner) and once, byte-identical, in `playlist.py` itself, where the local
+`def bar_boxes` / `_contrast` / `draw_bar` *shadowed the import of
+their own owner* at every call site. One definition now,
+`renderers/ui/progress.py`, and `playlist.py` composes it.
+
+| File | Before | After | Change |
+| --- | --- | --- | --- |
+| `renderers/ui/progress.py` | -- | 138 | new component: `boxes` (the four edge placements), `shown` (the drain/fill rule), `contrast` (the border role), `draw` (composites; never raises) |
+| `playlist.py` | 215 | 169 | deleted the shadowing copies and `TRACK_COLOR`; `PLACEMENTS`/`DIRECTIONS`/`bar_boxes`/`draw_bar` are re-exported from the component, so `policy_config` and every existing importer keep working |
+| `playlist_bar.py` | 71 | *deleted* | it was the duplicate's only remaining home; nothing else imported it |
+| `playlist_color.py` | 76 | 78 | `TRACK_COLOR` moved onto the palette as `theme.TRACK` (`#26262e`, the same value), because the strip is the component's surface, not a playlist colour |
+| `renderers/theme.py` | 192 | 194 | one token, `track`, between `badge` and `ink` in the reading order |
+| `install.sh` | 73 | 79 | **it never installed the component layer**: `renderers/ui/*.py` now lands in the prefix |
+
+Deliberate pixel change, measured: the track is byte-identical
+(`(38, 38, 46)`), but the 1px contrast border moved from two literals in
+`_contrast` onto the palette roles it was imitating -- a bright fill's
+border is `theme.rgb("on-accent")` `(18,12,32)` instead of `(10,10,12)`, a
+dark fill's is `theme.rgb("ink-strong")` `(255,255,255)` instead of
+`(235,235,240)`. The default white accent takes the dark branch.
+`tests/test_progress.py` pins both roles, so the pair cannot drift back
+into literals.
+
+**The install-set defect this exposed.** `playlist.py` is part of the
+daemon's import closure, so the moment it imported a submodule the
+clean-target test (`test_the_daemon_imports_cleanly_from_the_installed_prefix`)
+went red: `install.sh` copies `*.py` and `renderers/*.py` but never
+`renderers/ui/`, so an installed prefix had **no component layer at all**.
+That is a pre-existing hole, not a new one -- every view that imports the
+layer by name was already unloadable in a prefix:
+
+    $ (in a prefix built the old way) exec renderers/picker.py
+    ModuleNotFoundError: No module named 'ui'
+    $ (with renderers/ui copied)
+    with renderers/ui copied, the picker view loads: picker
+
+So `install.sh` now installs `renderers/ui/*.py`; the test fixture that
+mirrors `install.sh` was extended to match, the closure walker now
+resolves dotted module names (so `from renderers.ui import progress` is a
+module the prefix must carry), and two assertions pin it in both
+directions (`test_the_installed_prefix_carries_the_component_layer`,
+`test_install_sh_copies_the_whole_module_set_not_one_file`). `deploy.sh`
+is untouched: it rsyncs a whole checkout, which has always carried the
+layer.
+
+`tests/test_progress.py` (23 tests) pins the geometry for all four
+placements (including the inclusive-last-coordinate convention: a full
+bar's right border lands one pixel past the panel edge), the empty
+fraction being a track rather than a missing bar, the garbage thickness,
+the drain reversal, the two border roles, the drawn strip's track/fill
+pixel counts and border pixels, that an unknown placement or a colour
+that is not one leaves the frame **byte-identical**, that the duplicate
+definitions and `playlist_bar.py` are gone, that `playlist` composes the
+component, that neither module is exempt any more, and that the track
+colour has exactly one owner.
+
+Deterministic pre-change probes (all against HEAD):
+
+    $ git show HEAD:playlist.py | grep -n 'ImageDraw|def bar_boxes|def draw_bar'
+    ... 57:def bar_boxes(...  94:def draw_bar(...  96:    from PIL import ImageDraw
+    $ git show HEAD:playlist.py | grep -n 'from playlist_bar import'
+    27:from playlist_bar import (DIRECTIONS, PLACEMENTS, bar_boxes, draw_bar)
+      # both present -> the import was shadowed by the local copies
+    $ git show HEAD:renderers/theme.py | grep -c TRACK
+    0
+
 ### 3. The shared chrome, composed at load time — `html-templates/_chrome.html`
 
 **litehtml has no `@import` and a template cannot inherit from another**, so
@@ -700,7 +773,8 @@ sorted).
      is the same card confined to a rect of a bigger frame, which is what
      a failure inside a composited view wants), a paragraph
      broken to a width is `ui.text.wrap`, and a line that must shrink to
-     its column is `ui.text.fit_size`.
+     its column is `ui.text.fit_size`; a bar for a fraction of a whole
+     across a screen edge is `ui.progress.draw` (the playlist's bar).
 4. Never let a draw raise: return the frame unchanged. If the view
    composes several layers, compose them with `ui.base.chain`.
 5. Remove the view's path from `EXEMPTIONS` in
@@ -823,16 +897,16 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   20px) instead of three 69px ones (12px floor), `cols` is a real param,
   and `picker_regions` generates the matching tap rects. A dedicated
   narrow-band renderer is no longer needed.
-- **The remaining hand-drawing views** (the gate's 13 exemptions) are the
+- **The remaining hand-drawing views** (the gate's 11 exemptions) are the
   bigger migration: `beads*`, `macbook_draw`/`macbook_strip`,
   `qr`/`qr_common`, `reload`, `stream`, `retro_grid_draw`,
-  `life`, `playlist`/`playlist_bar` and `_html_native` (the engine itself,
+  `life` and `_html_native` (the engine itself,
   which draws through the C ABI rather than by hand). The vocabulary they
   need all exists now (`tile` + `grid`, `text` + `wrap` + `fit_size`,
-  `shell`, `stat` + `list_row`, `panel` + `strip`), so each is a straight
-  migration with its own test story, not new design. `clock`,
-  `touch_confidence_draw` and `_html_error` left the list in sections 2i
-  and 2j.
+  `shell`, `stat` + `list_row`, `panel` + `strip`, `progress`), so each is
+  a straight migration with its own test story, not new design. `clock`,
+  `touch_confidence_draw`, `_html_error`, `playlist` and `playlist_bar`
+  left the list in sections 2i, 2j and 2k.
 - **Layout-mode taps.** While a layout owns the panel the touch service
   evaluates global regions only (view-scoped regions are skipped), so a
   band's tiles need global `touch.json` entries at the band geometry
@@ -1835,6 +1909,59 @@ Deterministic fail-before probes (`git show HEAD:<file> | grep -n`):
 structural test and every `strip` test were red on HEAD (and the gate
 reported "1 stale exemption(s)" until the entry left `EXEMPTIONS`).
 
+### The progress component, rendered headless (this increment)
+
+A real daemon at 1920x1080 (`DISPLAYD_FAKE_FB=1`, real `ThreadingHTTPServer`
+on 127.0.0.1, policy persisted with the playlist enabled and one `clock`
+view, dwell 30s), script at `/tmp/progress_evidence.py`, frames under
+`/tmp/progress-evi-*.png`:
+
+    == the progress component on the playlist's bar (clock view) ==
+    bottom strip: fill=501 px of accent(clock)=(77, 195, 255), track=1417 px of (38, 38, 46)
+    state: renderer=clock playlist.enabled=True progress=0.2694
+    == every layout style, both system buttons ==
+    full                   preset=full regions=['clock'] badge_px left=13548 right=15868 errors=none first_pixel_ms=9.6
+    split-50-50            preset=split-50-50 regions=['clock', 'picker'] badge_px left=13548 right=15868 errors=none first_pixel_ms=9.6
+    split-50-50-columns    preset=split-50-50-columns regions=['clock', 'options'] badge_px left=13548 right=15868 errors=none first_pixel_ms=9.6
+    15-70-15               preset=15-70-15 regions=['picker', 'clock', 'options'] badge_px left=13548 right=15868 errors=none first_pixel_ms=9.6
+    == the system buttons over a template view (html/status) ==
+    html/status: alert-page px=0 (0 means no failure card), badge_px left=13548 right=15868
+
+The bar's fill is the view's own palette accent (`clock` -> `#4DC3FF`) and
+its track is the `track` token, pixel for pixel; the `progress` value and
+the fill width agree after the tick (0.2694 of the dwell painted, 501px of
+fill plus the border pixel). Every style renders with both system buttons
+and no region error, first pixel 9.6ms against the 100ms budget; the
+template view carries the buttons and no failure card (`alert-page` = 0).
+
+### The install-set defect, demonstrated (this increment)
+
+A prefix built the way `install.sh` used to build one (top-level `*.py` +
+`renderers/*.py`, **no** `renderers/ui/`):
+
+    $ (cd prefix; PYTHONPATH=prefix python3 -c "import displayd")
+    File ".../playlist.py", line 30, in <module>
+        from renderers.ui import progress as ui_progress
+    ModuleNotFoundError: No module named 'renderers.ui'
+    $ (same prefix, component layer copied in)
+    imported /private/.../displayd.py
+
+and, on the pre-fix prefix, the picker view alone:
+
+    HEAD-path prefix cannot load the picker view: ModuleNotFoundError No module named 'ui'
+    with renderers/ui copied, the picker view loads: picker
+
+### The whole suite after this increment
+
+`python3 -m unittest discover -s tests` ran 1527 tests in 367.6s with
+failures=2, errors=1, skipped=10 — exactly the three known-red modules on
+this box and nothing else: `test_deploy_reload_proof`
+(`test_guard_catches_the_pre_fix_script`, the `/run/current-system/sw/bin`
+ffmpeg path) and `test_mac_zoom` (`test_input_flags_track_preview`, the
+Homebrew ffmpeg path) as failures, and `test_talon_apps` as a loader
+error. `test_obs_poll` (the flaky live-socket module from iteration 12)
+passed in this sweep. No failure or error touches this increment's files.
+
 ## 8. The branch and the pull request — opened this increment
 
 Iterations 1-12 never pushed anything: the remote had no
@@ -1868,6 +1995,16 @@ so the PR now shows iteration 13's record commit as its tip. The working
 tree of section 2i itself is uncommitted by design and reaches the PR with
 the next increment's push.
 
+Section 2k's increment followed it again: `git push origin
+HEAD:refs/heads/gnhf/objective-coalesce-t-0df99b-1` moved the ref
+`bb01922..f871285`, so the PR tip is iteration 15's commit (the failure
+card migration); the progress-bar increment is uncommitted in the working
+tree and reaches the PR with the next push. The PR body was rewritten in
+the same step (`gh-axi pr edit 51 --body-file /tmp/pr51-body.md`) to state
+the 11-exemption ratchet, the `progress` component, the `install.sh`
+component-layer fix and this increment's stop-condition output, so a
+reviewer reading the PR does not see iteration 13's numbers.
+
 ### The PR-body summary it published
 
 The body states: the token layer, the load-time template composition, the
@@ -1885,8 +2022,8 @@ touched.
 The command above exits zero as of this increment. Its exact output:
 
     $ python3 tools/check-components.py && python3 -m unittest tests.test_picker tests.test_unified tests.test_chat tests.test_html tests.test_html_runtime_install tests.test_control tests.test_options tests.test_layout && python3 tools/check-lines.py
-    component layer ok: 13 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 331 tests in 52.443s
+    component layer ok: 11 shipped module(s) still draw by hand; all exempt, none stale
+    Ran 332 tests in 52.667s
     OK
     line budget ok: all source files within 250 lines
 
@@ -1895,11 +2032,11 @@ budget line plus `ok: no generated native artifacts tracked` and the
 component line.)
 
 That is a **floor, not the finish line**:
-the gate is a ratchet with 13 exemptions, most views still hand-draw, and
+the gate is a ratchet with 11 exemptions, most views still hand-draw, and
 the component vocabulary exists (`system_buttons`, `ui.tile` + `ui.grid`,
-`ui.shell` + `ui.stat` + `ui.text`, `ui.panel`, and the `ui.base.chain`
-primitive) but the larger views (`beads*`, `macbook_*`, `qr`,
-`reload`, `stream`, `retro_grid`, `life`)
+`ui.shell` + `ui.stat` + `ui.text`, `ui.panel`, `ui.progress`, and the
+`ui.base.chain` primitive) but the larger views (`beads*`, `macbook_*`,
+`qr`, `reload`, `stream`, `retro_grid`, `life`)
 have not been migrated onto it. What is left is those migrations, the
 control page's style picker, the layout-mode tap entries, and the layout
 composite seam recorded in "Still owed". The stop condition became

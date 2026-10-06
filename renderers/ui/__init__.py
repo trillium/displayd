@@ -58,6 +58,11 @@ Layout of the package:
   block scaled to the region, never truncated), a centred headline and
   body, the corner tag, the accent bar across the top, and ``strip``, the
   same card confined to a rect of a bigger frame (the failure card).
+- ``progress`` -- a fraction of a whole across a flush edge strip: the
+  playlist bar's one definition (where the track and the fill land, the
+  direction rule, the contrast border, and the compositing), drawn from
+  the ``track`` token. The daemon's playlist *composes* this component,
+  so the same three functions no longer exist twice.
 
 Adding a component: give it its own module here, take every colour from
 ``theme``, return the frame unchanged on any failure, and add it to the

@@ -41,6 +41,7 @@ PANE = "#11141b"        # a pane inside the content band
 EDGE = "#2b3240"        # hairline border of a raised surface
 RULE = "#24405c"        # the rule under a title
 BADGE = "#0d111c"       # the system-button tile fill
+TRACK = "#26262e"       # the progress bar's strip, under its own fill
 
 INK = "#eef2fa"         # primary text
 INK_STRONG = "#ffffff"  # the biggest type, and glyphs on a dark tile
@@ -78,6 +79,7 @@ TOKENS = (
     ("edge", EDGE),
     ("rule", RULE),
     ("badge", BADGE),
+    ("track", TRACK),
     ("ink", INK),
     ("ink-strong", INK_STRONG),
     ("ink-soft", INK_SOFT),

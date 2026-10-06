@@ -196,7 +196,8 @@ route to the composition step, so the trust boundary below is unchanged.
 
 `renderers/theme.py` owns every colour the panel shows. It is not a
 stylesheet and not a per-view constant: it is a table of roles --
-`page`, `band`, `panel`, `pane`, `edge`, `rule`, `badge`, `ink`,
+| `page`, `band`, `panel`, `pane`, `edge`, `rule`, `badge`, `track`,
+`ink`,
 `ink-strong`, `ink-soft`, `muted`, `muted-soft`, `faint`, `accent`, the
 alert family (`alert`, `alert-ink`, `alert-body`, `alert-page`),
 `attention`, `ok` -- plus one accent per view under
@@ -539,6 +540,7 @@ that only survives polite input is not a budget.
 | `renderers/ui/grid.py` | the grid of tiles: the column count (shape-derived when no `cols` is given) and the row-major rects, asked by the picker and the options name grid alike |
 | `renderers/ui/shell.py`, `renderers/ui/stat.py`, `renderers/ui/text.py` | the band a Pillow view wears (inset clear of the badges via `band_pad`), the label/value row and its meter, and the layer's one font/measure/fit rule plus `fit_size` (the template path takes its band from the shared stylesheet instead) |
 | `renderers/ui/panel.py` | the panel component: a titled region with a body -- one scale-to-fit rule, a centred headline and body, the corner tag and the accent bar (`notice`, `text`, `sleep`, `clock` are composers over it; `touch_confidence` composes its lines and its region boxes from `panel` + `tile`) |
+| `renderers/ui/progress.py` | the progress component: a fraction of a whole across a flush edge strip (`boxes`/`shown`/`contrast`/`draw`), the playlist bar's one definition, drawn from the `track` token and the contrast border roles -- `playlist.py` composes it and does not draw |
 | `html-templates/dock.html` | the apps dock strip under the home screen |
 | `renderers/unified_dock.py` | dock feed state -> the strip's variables + composite |
 | `html-templates/options.html` | the selection screen: chrome plus one name layer |

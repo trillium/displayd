@@ -52,8 +52,6 @@ DRAW_RE = re.compile(r"\bImageDraw\b")
 # fails if one of these files stops drawing (or stops existing) so the
 # list cannot rot.
 EXEMPTIONS = (
-    "playlist.py",
-    "playlist_bar.py",
     "renderers/_html_native.py",
     "renderers/beads.py",
     "renderers/beads_detail_card.py",
