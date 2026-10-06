@@ -88,6 +88,29 @@ class TextTest(unittest.TestCase):
                         len(long))
         self.assertEqual(ui_text.fit(self.screen, long, 40, room=0), long)
 
+    def test_fit_size_shrinks_a_line_until_it_fits_its_room(self):
+        # The hero-number rule: the biggest size whose line fits, never a
+        # truncation, and never below the floor.
+        text = "1234"
+        wide = ui_text.fit_size(self.screen, text, 300, 2000, floor=60,
+                                step=20, bold=True)
+        tight = ui_text.fit_size(self.screen, text, 300, 300, floor=60,
+                                 step=20, bold=True)
+        self.assertEqual(wide, 300)          # it already fits: no shrinking
+        self.assertLess(tight, wide)
+        self.assertGreaterEqual(tight, 60)
+        self.assertLessEqual(ui_text.width(self.screen, text, tight, bold=True),
+                             300)
+
+    def test_fit_size_is_total_and_keeps_an_unmeasurable_line(self):
+        self.assertEqual(ui_text.fit_size(self.screen, "x", 120, 0), 120)
+        self.assertEqual(ui_text.fit_size(self.screen, "", 120, 10), 120)
+        self.assertEqual(ui_text.fit_size(self.screen, "x", 120, -5), 120)
+        for value in (None, "junk", [1]):
+            with self.subTest(size=value):
+                self.assertGreaterEqual(
+                    ui_text.fit_size(self.screen, "x", value, 100), ui_text.FLOOR)
+
     def test_write_paints_and_never_raises(self):
         img = page()
         out = ui_text.write(img, self.screen, (10, 10), "hello", (1, 2, 3), 40)
@@ -203,7 +226,8 @@ class ShellTest(unittest.TestCase):
                            ("melted", "muted")):
             img = page(self.screen)
             shell.head(img, self.screen, "T", health=word, updated=time.time())
-            cx = self.screen.W - shell.PAD - shell.DOT_X + 10
+            pad = shell.band_pad(self.screen)
+            cx = self.screen.W - pad - shell.DOT_X + 10
             with self.subTest(health=word):
                 self.assertEqual(img.getpixel((cx, shell.DOT_Y + 10)),
                                  theme.rgb(role))
@@ -211,7 +235,8 @@ class ShellTest(unittest.TestCase):
     def test_head_without_health_draws_no_dot(self):
         img = page(self.screen)
         shell.head(img, self.screen, "TITLE")
-        cx = self.screen.W - shell.PAD - shell.DOT_X + 10
+        pad = shell.band_pad(self.screen)
+        cx = self.screen.W - pad - shell.DOT_X + 10
         self.assertEqual(img.getpixel((cx, shell.DOT_Y + 10)),
                          theme.rgb("page"))
 
@@ -303,6 +328,58 @@ class StatTest(unittest.TestCase):
                       ink=theme.rgb("ink"), meta_ink=theme.rgb("attention"))
         # The value keeps its own pixels: a name never runs under it.
         self.assertGreater(count(img, theme.rgb("attention")), 20)
+
+
+class BandClearsTheBadgesTest(unittest.TestCase):
+    """The band and the badges are two components that must not overlap.
+
+    Measured live before this pin: the home badge was composited over the
+    band's title, so "ROWING" rendered as "WING", and the sleep badge sat
+    exactly on the health dot and the tail of the status line. Both are
+    components the layer owns, so the band takes its inset from the badge
+    component instead of restating a pad of its own.
+    """
+
+    def setUp(self):
+        self.screen = FakeScreen()
+
+    def test_the_band_pad_is_derived_from_the_badge_strip(self):
+        from ui import system_buttons
+
+        self.assertEqual(shell.BAND_PAD - shell.STRIP_GAP,
+                         system_buttons.STRIP)
+        self.assertGreater(shell.BAND_PAD, shell.PAD)
+
+    def test_a_narrow_region_keeps_the_plain_pad(self):
+        self.assertEqual(shell.band_pad(FakeScreen(W=288, H=1080)), shell.PAD)
+        self.assertEqual(shell.band_pad(self.screen), shell.BAND_PAD)
+        self.assertEqual(shell.band_pad(None), shell.BAND_PAD)
+
+    def test_no_band_ink_lands_under_either_badge(self):
+        from ui import system_buttons
+
+        img = page(self.screen)
+        shell.head(img, self.screen, "ROWING", health="warm",
+                   updated=time.time())
+        for rect in (system_buttons.home_rect(1920, 1080),
+                     system_buttons.sleep_rect(1920, 1080)):
+            x, y, w, h = rect
+            crop = img.crop((x, y, x + w, y + h))
+            colours = {c for _n, c in crop.getcolors(1 << 24)}
+            with self.subTest(rect=rect):
+                self.assertEqual(colours - {theme.rgb("page")}, set())
+
+    def test_the_title_and_the_dot_survive_the_badge_overlay(self):
+        from ui import system_buttons
+
+        img = page(self.screen)
+        shell.head(img, self.screen, "ROWING", health="warm",
+                   updated=time.time())
+        after = system_buttons.system_overlay(self.screen)(img)
+        # The title's own ink and the health dot are still on the panel
+        # after the badges composite -- they are simply not inside them.
+        self.assertGreater(count(after, theme.rgb("ink")), 50)
+        self.assertGreater(count(after, theme.rgb("ok")), 50)
 
 
 class OneBandTwoPathsTest(unittest.TestCase):
@@ -448,6 +525,67 @@ class MigratedViewsTest(unittest.TestCase):
         self.assertGreater(count(frame, theme.rgb("rule")), 1000)
         self.assertGreater(count(frame, theme.rgb("edge")), 1000)
         self.assertGreater(count(frame, theme.rgb("alert")), 0)
+
+
+class RowViewTest(unittest.TestCase):
+    """The third copy of the band: the streak view now wears ``ui.shell``."""
+
+    SNAP = {"day_streak": 12, "row_streak": 40, "bank": 3,
+            "last_day": "2026-01-02", "pace": 5, "rows_year": 120,
+            "days_in_year": 366, "status": "rolling", "last_ts": 1.0}
+
+    def render(self, health="warm", error=None, snap=None):
+        import row_draw
+
+        self.screen = FakeScreen()
+        row_draw._draw(self.screen, "ROWING", theme.rgb("page"),
+                       self.SNAP if snap is None else snap,
+                       "rows.txt", health, error, time.time())
+        return self.screen.frames[-1]
+
+    def test_the_band_rule_is_the_palette_token_not_the_old_grey(self):
+        frame = self.render()
+        self.assertIn(theme.rgb("rule"),
+                      [frame.getpixel((960, shell.RULE_Y)),
+                       frame.getpixel((960, shell.RULE_Y + 1))])
+        colours = [c for _n, c in frame.getcolors(1 << 24)]
+        self.assertNotIn((60, 60, 70), colours)   # the old C_LINE
+        self.assertNotIn((8, 8, 12), colours)     # the old C_BG
+
+    def test_the_health_dot_wears_the_shared_health_role(self):
+        for health, role in (("warm", "ok"), ("stale", "attention"),
+                             ("error", "alert"), ("cold", "muted")):
+            with self.subTest(health=health):
+                # The dot sits at the band's right, inside its own rect.
+                frame = self.render(health=health)
+                pad = shell.band_pad(self.screen)
+                dot = frame.getpixel((1920 - pad - 12, shell.DOT_Y + 10))
+                self.assertEqual(dot, theme.rgb(role))
+
+    def test_the_live_hero_wears_the_view_s_palette_slot_accent(self):
+        frame = self.render()
+        self.assertGreater(count(frame, theme.accent_rgb("row")), 500)
+        self.assertEqual(count(frame, (255, 150, 50)), 0)  # the old C_FIRE
+        cold = self.render(snap=dict(self.SNAP, day_streak=0))
+        self.assertEqual(count(cold, theme.accent_rgb("row")), 0)
+
+    def test_the_stale_note_and_the_year_pace_use_palette_roles(self):
+        frame = self.render(health="stale", error="boom")
+        # The pace line is ahead of pace: the palette's ok green.
+        self.assertGreater(count(frame, theme.rgb("ok")), 100)
+        behind = self.render(snap=dict(self.SNAP, pace=-4))
+        self.assertGreater(count(behind, theme.rgb("attention")), 100)
+
+    def test_the_waiting_card_is_not_blank_and_keeps_its_own_ink(self):
+        import row_draw
+
+        screen = FakeScreen()
+        row_draw._draw_message(screen, "ROWING", theme.rgb("page"),
+                               "LOG NOT READABLE", "no row data", None,
+                               theme.rgb("alert"))
+        frame = screen.frames[-1]
+        self.assertTrue(any(lo != hi for lo, hi in frame.getextrema()))
+        self.assertGreater(count(frame, theme.rgb("alert")), 100)
 
 
 def _render(view, screen):

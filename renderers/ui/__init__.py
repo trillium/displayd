@@ -29,12 +29,17 @@ Layout of the package:
 - ``base`` -- the composition primitive (``chain``), no pixels.
 - ``system_buttons`` -- the home and sleep badges: one module, one
   definition, composable by every view regardless of which path it uses.
-- ``text`` -- one font resolution, one measurement, one fitting rule, so
-  a line of type is asked for rather than re-implemented per view -- and
-  ``wrap``, the one way a paragraph is broken to a width.
-- ``shell`` -- the band a full-panel view wears: title, detail, health
-  dot and its honest age, the rule under it, the footer line, and
-  ``short_age``/``age`` (the one age-bucket rule).
+  It also owns the gesture strips the badges live in, which is what the
+  band takes its inset from.
+- ``text`` -- one font resolution, one measurement, one fitting rule and
+  one line-that-shrinks-to-its-column rule (``fit_size``), so a line of
+  type is asked for rather than re-implemented per view -- and ``wrap``,
+  the one way a paragraph is broken to a width.
+- ``shell`` -- the band a full-panel view wears: title, detail, health dot
+  and its honest age, the rule under it, the footer line, ``short_age``/
+  ``age`` (the one age-bucket rule) -- and ``band_pad``, the inset that
+  keeps the band clear of the badges the system buttons paint over the
+  panel's top corners.
 - ``stat`` -- a label plus a value line (``row``), one horizontal list
   entry (``list_row``: status dot, name, right-aligned value), a
   supporting ``body`` line, and the ``meter`` bar for a fraction of a

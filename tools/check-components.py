@@ -66,7 +66,6 @@ EXEMPTIONS = (
     "renderers/qr_common.py",
     "renderers/reload.py",
     "renderers/retro_grid_draw.py",
-    "renderers/row_draw.py",
     "renderers/stream.py",
     "renderers/touch_confidence_draw.py",
 )

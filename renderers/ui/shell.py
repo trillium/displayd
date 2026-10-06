@@ -5,8 +5,9 @@ view's title, what it is showing, a feed-health dot with its honest age,
 a rule under all three -- and so is the footer line at the bottom. Three
 views hand-drew that band: ``resources_draw`` and ``services_draw`` were
 byte-for-byte the same forty lines with different variable names, and
-``row_draw`` was a third copy with a slightly better title fit. Nothing
-owned "the band a view wears", so the band was duplicated.
+``row_draw`` was a third copy with a slightly better title fit. All three
+now compose this module and own only which words go where. A view that
+draws its own band is a defect this module exists to delete.
 
 The health vocabulary belongs here for the same reason. ``cold`` /
 ``warm`` / ``stale`` / ``error`` is the poll-store contract
@@ -17,7 +18,8 @@ this module has never seen is a grey dot, not a crash.
 
 The age vocabulary does too: the buckets behind ``"12s"`` / ``"3m"`` /
 ``"2h"`` were implemented five times, in this module's ``age`` and in
-``feed_health``, ``row_draw``, ``beads_age`` and ``activity``.
+``feed_health``, ``row_draw``, ``beads_age`` and ``activity``. Three of
+those are gone; ``beads_age``'s goes with that view's migration.
 
 Nothing here raises: a band that cannot be drawn is a missing band, never
 a blank panel.
@@ -30,9 +32,18 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import theme
+from ui import system_buttons
 from ui import text as ui_text
 
-PAD = 60          # the band's side inset, shared by rule, title and footer
+PAD = 60          # the plain side inset: footer, and a narrow region's band
+# The band's inset on a panel-wide frame. The gesture strips own the top
+# corners and the home/sleep badges are painted inside them over every
+# frame, so a band drawn at PAD put its title, its health dot and the
+# tail of its status line *under* a badge -- measured live: "ROWING"
+# rendered as "WING". Nothing owned "the space the badges leave", so the
+# band now asks the badge component for it instead of guessing.
+STRIP_GAP = 24    # breathing room between a badge and the band's own content
+BAND_PAD = system_buttons.STRIP + STRIP_GAP
 HEAD_SIZE = 72    # the title's size
 HEAD_Y = 24       # the title's baseline box top
 RULE_Y = 128      # the rule under the title
@@ -55,6 +66,21 @@ HEALTH_ROLE = {
     "stale": "attention",   # last-known value, honestly past its window
     "error": "alert",       # the source failed
 }
+
+
+def band_pad(screen):
+    """The band's inset for this frame.
+
+    A panel-wide frame clears the gesture strips, because the badges are
+    painted inside them over every frame; a region too narrow to hold
+    both strips keeps the plain ``PAD``, so a layout's band column never
+    shrinks its own title to make room for badges that are not over it.
+    """
+    try:
+        width = int(screen.W)
+    except Exception:
+        return BAND_PAD
+    return BAND_PAD if width >= 2 * BAND_PAD + TITLE_GAP else PAD
 
 
 def health_ink(health):
@@ -126,7 +152,7 @@ def rule(img, screen, y=RULE_Y, pad=PAD):
 
 
 def head(img, screen, title, detail="", health=None, updated=None,
-         status=None, status_ink=None, pad=PAD, rule_y=RULE_Y):
+         status=None, status_ink=None, pad=None, rule_y=RULE_Y):
     """The header band: title (and an optional detail), health status, rule.
 
     ``status`` overrides the derived ``"<health> · <age>"`` line; passing
@@ -134,9 +160,11 @@ def head(img, screen, title, detail="", health=None, updated=None,
     that line (a dashboard's summary says its own health in its own
     colour); the default is the palette's ``muted``. The title is fitted
     to the room the status leaves it, so a long title can never run under
-    it.
+    it, and ``pad`` defaults to :func:`band_pad` -- the band clears the
+    badges painted over the panel's top corners.
     """
     try:
+        pad = band_pad(screen) if pad is None else int(pad)
         title_text = str(title if title is not None else "")
         if detail:
             title_text = "%s  \u00b7  %s" % (title_text, detail)
@@ -162,10 +190,11 @@ def head(img, screen, title, detail="", health=None, updated=None,
     return img
 
 
-def _dot(img, screen, health, pad=PAD):
+def _dot(img, screen, health, pad=None):
     """The health dot at the band's right: filled, no outline."""
     try:
         from PIL import ImageDraw
+        pad = band_pad(screen) if pad is None else int(pad)
         right = int(screen.W) - pad
         ImageDraw.Draw(img).ellipse(
             [right - DOT_X, DOT_Y, right - 2, DOT_Y + DOT - 2],
