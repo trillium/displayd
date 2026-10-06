@@ -34,8 +34,11 @@ import chat_fit as fit
 # chat.html's CSS owns the chrome; these two numbers are the band heights the
 # pane layer has to leave room for, and a rendered-pixel test pins them
 # against the real document, because a band that grew would put the last feed
-# lines under the footer.
-HEAD_BAND = 170
+# lines under the footer, and a head band that shrank would let the chrome's
+# rule paint across the top of the panes. HEAD_BAND is the chrome's own
+# height on this surface: --head-pad (40) + the head row + the 72px title +
+# the rule, which ends just above 176 at panel size.
+HEAD_BAND = 176
 FOOT_BAND = 62
 PAD = 176         # panel margin: clears the persistent home/sleep badges,
 #                   which own the top-left and top-right 160px squares of
@@ -153,15 +156,16 @@ def chrome(ink, title, count, state, age, notice_text,
 
     ``ink`` is a dict of palette tuples the screen already parsed, never the
     caller's own text, so the template can take them in a style attribute
-    without opening a CSS injection. The set is pinned against the template by
-    a test.
+    without opening a CSS injection. The chrome's own colours (the eyebrow,
+    the rule) are design tokens now, drawn by the shared partial, so they are
+    not parameters any more. The set is pinned against the template by a
+    test.
     """
     status, footer = _words(state, count, age)
     return {
         "background": templates.hex_colour(ink["bg"]),
         "color": templates.hex_colour(ink["text"]),
         "dim": templates.hex_colour(ink["dim"]),
-        "accent": templates.hex_colour(ink["accent"]),
         "line": templates.hex_colour(ink["line"]),
         "eyebrow": "DISPLAYD",
         "title": str(title or TITLE),

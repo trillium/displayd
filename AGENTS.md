@@ -317,8 +317,8 @@ keeps running the old tick until the installer runs (`install-mac.sh
 - `renderers/html.py` renders a named local template; the full contract is
   `docs/HTML_RENDERER.md` (trust boundary, supported CSS, cost). Start from
   `html-templates/status.html`, which is a working example.
-- `html-templates/layout.html` is the SHARED PANEL CHROME (header, side
-  gesture strips, content band, footer) and the default template, so `template`
+- `html-templates/layout.html` is the shell surface (header, side gesture
+  strips, content band, footer) and the default template, so `template`
   is optional and `html` sits in the live picker/home set and rotates like
   any other view. Its ten variables (`eyebrow`, `title`, `status`, `lead`,
   `body`, `hint_left`, `hint_right`, `footer`, `footer_right`) are ALL
@@ -328,6 +328,14 @@ keeps running the old tick until the installer runs (`install-mac.sh
   template falls back to `DEFAULT_VARS`, because a tile that shows a red card
   the instant it is tapped is not a usable home tile. Pushed values are
   escaped exactly like any other template's; no markup, ever.
+- The chrome those variables fill is NOT in layout.html: it is authored once
+  in `html-templates/_chrome.html` (a `_`-prefixed composition partial, hidden
+  from `available()` and refused by name) and spliced into a template at load
+  time by `renderers/_html_compose.py` for the include directives, because
+  litehtml has no `@import` and no inheritance. Variants (`panel center`,
+  `panel tight`, `panel wide`, `bright`) are custom properties on `<body>`.
+  `docs/HTML_RENDERER.md` owns the directive list; `tests/test_html.py`
+  (`TestChromeComposition`) fails if a panel template restates a chrome rule.
 - Rendering is fixed-px, authored at 1920x1080: litehtml fills whatever
   viewport it is handed, but it has no viewport-relative units, so a
   smaller panel gets the same type size.

@@ -27,6 +27,7 @@ from PIL import Image
 
 from renderers import picker as pk
 import _html_native
+import _html_templates as templates
 import _picker_tiles as tiles
 
 W, H = 1920, 1080
@@ -249,9 +250,11 @@ class SourceTest(unittest.TestCase):
 
     def test_the_shipped_template_matches_the_rendered_variables(self):
         # The template and chrome() cannot drift: every placeholder the
-        # file declares is a key chrome() fills, and vice versa.
-        with open(TEMPLATE_PATH, encoding="utf-8") as handle:
-            text = handle.read()
+        # document declares is a key chrome() fills, and vice versa. Read
+        # through the composition step, so the chrome the template splices
+        # in is part of what is pinned.
+        text = templates.source("picker.html",
+                                os.path.dirname(TEMPLATE_PATH))
         text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
         declared = set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)",
                                   text))

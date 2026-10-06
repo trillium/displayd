@@ -168,20 +168,44 @@ class InjectionTest(unittest.TestCase):
 
 
 class MigratedTemplateTest(unittest.TestCase):
-    """A migrated template styles from tokens, never from a literal."""
+    """A migrated template styles from tokens, never from a literal.
 
-    MIGRATED = ("layout.html", "status.html")
+    Read through the composition step, and with the chrome partial in the
+    list: the shell's own file no longer holds the stylesheet (the partial
+    does), so a per-literal check on the fragment would prove nothing.
+    """
 
-    def test_no_colour_literal_in_a_migrated_style(self):
-        for name in self.MIGRATED:
+    MIGRATED = ("layout.html", "options.html", "chat.html", "status.html")
+
+    def source(self, name):
+        if name == "_chrome.html":
             with open(os.path.join(SHIPPED_ROOT, name),
                       encoding="utf-8") as handle:
-                text = templates.COMMENT_RE.sub("", handle.read())
+                return handle.read()
+        return templates.source(name, SHIPPED_ROOT)
+
+    def test_no_colour_literal_in_a_migrated_style(self):
+        # NOT picker.html yet: its tile layer still carries the dark tile ink
+        # and its shadow as literals (#120c20 / #5a4670), which belong to the
+        # `tile` component that does not exist yet. That is the next
+        # increment, and leaving picker in this list would either hide the
+        # gap or force a token that no other surface means.
+        for name in self.MIGRATED + ("_chrome.html",):
+            text = templates.COMMENT_RE.sub("", self.source(name))
             with self.subTest(template=name):
                 self.assertEqual(HEX_RE.findall(text), [],
                                  "%s re-authors a colour the palette owns"
                                  % name)
                 self.assertIn("var(--", text)
+
+    def test_the_chrome_is_styled_from_tokens_in_every_template(self):
+        # One definition, so this is really "the chrome wears the palette":
+        # every surface that splices it in inherits those rules.
+        for name in ("layout.html", "picker.html", "options.html",
+                     "chat.html"):
+            with self.subTest(template=name):
+                self.assertIn("var(--accent)", self.source(name))
+                self.assertIn(".strip", self.source(name))
 
 
 @requires_native

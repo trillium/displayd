@@ -108,6 +108,9 @@ BUILD_HINT = "build it: tools/build_litehtml.sh"
 # The panel's ink: palette tuples the screen already parsed, never caller
 # text. chat_panes turns them into #rrggbb strings for the document.
 DIM = (140, 160, 190)
+# The bar colour this view declares to the playlist (playlist_color.accent_for
+# reads a renderer's ACCENT by name). Still a literal: folding these into
+# theme.ACCENT_SLOTS is the rest of the token migration, tracked in notes.md.
 ACCENT = (127, 209, 255)
 LINE = (35, 43, 58)
 TEXT = (235, 235, 240)
@@ -203,7 +206,7 @@ def _frame(screen, title, events, max_lines, viewers, ink, state, age):
 def _ink(fg, bg=(10, 10, 14)):
     """The panel's palette for one run. One dict, so a colour is resolved once
     and the pane layer cannot disagree with the chrome."""
-    return {"bg": bg, "text": fg, "dim": DIM, "accent": ACCENT, "line": LINE,
+    return {"bg": bg, "text": fg, "dim": DIM, "line": LINE,
             "author": AUTHOR, "join": JOIN}
 
 

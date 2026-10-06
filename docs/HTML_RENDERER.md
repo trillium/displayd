@@ -69,6 +69,11 @@ extension tricks, no nested directories -- a template is one file in the root.
 Copy `html-templates/status.html` as the starting point; it is a working
 example, not a stub.
 
+A file whose name starts with `_` is a composition **partial**
+(`_chrome.html`, the shared chrome), not a template: `available()` never
+lists it and a caller cannot name it. Templates pull sections of it in with
+an include directive -- see "One chrome, composed in Python" below.
+
     POST /show {"renderer": "html",
                 "params": {"template": "status.html",
                            "vars": {"title": "BUILD", "sub": "12:04",
@@ -77,7 +82,7 @@ example, not a stub.
 
     POST /feed/html/vars {"title": "...", "value": "..."}   # re-renders in place
 
-## layout.html: the shared panel chrome
+## layout.html: the shell surface
 
 `html-templates/layout.html` is the shell the UI is built from: header,
 side gesture strips, content band, footer. It is the **default template**,
@@ -93,6 +98,12 @@ draws the shell, and a later
 becomes its live content without a re-show. `template` and `vars` are
 otherwise unchanged, and the trust boundary below applies to this template
 exactly as it does to every other.
+
+The chrome it wears is not authored here: the bands, the gesture strips and
+their rules come from `html-templates/_chrome.html` (see "One chrome,
+composed in Python" below), which this file -- and picker, options and chat --
+splices in. This file owns the shell's two content bands, `lead` and `body`,
+and the variant class on its `<body>`.
 
 ### The variable contract
 
@@ -125,6 +136,61 @@ default template renders `DEFAULT_VARS` from `renderers/html.py`, because a
 tile that shows a red card the moment it is tapped is not a usable home
 tile. Every other template, and every partial push, still names its missing
 key.
+
+## One chrome, composed in Python (`_chrome.html`)
+
+litehtml has no `@import` (a CSS import is inert) and a template cannot
+inherit from another document, so a shared chrome cannot be shared *in CSS*.
+It is shared in Python instead: the chrome is authored **once** in
+`html-templates/_chrome.html` as named sections, and a template names the
+sections it wants with an include directive, which
+`renderers/_html_compose.py` splices into the document at load time --
+before any value is substituted.
+
+    <!--#include css-->           the chrome stylesheet, inside <style>
+    <!--#include head-->          the header band markup
+    <!--#include title-->         the title band
+    <!--#include subtitle-->      one dim line under the title
+    <!--#include rule-->          the rule under the title
+    <!--#include foot-->          the footer band
+    <!--#include strip-left-->    the left gesture strip
+    <!--#include strip-right-->   the right gesture strip
+
+The file that holds them is a *partial*, not a template: it is named
+`_...html`, `available()` never lists it, and a caller cannot name it (`load`
+and `source` refuse a `_`-prefixed name). It ships by the same
+`html-templates/*.html` install rule as the templates, so a partial travels
+with them.
+
+Failures are loud, because a silently missing chrome is a
+plausible-looking wrong panel: an unknown section, a missing partial, a
+nested include deeper than four levels, or a composed document over 512KiB
+is a `TemplateError` that the view draws as a card.
+
+### Variants: the only per-surface difference, as data
+
+The surfaces genuinely differ in inset, type size and band padding. Those are
+not copies of a rule -- they are custom properties a class on `<body>` sets,
+with the variants declared next to the rules:
+
+    <body class="panel">          the shell: 64px inset, 96px title, left
+    <body class="panel center">   title centred, smaller lead (options.html)
+    <body class="panel tight">    dense bottom band, no head pad (picker.html)
+    <body class="panel wide">     176px inset, 72px title (chat.html)
+    panel bright                  the rule takes var(--accent), not var(--rule)
+
+The promise is mechanical and tested (`tests/test_html.py`,
+`TestChromeComposition`): every shipped panel template includes the chrome `css` section,
+every one names a variant the partial declares, and **no template restates a
+selector the partial owns** -- a re-authored rule is the duplication this
+step removes, and the test names the file.
+
+## Trusted local templates only
+
+Only a file that already exists in that root is ever read: the directive
+names a *section*, never a caller's path or markup, and the partial is read
+from the same root as the template that includes it. A caller never gains a
+route to the composition step, so the trust boundary below is unchanged.
 
 ## Design tokens: the palette lives in one module
 
@@ -385,7 +451,21 @@ Not supported: grid, gradients, rounded clipping, video, canvas, forms,
 JavaScript, webfonts, remote resources. Unsupported CSS is ignored, not
 misrendered -- the panel shows the layout it does understand.
 
-### Two litehtml behaviours worth knowing before you write a template
+### Four litehtml behaviours worth knowing before you write a template
+
+**A shorthand whose value contains `var()` is dropped entirely.**
+`padding: 44px var(--inset) 0 var(--inset)` applies *no* padding at all --
+silently, because a dropped declaration is not an error. Write the longhands
+(`padding-left: var(--inset)` and friends); a single-property declaration with
+a `var()` is fine. `tests/test_html.py` fails on a shorthand carrying a
+`var()` in the chrome or in a panel template.
+
+**A rule using `var()` beats an inline `style` on the same element.** The
+substitution path re-applies the declaration, so a value a caller offers as an
+inline property loses to the chrome's rule. That is why a surface takes its
+page and ink colour by overriding the *role* (inline `--page` / `--ink` on
+`<body>`) rather than the property: the chrome's one rule keeps painting, with
+the caller's colour.
 
 **`gap` is dropped on a flex row whose children grow.** This is upstream, not a
 bug in this renderer, and it looks like a spacing bug rather than a missing

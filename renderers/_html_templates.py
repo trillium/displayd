@@ -14,6 +14,11 @@ Layout of the contract:
   no nested directories, no extension tricks
 - a template is a single file; it may reference sibling *images* (the
   native layer refuses anything that escapes the root)
+- a file whose name starts with ``_`` is a composition *partial*, not a
+  template: ``_chrome.html`` holds the shared panel chrome, is never
+  offered by ``available()``, and cannot be named by a caller. Templates
+  splice its sections in at load time (see ``_html_compose``), which is how
+  one chrome definition is in force instead of a copy per template
 - ``{{name}}`` is the substitution for data, and every such value is
   escaped
 - ``{{name|raw}}`` is the ONE markup slot, and it can only be filled by
@@ -86,13 +91,18 @@ def default_root():
 
 
 def available(root=None):
-    """Template names present in the root, sorted. For help text + tests."""
+    """Template names present in the root, sorted. For help text + tests.
+
+    A ``_``-prefixed file is a composition partial (``_chrome.html``), so it
+    is absent: a fragment to splice in, not a screen.
+    """
     base = root or default_root()
     try:
         entries = os.listdir(base)
     except OSError:
         return []
-    return sorted(e for e in entries if NAME_RE.match(e))
+    return sorted(e for e in entries
+                  if NAME_RE.match(e) and not e.startswith("_"))
 
 
 def _as_text(value):
@@ -164,33 +174,25 @@ def _substitute(text, variables, raw=None):
     return filled
 
 
-def load(name, variables=None, root=None, raw=None):
-    """Read one template and fill it in.
-
-    Returns (html_text, root). ``root`` is handed to the native layer as
-    the only directory that document may reference images from.
-
-    `raw` fills the ``{{name|raw}}`` slots with unescaped markup. It is a
-    separate argument on purpose: a caller of the html renderer supplies
-    `variables` and nothing else, so request data can only ever arrive
-    escaped. Only a renderer that builds its own document -- the picker,
-    for one -- passes `raw`, and what it passes is its own markup over
-    values it escaped itself.
-
-    The returned document also carries the design tokens
-    (``_html_compose.compose``), so a template can use ``var(--ink)`` and
-    friends instead of repeating a colour literal. That block is generated
-    in-process from ``theme.py`` and holds no caller data;
-    ``_html_compose.strip_tokens`` takes it back off for a test that wants
-    the substitution contract exactly.
-    """
+def _resolve(name, root):
+    """(path, base) for a name: the one place a template file is located."""
     if not isinstance(name, str) or not NAME_RE.match(name):
         raise TemplateError("bad template name %r (want letters, digits, _ or -)"
                             % (name,))
+    if name.startswith("_"):
+        raise TemplateError("%s is a composition partial, not a template"
+                           % name)
     base = _html_native.allow_root(root) if root else default_root()
     path = os.path.join(base, name)
     if os.path.dirname(os.path.realpath(path)) != base:
         raise TemplateError("template %s is outside %s" % (name, base))
+    return path, base
+
+
+def _read(name, root=None):
+    """A template's composed source and its root: its own text with every
+    include directive expanded, before any value is filled in."""
+    path, base = _resolve(name, root)
     try:
         size = os.path.getsize(path)
     except OSError as err:
@@ -206,5 +208,43 @@ def load(name, variables=None, root=None, raw=None):
             text = handle.read()
     except (OSError, UnicodeDecodeError) as err:
         raise TemplateError("cannot read %s: %s" % (name, err))
+    try:
+        return _html_compose.expand(text, base), base
+    except _html_compose.ComposeError as err:
+        raise TemplateError("%s: %s" % (name, err))
+
+
+def source(name, root=None):
+    """A template's composed source, before substitution and the tokens.
+
+    What a test reads when it wants the *effective* template -- every
+    placeholder it declares, every rule it styles -- not the fragment the
+    file happens to hold.
+    """
+    return _read(name, root)[0]
+
+def load(name, variables=None, root=None, raw=None):
+    """Read one template and fill it in.
+
+    Returns (html_text, root). ``root`` is handed to the native layer as
+    the only directory that document may reference images from.
+
+    `raw` fills the ``{{name|raw}}`` slots with unescaped markup. It is a
+    separate argument on purpose: a caller of the html renderer supplies
+    `variables` and nothing else, so request data can only ever arrive
+    escaped. Only a renderer that builds its own document -- the picker,
+    for one -- passes `raw`, and what it passes is its own markup over
+    values it escaped itself.
+
+    The returned document also carries the design tokens
+    (``_html_compose.compose``), so a template can use ``var(--ink)`` and
+    friends instead of repeating a colour literal: generated in-process from
+    ``theme.py``, and stripped back off for a test by
+    ``_html_compose.strip_tokens``.
+
+    The include directives are already expanded by ``_read``, so the chrome a
+    template names is part of the text this fills: spliced in, not a copy.
+    """
+    text, base = _read(name, root)
     filled = _substitute(text, variables or {}, raw=raw)
     return _html_compose.compose(filled), base

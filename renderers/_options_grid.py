@@ -160,20 +160,20 @@ def name_markup(names, geometry, colour, start=MAX_NAME_PX):
     return "".join(parts)
 
 
-def chrome(names, bg, fg, dim, accent, title, instructions, footer):
+def chrome(names, bg, fg, title, instructions, footer):
     """The options template's variables, everything except the name layer.
 
-    ``background``/``color``/``dim``/``accent`` are #rrggbb strings built
-    from colours the screen already parsed, never the caller's own text,
-    so the template can take them in a style attribute without opening a
-    CSS injection. The set is pinned against the template by a test.
+    ``background``/``color`` are #rrggbb strings built from colours the
+    screen already parsed, never the caller's own text, so the template
+    can take them in a style attribute without opening a CSS injection.
+    The rest of the chrome's colours are design tokens now, drawn by the
+    shared partial, so they are not parameters any more. The set is
+    pinned against the template by a test.
     """
     count = len(names)
     return {
         "background": hex_colour(bg),
         "color": hex_colour(fg),
-        "dim": hex_colour(dim),
-        "accent": hex_colour(accent),
         "eyebrow": EYEBROW,
         "title": title,
         "status": "%d VIEW%s" % (count, "" if count == 1 else "S"),

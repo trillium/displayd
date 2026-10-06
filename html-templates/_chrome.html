@@ -1,0 +1,144 @@
+<!--
+  THE PANEL CHROME, authored once.
+
+  This file is a composition *partial*, not a template: it has no
+  document skeleton and ``available()`` never offers it. A template pulls
+  the sections it wants in at load time (see ``renderers/_html_compose.py``
+  for the directive and the rules), so the chrome bands, the gesture
+  strips and the head/foot rules exist in ONE place instead of a copy per
+  surface. litehtml has no ``@import`` and cannot inherit from another
+  document, which is why the splice happens in Python.
+
+  SECTIONS
+    css            every chrome rule, including the variant classes below
+    head           the header band: eyebrow left, status right
+    title          the big title band
+    subtitle       one dim line under the title
+    rule           the rule under the title
+    foot           the footer band: label left, label right
+    strip-left     the left gesture strip, with its hint slot
+    strip-right    the right gesture strip, with its hint slot
+
+  The markup sections declare the chrome's variable slots (eyebrow,
+  status, title, footer, footer_right, hint_left, hint_right); a template
+  that includes one therefore owes that variable, and a missing value is
+  an error naming itself rather than a blank band. A template includes
+  only what it draws: chat.html has no gesture strips, picker.html has a
+  bottom band instead of a lead line. A content line whose slot name
+  differs per surface (the lead line is {{lead}} on the shell and
+  {{subtitle}} on options.html) is written by the template, with the
+  chrome's class; the rule for it still comes from this file.
+
+  VARIANTS -- the only per-surface variation, and it is data, not a copy.
+  A template names a variant on its body element (``class="panel wide"``)
+  and the numbers below are the whole difference between the surfaces:
+
+    panel          the shell: 64px inset, 96px title, left-aligned
+    panel.center   title centred, smaller lead, tighter foot (options)
+    panel.tight    dense bottom band: 62px centred title, no head pad
+                   (picker)
+    panel.wide     176px inset, 72px title (chat, whose panes are placed
+                   at the same margin by renderers/chat_panes.PAD)    panel.bright   the rule takes the accent colour instead of the dim
+                   rule token (options, chat)
+
+  COLOUR comes from the token layer, never from this file: every rule
+  below styles with var(--page), var(--ink), var(--accent) and the rest of
+  the palette in renderers/theme.py, which the loader splices into every
+  document as a :root block. A colour literal here would re-create the
+  per-view palette duplication the tokens exist to remove, and a name the
+  palette does not define is a dropped declaration -- a silently wrong
+  panel.
+
+  litehtml notes: block and flex layout, padding/margins, absolute
+  positioning, borders and solid colours only -- no grid, no gradients, no
+  border-radius, no @import. It drops `gap` on a flex row whose children
+  grow, so spacing here is padding and margins.
+
+  A LANDMINE, verified live: litehtml drops a whole SHORTHAND declaration
+  whose value contains a var() -- `padding: 44px var(--inset) 0
+  var(--inset)` silently applies NO padding at all, while the same value
+  written as `padding-left: var(--inset)` and friends works. Every rule
+  below that takes an inset therefore uses longhands, and
+  tests/test_html.py fails on a shorthand with a var() in it. A dropped
+  declaration here is invisible: the band just drifts to the edge.
+-->
+
+<!--#section css-->
+  * { margin: 0; padding: 0; }
+  html, body { background: var(--page); color: var(--ink);
+               font-family: sans-serif; height: 100%; }
+  .panel { --inset: 64px; --title-size: 96px; --title-align: left;
+           --lead-size: 64px; --head-pad: 40px; --foot-pad: 64px; }
+  .panel.center { --title-align: center; --lead-size: 44px;
+                  --foot-pad: 40px; }
+  .panel.tight { --title-size: 62px; --title-align: center;
+                 --head-pad: 0; --foot-pad: 54px; }
+  .panel.wide { --inset: 176px; --title-size: 72px;
+                --foot-pad: 24px; }
+  .frame { display: flex; height: 100%; }
+  .strip { width: 160px; background: var(--band); }
+  .strip .hint { font-size: 30px; color: var(--faint); text-align: center;
+                 padding-top: 470px; }
+  .main { flex: 1; display: flex; flex-direction: column;
+          padding-top: var(--head-pad); }
+  .head { display: flex; justify-content: space-between;
+          align-items: baseline; padding-left: var(--inset);
+          padding-right: var(--inset); }
+  .eyebrow { font-size: 30px; font-weight: bold; color: var(--accent); }
+  .status { font-size: 30px; color: var(--muted); }
+  .title { font-size: var(--title-size); font-weight: bold;
+           color: var(--ink-strong); text-align: var(--title-align);
+           padding-top: 8px; padding-left: var(--inset);
+           padding-right: var(--inset); }
+  .subtitle { font-size: 28px; color: var(--muted);
+              text-align: var(--title-align); padding-top: 8px;
+              padding-bottom: 16px; }
+  .rule { height: 4px; background: var(--rule); margin-top: 22px;
+          margin-left: var(--inset); margin-right: var(--inset); }
+  .panel.bright .rule { background: var(--accent); }
+  .lead { font-size: var(--lead-size); font-weight: bold;
+          color: var(--ink-soft); text-align: var(--title-align);
+          padding-top: 44px; padding-left: var(--inset);
+          padding-right: var(--inset); }
+  .body { font-size: 38px; color: var(--muted-soft); padding-top: 18px;
+          padding-left: var(--inset); padding-right: var(--inset); }
+  .band { margin-top: auto; }
+  .foot { margin-top: auto; display: flex; justify-content: space-between;
+          align-items: baseline; padding-bottom: var(--foot-pad);
+          padding-left: var(--inset); padding-right: var(--inset); }
+  .foot .l, .foot .r { font-size: 26px; color: var(--faint); }
+<!--#endsection-->
+
+<!--#section head-->
+      <div class="head">
+        <div class="eyebrow">{{eyebrow}}</div>
+        <div class="status">{{status}}</div>
+      </div>
+<!--#endsection-->
+
+<!--#section title-->
+      <div class="title">{{title}}</div>
+<!--#endsection-->
+
+<!--#section subtitle-->
+      <div class="subtitle">{{subtitle}}</div>
+<!--#endsection-->
+
+<!--#section rule-->
+      <div class="rule"></div>
+<!--#endsection-->
+
+<!--#section foot-->
+      <div class="foot">
+        <div class="l">{{footer}}</div>
+        <div class="r">{{footer_right}}</div>
+      </div>
+<!--#endsection-->
+
+<!--#section strip-left-->
+    <div class="strip"><div class="hint">{{hint_left}}</div></div>
+<!--#endsection-->
+
+<!--#section strip-right-->
+    <div class="strip"><div class="hint">{{hint_right}}</div></div>
+<!--#endsection-->

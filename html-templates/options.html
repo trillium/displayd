@@ -27,10 +27,13 @@
       footer       small bottom-left status
       footer_right small bottom-right status
 
-      background   panel colour behind everything (a #rrggbb string the
-                   renderer parsed out of the params, never raw caller
-                   text -- so a style attribute here cannot be injected)
-      color        primary text colour, same rule
+      background   the page role for this surface: the renderer passes the
+                   caller's `background` param as --page, so the chrome's own
+                   rule (var(--page), the one definition) paints it. A
+                   #rrggbb string the renderer parsed, never raw caller text,
+                   so a style attribute here cannot be injected
+      color        the ink role for this surface, from the `color` param,
+                   same rule
       dim          secondary text colour, same rule
       accent       the accent rule under the title, same rule
 
@@ -57,49 +60,23 @@
 <head>
 <meta charset="utf-8">
 <style>
-  * { margin: 0; padding: 0; }
-  html, body { background: #07080c; color: #eef2fa; font-family: sans-serif;
-               height: 100%; }
-  .frame { display: flex; height: 100%; }
-  .strip { width: 160px; background: #0b0d13; }
-  .strip .hint { font-size: 30px; color: #5c6780; text-align: center;
-                 padding-top: 470px; }
-  .main { width: 1600px; display: flex; flex-direction: column; }
-  .head { display: flex; justify-content: space-between; align-items: baseline;
-          padding: 40px 64px 0 64px; }
-  .head .eyebrow { font-size: 26px; font-weight: bold; color: #7fd1ff; }
-  .head .status { font-size: 26px; color: #8b93a7; }
-  .title { font-size: 96px; font-weight: bold; color: #ffffff;
-           text-align: center; padding: 12px 64px 0 64px; }
-  .rule { height: 4px; background: {{accent}}; margin: 22px 64px 0 64px; }
-  .lead { font-size: 44px; color: {{dim}}; text-align: center;
-          padding: 20px 64px 0 64px; }
-  .foot { margin-top: auto; display: flex; justify-content: space-between;
-          align-items: baseline; padding: 0 64px 40px 64px; }
-  .foot .l { font-size: 26px; color: #6f7b93; }
-  .foot .r { font-size: 26px; color: #6f7b93; }
+<!--#include css-->
   .layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
   .cell { position: absolute; }
   .cell .name { position: absolute; font-weight: bold; }
 </style>
 </head>
-<body style="background: {{background}}; color: {{color}};">
+<body class="panel center bright" style="--page: {{background}}; --ink: {{color}};">
   <div class="frame">
-    <div class="strip"><div class="hint">{{hint_left}}</div></div>
+    <!--#include strip-left-->
     <div class="main">
-      <div class="head">
-        <div class="eyebrow">{{eyebrow}}</div>
-        <div class="status">{{status}}</div>
-      </div>
-      <div class="title">{{title}}</div>
-      <div class="rule"></div>
+      <!--#include head-->
+      <!--#include title-->
+      <!--#include rule-->
       <div class="lead">{{subtitle}}</div>
-      <div class="foot">
-        <div class="l">{{footer}}</div>
-        <div class="r">{{footer_right}}</div>
-      </div>
+      <!--#include foot-->
     </div>
-    <div class="strip"><div class="hint">{{hint_right}}</div></div>
+    <!--#include strip-right-->
   </div>
   <div class="layer">{{names|raw}}</div>
 </body>

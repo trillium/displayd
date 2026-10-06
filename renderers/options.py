@@ -38,6 +38,9 @@ NAME = "options"
 DESCRIPTION = ("View selection: tap-anywhere landing screen naming the "
                "fastest view picks and the way back")
 STATIC = True
+# The bar colour this view declares to the playlist (playlist_color.accent_for
+# reads a renderer's ACCENT by name). Still a literal: folding these into
+# theme.ACCENT_SLOTS is the rest of the token migration, tracked in notes.md.
 ACCENT = "#9CC8FF"
 PARAMS = {
     "title": {"type": "string",
@@ -61,7 +64,6 @@ FOOTER = "control page one-tap grid \u00b7 POST /show \u00b7 playlist: POST /pla
 
 TEMPLATE = "options.html"
 BUILD_HINT = "build it: tools/build_litehtml.sh"
-DIM = (140, 160, 190)
 
 
 def coerce_views(params):
@@ -96,7 +98,7 @@ def options_regions(views=None):
     return []
 
 
-def draw(screen, views, geometry, bg, fg, dim, accent,
+def draw(screen, views, geometry, bg, fg,
          title=DEFAULT_TITLE, instructions=DEFAULT_INSTRUCTIONS):
     """One complete frame: the chrome plus the name layer, rendered by
     litehtml from html-templates/options.html. Never raises: a failure
@@ -104,8 +106,7 @@ def draw(screen, views, geometry, bg, fg, dim, accent,
     try:
         document, root = templates.load(
             TEMPLATE,
-            grid.chrome(views, bg, fg, dim, accent, title, instructions,
-                        FOOTER),
+            grid.chrome(views, bg, fg, title, instructions, FOOTER),
             raw={"names": grid.name_markup(
                 views, geometry, fg,
                 min(grid.MAX_NAME_PX, max(12, screen.H // 12)))})
@@ -133,10 +134,9 @@ def run(screen, params, stop):
     views = coerce_views(params)
     bg = screen.color(params.get("background"), (8, 10, 16))
     fg = screen.color(params.get("color"), (255, 255, 255))
-    accent = screen.color(ACCENT, (156, 200, 255))
     geometry = grid.grid_geometry(grid.grid_rect(screen.W, screen.H),
                                   len(views))
-    screen.present(draw(screen, views, geometry, bg, fg, DIM, accent,
+    screen.present(draw(screen, views, geometry, bg, fg,
                         str(params.get("title") or DEFAULT_TITLE),
                         str(params.get("instructions")
                             or DEFAULT_INSTRUCTIONS)))
