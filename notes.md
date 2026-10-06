@@ -70,6 +70,12 @@ drawing primitive may appear (rule enforced by the gate below).
   (`_chrome.html`): `.tile`/`.lab`/`.shade` for a filled tile,
   `.cell`/`.name` for a plain one, every colour a token (`--on-accent`,
   `--label-shade`). See §2b.
+- `renderers/ui/grid.py` — a **grid of tiles**: `columns` (how many columns
+a region takes — read off its shape when the caller does not state one)
+and `grid` (the row-major rects, the gutter, the box count bound). The
+picker and the options name grid both ask it, so the two can no longer
+disagree about where a box goes; a narrow 288px band is ONE application
+column. See §2f.
 - `renderers/ui/text.py` — one font resolution, one measurement, one
   fitting rule (`font`/`face`/`width`/`fit`/`write`/`line`). `_font`,
   `_font_or_default`, `_fit` and a truncation loop used to exist in five
@@ -95,7 +101,7 @@ nothing owned “a tile”. They now call `renderers/ui/tile.py`:
 | `ui/tile.py` | the box rule, the fit rule, the centring, the markup half (`cell`/`layer`), the drawing half (`draw`) |
 | `_chrome.html` (the `css` section) | the look: `.layer`, `.tile`/`.lab`/`.shade`, `.cell`/`.name`, all `var(--…)` |
 | `_picker_tiles.py` | the picker's chrome variables + its title |
-| `_options_grid.py` | the name grid's arithmetic + the chrome variables |
+| `_options_grid.py` | the name-count policy (`cell_count`/`cols_for`) + the chrome variables; the arithmetic itself is `ui/grid.py` (§2f) |
 
 The look moved into the one shared stylesheet, which also deleted the
 `.layer` rule that picker, options and chat had each restated (3 copies →
@@ -312,6 +318,56 @@ tightened `tests/test_panel.py` assertions):
   `tests/test_macbook_preview.py` read `theme.rgb("dock")` /
   `theme.rgb("macbook")` instead of `dock.ACCENT` / `glance.ACCENT`.
 
+### 2f. The grid of tiles, and the 15-70-15 application column (this increment)
+
+`tile` owned one box; nothing owned a grid of them, so the arithmetic
+lived **twice**: `picker.grid_geometry` and `_options_grid.grid_geometry`
+carried the same row count, the same `cw`/`ch` division, the same gutter
+rule and the same row-major walk. The duplication was quiet because the
+two differed in ways that looked like policy — the picker capped at three
+columns, options at two, options bounded the name count and the picker did
+not — and meanwhile the picker's `cols` parameter was **dead**: it was
+overwritten by `cols = max(1, min(DEFAULT_COLS, count))` before it was
+used, so a caller could not state a shape at all.
+
+Now `renderers/ui/grid.py` is that one definition, and a surface keeps
+only its own policy as data:
+
+| what | owner |
+| --- | --- |
+| how many columns a region takes | `ui.grid.columns` — an explicit `cols` (clamped to the surface's cap and to the count) wins; absent one, the count that makes a box closest to square, read off the region's shape |
+| where each box lands | `ui.grid.grid` — row-major, the declared gutter or the shape-derived one, never a box under one pixel |
+| how many boxes | `ui.grid.TILE_CAP = 48`, applied inside the component, because a public geometry function handed `10 ** 9` allocated a rect per box (an out-of-memory, not a validation error) |
+| the picker's cap (3) | `picker.DEFAULT_COLS`, still the picker's |
+| the options count rule | `_options_grid.cell_count` / `cols_for`, and `MAX_CELLS` is now `ui.grid.TILE_CAP` |
+
+The shape-derived count is what the objective's `15-70-15` case needed.
+A 288px band through the old fixed rule:
+
+    HEAD  picker.grid_geometry([24, 40, 240, 860], 8)      -> (32, 48, 69, 276)   three 69px columns
+    HEAD  picker.grid_geometry([24, 40, 240, 860], 8, 1)   -> (32, 48, 69, 276)   the `cols` argument was IGNORED
+    now   ui.grid.grid(band, 8, ui.grid.columns(band, 8, cap=3)) -> (32, 48, 224, 98)  ONE application column
+
+and the full panel is untouched at three columns for every view count
+(`grid_geometry(default_rect(1920,1080), 8)` is `(179, 59, 508, 261)`
+before and after), as is the merged home grid (`unified.default_grid`,
+same three columns for 8–24 views). One visible change for a custom rect:
+a THREE-view picker now draws two columns instead of three (a
+771x401 pair and one below, rather than three 508x822 slivers) — that is
+the same rule being honest about the shape, and nothing pinned it.
+
+`cols` is now a real param (`picker.PARAMS`), read by `coerce_cols`,
+honoured by `grid_geometry`, `picker_regions` and therefore by the CLI
+(`--cols`), and — the part that keeps the invariant true — read by
+`touch_audit_regions.expected_for_view`, so the audit recomputes the same
+rects the renderer drew when a caller states a shape. Garbage falls back
+to the shape (`"wide"`, `0`, `True`, `None` all mean "derive it").
+
+A label is why the shape rule reads the way it does: a box is filled with
+text across its width, so a box taller than it is wide is the wrong shape
+for one. At the band's 224px the label fit is 20px; at the old 69px it was
+the 12px floor.
+
 ### 3. The shared chrome, composed at load time — `html-templates/_chrome.html`
 
 **litehtml has no `@import` and a template cannot inherit from another**, so
@@ -406,7 +462,7 @@ paste in after a migration; `--root PATH` inspects another tree, which is
 what `tests/test_components.py` uses to exercise both failure directions.
 Wired into `tools/check-repo-health.py` as step 3.
 
-24 exemptions remain (the list is in the tool, sorted).
+19 exemptions remain (the list is in the tool, sorted).
 
 ## Adding a new view from the layer
 
@@ -433,7 +489,8 @@ Wired into `tools/check-repo-health.py` as step 3.
      component it needs does not exist, that is the next component to
      write, not a reason to draw by hand. A labelled box is `ui.tile.draw`;
      a grid of them is `ui.tile.layer` (markup) with the look from the
-     shared stylesheet; the band a full-panel view wears is `ui.shell`
+     shared stylesheet, and where the boxes go is `ui.grid` (the column
+     count and the rects); the band a full-panel view wears is `ui.shell`
      (`head`/`foot`/`rule` + the health dot); a label with its value is
      `ui.stat.row`, a fraction is `ui.stat.meter`; centred words are
      `ui.text.write`/`ui.panel.card` (a title, an optional body, a corner
@@ -506,7 +563,9 @@ to open them” means here — and a plain slot takes the best-fitting view
 not already used, so a bare `split-50-50` does not put one view in both
 halves. A navigation band is handed `params.views` = the applicable set
 (`capability.offered`), so it lists what fits the band rather than every
-advertised view.
+advertised view — and that list draws as ONE application column, because
+the grid reads the band's own shape (section 2f) instead of a fixed
+three columns.
 
 `GET /layout/presets` is the read-only projection: per style, its slots,
 their geometry, the default view, and the views each slot accepts. That is
@@ -551,18 +610,19 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   operator surface for the “offered per style” rule and the next UI step.
   (The per-view colours are no longer part of that surface's work: a
   renderer list now carries the palette accent, not a view literal.)
-- **A narrow-band application column.** `picker` in a 288px band reflows but
-  is cramped (3 columns of ~69px tiles); a `cols` param is the fix and it is
-  now a one-place change in `ui.tile.layer` (the tile component owns the
-  grid's label fit); a dedicated narrow-band renderer would be the
-  alternative. The presets are already honest about it: the band is the
-  tappable application list, just not yet a pretty one.
+- ~~**A narrow-band application column.**~~ — **done this increment**
+  (section 2f): the column count is a component decision read off the
+  region's shape, so a 288px band is ONE column of 224px tiles (label fit
+  20px) instead of three 69px ones (12px floor), `cols` is a real param,
+  and `picker_regions` generates the matching tap rects. A dedicated
+  narrow-band renderer is no longer needed.
 - **The remaining hand-drawing views** (the gate's 19 exemptions) are the
   bigger migration: `beads*`, `row_draw`, `macbook_draw`/`macbook_strip`,
   `qr`/`qr_common`, `reload`, `stream`, `activity`, `clock`,
   `retro_grid_draw`, `touch_confidence_draw`, `feed_health`, `life`,
   `playlist`/`playlist_bar` and the two `_html_*` non-views. The vocabulary
-  they need all exists now (`tile`, `text`, `shell`, `stat`, `panel`), so
+  they need all exists now (`tile` + `grid`, `text`, `shell`, `stat`,
+  `panel`), so
   each is a straight migration with its own test story, not new design.
 - **Layout-mode taps.** While a layout owns the panel the touch service
   evaluates global regions only (view-scoped regions are skipped), so a
@@ -581,17 +641,32 @@ Full objective suite (the stop-condition command), after this increment:
         tests.test_html_runtime_install tests.test_control tests.test_options \
         tests.test_layout && python3 tools/check-lines.py
     component layer ok: 19 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 326 tests in 52.3s
+    Ran 331 tests in 52.5s
     OK
     line budget ok: all source files within 250 lines
     $ echo $?
     0
 
     Also run this increment (not part of the gate, all affected):
-    tests.test_theme     Ran 27 tests, OK      (was 23; +4 AccentOwnershipTest)
-    tests.test_panel     Ran 21 tests, OK      (tightened assertions)
-    tests.test_playlist  Ran 19 tests, OK
-    tests.test_macbook_preview  Ran 29 tests, OK
+    tests.test_grid      Ran 17 tests, OK      (new: the grid component)
+    tests.test_picker    Ran 34 tests, OK      (was 29; +5 ApplicationBandTest)
+    tests.test_options   Ran 26 tests, OK
+    tests.test_unified   Ran 29 tests, OK
+    tests.test_tile      Ran 23 tests, OK
+    tests.test_theme     Ran 27 tests, OK
+    tests.test_touch_audit / test_touch_resolve / test_layout_presets / test_components
+                         Ran 119 tests, OK
+    tests.test_touch / test_home_chrome / test_touch_confidence / test_mcp /
+        test_repo_health / test_deploy_html_step
+                         Ran 257 tests, OK
+
+    $ python3 -m unittest tests.test_row tests.test_stream tests.test_sleep \
+        tests.test_qr tests.test_reload tests.test_beads \
+        tests.test_resources_services tests.test_retro_grid tests.test_panel \
+        tests.test_tile tests.test_grid tests.test_playlist \
+        tests.test_policy tests.test_feed tests.test_feed_health \
+        tests.test_feedback
+    Ran 438 tests in 130.5s -> OK (skipped=10)
 
     $ python3 tools/check-repo-health.py
     line budget ok: all source files within 250 lines
@@ -1010,6 +1085,95 @@ colour tuples) and every pixel assertion that reads `theme.rgb("rule")` at
 the band's rule row (the old line was `C_LINE = (60, 60, 70)`, not the
 palette's `(36, 64, 92)`) fail on the old tree and pass now.
 
+### The application column: one grid definition, and the 15-70-15 bands (this increment)
+
+`DISPLAYD_FAKE_FB=1 python3 /tmp/band_evidence.py` — a real daemon on a
+loopback ephemeral port, temp policy/feedback paths, real HTTP at
+1920x1080, `POST /layout {"preset": "15-70-15"}` with no `views` map (the
+preset's own defaults):
+
+    daemon: DISPLAYD_FAKE_FB=1 http://127.0.0.1:50234
+    display: {'width': 1920, 'height': 1080, 'bpp': 32, ...}
+
+    == 15-70-15 with the preset defaults ==
+      left   picker  rect=(0, 0, 288, 1080)      updated=True
+      center row     rect=(288, 0, 1344, 1080)   updated=True
+      right  picker  rect=(1632, 0, 288, 1080)   updated=True
+      left band: 7 view(s) -> columns=1 tiles=[(32, 48, 224, 113), (32, 169, 224, 113)]
+        tile w/h=(224, 113)  label size at that width=20
+        the old fixed three columns would be: w/h=(69, 276) label size=12
+        every tile at its own palette colour inside the band: True (mismatches=[], fewest fill px=5052)
+        touch regions over the band: 7, rect[0]=[32, 48, 224, 113]
+          (same numbers the tiles drew: True)
+        action of the first region: {'name': 'select_view', 'view': 'chat'}
+      right band: (identical to the left band)
+      left/right bands identical: [True, True]
+      preset=15-70-15 first_pixel_ms=8.5
+
+    == the full-panel picker is unchanged ==
+      six default views -> columns=3 rect[0]=(179, 59, 508, 401)
+      every tile at its own palette colour: True (fewest fill px=44833)
+      switch=picker first_pixel_ms=29.6
+
+    == a 288px band with an explicit cols param ==
+      cols=3 forced -> columns=3 rect[0]=(8, 8, 85, 528)
+      every tile at its own palette colour: True (fewest fill px=9839)
+
+    == component constants ==
+      ui.grid: TILE_CAP=48 COL_CAP=6 GUTTER_MIN=8 GUTTER_DIV=45
+      theme band=(11, 13, 19) page=(7, 8, 12)
+
+Reading it: the two 288px bands really carry the applicable set (7 views:
+`chat`, `clock`, `html`, `options`, `picker`, `row`, `solid`) as ONE
+column of 224x113 tiles — a 20px label instead of the old 12px floor on a
+69px sliver — and the rects `picker_regions()` generates for that band are
+the same four numbers the tiles drew, so they are tappable. The fill was
+counted rather than probed because the always-on home badge covers the
+left band's first tile by design (a probe there reads the badge).
+`cols: 3` on the same 288px rect reproduces the old cramped shape, so the
+param really does override the derived count. The full-panel picker is
+byte-identical to before (three columns, `(179, 59, 508, 401)`). Frames:
+`/tmp/band-evi-15-70-15-1920x1080.png`,
+`/tmp/band-evi-picker-full-1920x1080.png`,
+`/tmp/band-evi-picker-cols3-1920x1080.png`.
+
+The required 1920x1080 style sweep was re-run after the change
+(`DISPLAYD_FAKE_FB=1 python3 /tmp/panel_evidence.py`): all four styles
+render with both badges present, first pixel 3.8-11.0ms (budget 100ms),
+the html/status template view shows no error card, and the three migrated
+cards are unchanged (`notice` critical bar `(214, 74, 74)` = the `alert`
+role).
+
+### The grid assertions fail before, pass after (this increment)
+
+    $ git show HEAD:renderers/ui/grid.py
+    fatal: path 'renderers/ui/grid.py' exists on disk, but not in 'HEAD'
+
+    $ git show HEAD:renderers/_options_grid.py | grep -n 'rows = (count\|cw = max\|// 45\|return \[(rx'
+    89:    rows = (count + cols - 1) // cols
+    91:    g = max(8, min(rw, rh) // 45) if gutter is None else max(0, int(gutter))
+    92:    cw = max(1, (rw - (cols + 1) * g) // cols)
+    94:    return [(rx + g + (i % cols) * (cw + g),
+
+    $ python3  # HEAD's own grid_geometry, exec'd from git show
+    HEAD band (288px) count=8 -> (32, 48, 69, 276) cols=3
+    HEAD full panel count=8 -> (179, 59, 508, 261) cols=3  (shape ignored)
+    HEAD band count=8  cols passed as 1 -> (32, 48, 69, 276)   # the arg was IGNORED
+    HEAD count=100000 rects -> 100000
+    NOW  band count=8 -> (32, 48, 224, 98) cols=1
+    NOW  full panel count=8 -> (179, 59, 508, 261) cols=3
+    NOW  count=100000 rects -> 48
+
+So on the pre-change tree `tests/test_grid.py` cannot even import (no
+`ui/grid.py`); `test_a_narrow_band_is_one_application_column`,
+`test_the_derived_count_keeps_a_box_roughly_square`,
+`test_explicit_cols_reaches_the_touch_regions` and
+`test_the_band_tile_leaves_room_for_its_label` are red against HEAD's
+numbers above; `test_the_count_is_bounded` is red (100,000 rects); and
+`test_neither_surface_restates_the_grid_arithmetic` names both surfaces
+(the four lines above). The figures also show the change is targeted:
+the full-panel grid is identical before and after.
+
 ### The accent is one owner (this increment)
 
 `DISPLAYD_FAKE_FB=1 python3 /tmp/accent_evidence.py` — real daemon on a
@@ -1110,10 +1274,10 @@ those two are pins on the new owner, not new-behaviour proofs).
 
 The command above exits zero, but that is a **floor, not the finish line**:
 the gate is a ratchet with 19 exemptions, most views still hand-draw, and
-the component vocabulary exists (`system_buttons`, `ui.tile`, `ui.shell` +
-`ui.stat` + `ui.text`, `ui.panel`, and the `ui.base.chain` primitive) but
-the larger views have not been migrated onto it. What is left is those
-migrations, the control page's style picker, the narrow-band tile column
-and the layout-mode tap entries. The stop condition became reachable
-because the gate exists and the health gate stays green while the
-migration is in flight — which is exactly what it was designed to allow.
+the component vocabulary exists (`system_buttons`, `ui.tile` + `ui.grid`,
+`ui.shell` + `ui.stat` + `ui.text`, `ui.panel`, and the `ui.base.chain`
+primitive) but the larger views have not been migrated onto it. What is
+left is those migrations, the control page's style picker and the
+layout-mode tap entries. The stop condition became reachable because the
+gate exists and the health gate stays green while the migration is in
+flight — which is exactly what it was designed to allow.

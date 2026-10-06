@@ -279,6 +279,15 @@ drawing half (a Pillow view's labelled box). Its look is authored once in the
 shared stylesheet with palette tokens, and the component layer is the only
 place a renderer may draw by hand (`tools/check-components.py`).
 
+A **grid of tiles** is one component too, `renderers/ui/grid.py`: how many
+columns a region takes and where each box lands. The column count is read off
+the region's shape unless the caller states `cols`, so the picker in a 288px
+application band (the outer regions of the `15-70-15` style) draws one column
+of 224px tiles rather than three 69px ones, and the options name grid and the
+picker can no longer disagree about where a box goes. `picker_regions()` — the
+`touch.json` generator — asks the same component, so a drawn tile and its tap
+target stay the same four numbers.
+
 The band a full-panel view wears is a component too, `renderers/ui/shell.py`
 (title, detail, the health dot and its honest age, the rule under it, the
 footer line), and the label/value rows under it are `renderers/ui/stat.py`
