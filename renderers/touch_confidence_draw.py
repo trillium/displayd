@@ -2,6 +2,12 @@
 
 One complete frame per call: accent bar, title, region map band,
 diagnostics band. Pure draw (no I/O): tests call this directly.
+
+Every line of type here is the panel component's ``block`` and the map
+boxes are the tile component's ``draw``, so this view owns its geometry
+and its words and nothing else. It used to carry a private font loader
+(``font_for``), six colour literals and the same centred-text call four
+times.
 """
 
 import os
@@ -9,115 +15,82 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PIL import ImageDraw, ImageFont
-
+import theme
 from touch_confidence_regions import REGION_COLORS, format_label
 from touch_confidence_taps import _last_line
+from ui import panel as ui_panel
+from ui import text as ui_text
 from ui import tile as ui_tile
 
-
-def font_for(screen, name, size):
-    """Named screen font at size, or None when unavailable."""
-    try:
-        path = screen.font_path(name)
-    except Exception:
-        return None
-    if path is None:
-        return None
-    try:
-        return ImageFont.truetype(path, max(8, int(size)))
-    except Exception:
-        return None
+__all__ = ["draw"]
 
 
-# Historical name kept so existing imports keep working.
-__all__ = ["font_for", "draw"]
+def _line(img, screen, x, y, text, ink, size, bold=False, family=None):
+    """One centred line of type -- the card component's own block."""
+    return ui_panel.block(img, screen, text, ink=theme.rgb(ink), size=size,
+                          centre=(int(x), int(y)), bold=bold, family=family)
 
 
 def draw(screen, title, instructions, regions, summary, bg, accent=None):
     """One complete frame. Pure draw (no I/O): tests call this directly.
 
-    accent resolves in run(); tests omit it and get the default."""
+    accent resolves in run(); tests omit it and get the palette's slot."""
     if accent is None:
-        accent = screen.color("#50DC78", (80, 220, 120))
+        accent = theme.accent_rgb("touch_confidence")
     img = screen.new_image(bg)
-    draw = ImageDraw.Draw(img)
+    w, h = int(screen.W), int(screen.H)
 
     # Accent bar across the top: the glanceable bit from across the room.
-    draw.rectangle([0, 0, screen.W, max(6, screen.H // 60)], fill=accent)
+    ui_panel.bar(img, screen, accent, height=max(6, h // 60))
 
-    title_font = font_for(screen, "DejaVuSans-Bold", screen.H // 11)
-    sub_font = font_for(screen, "DejaVuSans", screen.H // 22)
-    box_font = font_for(screen, "DejaVuSans-Bold", max(12, screen.H // 30))
-    diag_font = font_for(screen, "DejaVuSansMono", max(12, screen.H // 32))
-    diag_font = diag_font or font_for(screen, "DejaVuSans", max(12, screen.H // 32))
-    plain = title_font or sub_font or box_font or diag_font
-
-    title_y = int(screen.H * 0.12)
-    draw.text(
-        (screen.W // 2, title_y), title, font=title_font or plain, fill=(255, 255, 255), anchor="mm"
-    )
-    draw.text(
-        (screen.W // 2, title_y + int(screen.H * 0.07)),
-        instructions,
-        font=sub_font or plain,
-        fill=(180, 180, 190),
-        anchor="mm",
-    )
+    title_y = int(h * 0.12)
+    _line(img, screen, w // 2, title_y, title, "ink-strong", h // 11,
+          bold=True)
+    _line(img, screen, w // 2, title_y + int(h * 0.07), instructions,
+          "muted-soft", h // 22)
 
     # Region map: the middle band. Boxes in config order with labels.
-    map_top = int(screen.H * 0.26)
-    map_bottom = int(screen.H * 0.66)
+    map_top = int(h * 0.26)
+    map_bottom = int(h * 0.66)
     if regions:
-        for i, (rid, (x, y, w, h), action) in enumerate(regions):
+        box_font = ui_text.face(screen, max(12, h // 30), bold=True)
+        for i, (rid, (x, y, rw, rh), action) in enumerate(regions):
             color = REGION_COLORS[i % len(REGION_COLORS)]
             # Scale the configured box into the map band vertically so the
             # map always fits on screen regardless of panel geometry.
-            frac_top = y / float(max(1, screen.H))
-            frac_h = h / float(max(1, screen.H))
+            frac_top = y / float(max(1, h))
+            frac_h = rh / float(max(1, h))
             by = map_top + int(frac_top * (map_bottom - map_top))
             bh = max(8, int(frac_h * (map_bottom - map_top)))
             by = max(map_top, min(map_bottom - 8, by))
             bh = max(8, min(map_bottom - by, bh))
-            bx, bw = x, w  # horizontal: rects already span the panel width
+            bx, bw = x, rw  # horizontal: rects already span the panel width
             # A region box is a tile: a bounded box with a label. Same
             # component (and so the same label fit and truncation) as the
             # picker's tiles, drawn unfilled because the map stays a map.
             ui_tile.draw(img, [bx, by, bw, bh], format_label(rid, action),
-                         ink=color, font=box_font or plain, outline=color,
-                         width=max(2, screen.W // 320),
+                         ink=color, font=box_font, outline=color,
+                         width=max(2, w // 320),
                          place=ui_tile.TOPLEFT, pad=(8, 6), border=0)
     else:
-        draw.text(
-            (screen.W // 2, (map_top + map_bottom) // 2),
-            "(no regions configured)",
-            font=sub_font or plain,
-            fill=(140, 140, 150),
-            anchor="mm",
-        )
+        _line(img, screen, w // 2, (map_top + map_bottom) // 2,
+              "(no regions configured)", "faint", h // 22)
 
     # Diagnostics: the bottom band. Counters + last tap + result/error.
-    dy = int(screen.H * 0.70)
-    lh = max(16, int(screen.H * 0.055))
+    dy = int(h * 0.70)
+    lh = max(16, int(h * 0.055))
+    mono = "DejaVuSansMono"
+    diag_size = max(12, h // 32)
     total, hits, misses = (
         summary.get("total", 0),
         summary.get("hits", 0),
         summary.get("misses", 0),
     )
-    draw.text(
-        (screen.W // 2, dy),
-        "taps %d    hits %d    miss %d" % (total, hits, misses),
-        font=diag_font or plain,
-        fill=(255, 255, 255),
-        anchor="mm",
-    )
-    draw.text(
-        (screen.W // 2, dy + lh),
-        _last_line(summary),
-        font=diag_font or plain,
-        fill=(255, 255, 160),
-        anchor="mm",
-    )
+    _line(img, screen, w // 2, dy,
+          "taps %d    hits %d    miss %d" % (total, hits, misses),
+          "ink-strong", diag_size, family=mono)
+    _line(img, screen, w // 2, dy + lh, _last_line(summary), "attention",
+          diag_size, family=mono)
     extra = ""
     last = summary.get("last")
     if last:
@@ -126,21 +99,12 @@ def draw(screen, title, instructions, regions, summary, bg, accent=None):
         elif last.get("result"):
             extra = "result: %s" % last.get("result")
     if extra:
-        draw.text(
-            (screen.W // 2, dy + 2 * lh),
-            extra[:90],
-            font=diag_font or plain,
-            fill=(255, 150, 150),
-            anchor="mm",
-        )
+        _line(img, screen, w // 2, dy + 2 * lh, extra[:90], "alert",
+              diag_size, family=mono)
     per_region = summary.get("per_region") or {}
     if per_region:
-        chips = "   ".join("%s: %d" % (rid, per_region[rid]) for rid in sorted(per_region))[:110]
-        draw.text(
-            (screen.W // 2, dy + (3 if extra else 2) * lh),
-            chips,
-            font=diag_font or plain,
-            fill=(160, 200, 255),
-            anchor="mm",
-        )
+        chips = "   ".join("%s: %d" % (rid, per_region[rid])
+                           for rid in sorted(per_region))[:110]
+        _line(img, screen, w // 2, dy + (3 if extra else 2) * lh, chips,
+              "accent", diag_size, family=mono)
     return img

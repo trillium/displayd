@@ -10,6 +10,7 @@ Run from the repo root:  python3 -m unittest tests.test_touch_confidence -v
 
 import io
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -19,8 +20,11 @@ import unittest
 from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
+                                "renderers"))
 
 import displayd
+import theme
 from displayd import FeedStore
 
 TC_PATH = os.path.join(displayd.RENDERER_DIR, "touch_confidence.py")
@@ -285,6 +289,84 @@ class TestDraw(unittest.TestCase):
                                 if isinstance(t, dict)])
         img = TC.draw(screen, "T", "i", boxes, summary, BG)
         self.assertEqual(img.size, (480, 270))
+
+
+class TestComponentMigration(unittest.TestCase):
+    """The frame is drawn from the component layer now.
+
+    The view used to carry a private font loader (``font_for``), six
+    colour literals and four copies of the same centred-text call.
+    """
+
+    SRC = os.path.join(displayd.RENDERER_DIR, "touch_confidence_draw.py")
+    HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+
+    def source(self):
+        with open(self.SRC, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_it_owns_no_font_a_colour_or_a_drawing_primitive(self):
+        src = self.source()
+        self.assertNotIn("from PIL", src)
+        self.assertNotIn("ImageDraw", src)
+        self.assertNotIn("ImageFont", src)
+        self.assertNotIn("def font_for", src)
+        self.assertEqual(self.HEX_RE.findall(src), [])
+        self.assertIn("from ui import panel", src)
+        self.assertIn("from ui import tile", src)
+        self.assertIn("import theme", src)
+
+    def _draw(self, taps, regions=PANEL_REGIONS):
+        screen, _ = make_screen()
+        boxes = TC.coerce_regions({"regions": regions}, 480, 270)
+        return TC.draw(screen, TC.DEFAULT_TITLE, TC.DEFAULT_INSTRUCTIONS,
+                       boxes, TC.summarize(taps), BG)
+
+    def test_the_accent_bar_is_the_view_s_palette_slot(self):
+        img = self._draw([])
+        slot = theme.accent_rgb("touch_confidence")
+        self.assertEqual(img.getpixel((240, 2))[:3], slot)
+        # The literal the module used to carry is the slot, so the bar did
+        # not move -- it just stopped being owned by the view.
+        self.assertEqual(slot, (80, 220, 120))
+
+    def test_the_title_wears_the_strong_ink_role(self):
+        img = self._draw([])
+        band = img.crop((0, 20, 480, 60))
+        found = {c for _n, c in band.getcolors(1 << 24)}
+        self.assertIn(theme.rgb("ink-strong"), found)
+
+    def test_the_last_tap_and_chips_wear_their_roles(self):
+        hit = {"x": 100, "y": 500, "region": "screen-on",
+               "action": "screen_on", "hit": True,
+               "result": "dispatched"}
+        img = self._draw([hit])
+        colours = [c for _n, c in img.getcolors(1 << 24)]
+        # The last-tap line moved from a view-local pale yellow to the
+        # palette's attention amber.
+        self.assertIn(theme.rgb("attention"), colours)
+        self.assertNotIn((255, 255, 160), colours)
+
+    def test_an_error_result_wears_the_alert_role(self):
+        bad = {"x": 100, "y": 500, "region": "screen-on",
+               "action": "screen_on", "hit": True,
+               "result": "dispatch-error", "error": "connection refused"}
+        img = self._draw([bad])
+        colours = [c for _n, c in img.getcolors(1 << 24)]
+        self.assertIn(theme.rgb("alert"), colours)
+        self.assertNotIn((255, 150, 150), colours)
+
+    def test_the_instruction_line_is_the_muted_soft_role(self):
+        img = self._draw([])
+        colours = [c for _n, c in img.getcolors(1 << 24)]
+        self.assertIn(theme.rgb("muted-soft"), colours)
+        self.assertNotIn((180, 180, 190), colours)
+
+    def test_no_regions_says_so_in_the_faint_role(self):
+        img = self._draw([], regions=[])
+        colours = [c for _n, c in img.getcolors(1 << 24)]
+        self.assertIn(theme.rgb("faint"), colours)
+        self.assertNotIn((140, 140, 150), colours)
 
 
 class TestRunLoop(unittest.TestCase):

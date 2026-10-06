@@ -58,7 +58,6 @@ EXEMPTIONS = (
     "renderers/_html_native.py",
     "renderers/beads.py",
     "renderers/beads_detail_card.py",
-    "renderers/clock.py",
     "renderers/life.py",
     "renderers/macbook_draw.py",
     "renderers/macbook_strip.py",
@@ -67,7 +66,6 @@ EXEMPTIONS = (
     "renderers/reload.py",
     "renderers/retro_grid_draw.py",
     "renderers/stream.py",
-    "renderers/touch_confidence_draw.py",
 )
 
 

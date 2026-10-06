@@ -306,10 +306,15 @@ their own.
 
 A **panel** — a titled region with a body — is `renderers/ui/panel.py`: one
 scale-to-fit rule (the whole block is scaled to the region and never cut), a
-centred headline and body, the corner tag and the accent bar. `notice`, `text`
-and `sleep` are composers over it and hold no font, fitting search or colour
-of their own; the notice's severity is a palette role lookup
-(`accent`/`attention`/`alert`) rather than a fourth copy of red.
+centred headline and body, the corner tag and the accent bar. `notice`, `text`,
+`sleep` and `clock` are composers over it and hold no font, fitting search or
+colour of their own; the notice's severity is a palette role lookup
+(`accent`/`attention`/`alert`) rather than a fourth copy of red, and the clock's
+digits are the component's headline instead of the view's own binary-search
+fitter. `touch_confidence` is a composer too: every line of its frame is the
+panel's `block` and its region boxes are the tile component's `draw`, with the
+palette's `attention`/`alert`/`accent` roles where it used to hold six RGB
+literals and a private font loader.
 
 The apps dock under the merged home screen is a template too
 (`html-templates/dock.html`), composited into the picker frame inside the rect
