@@ -333,10 +333,11 @@ Two things differ from the other templates, both deliberate:
   custom dock keeps the same type at the same relative size instead of
   overflowing the way a fixed-px document would.
 - **its failure is a strip, not a card.** The dock is pasted into a finished
-  frame, so `error_strip()` in `renderers/_html_error.py` draws the red rule
-  and the message *inside the dock rect only* -- a full-screen card would hide
-  the tiles around it, and a silently missing strip would be indistinguishable
-  from a home screen that simply has no apps.
+  frame, so `error_strip()` in `renderers/_html_error.py` (the card component
+  confined to a rect) draws the alert rule and the message *inside the dock
+  rect only* -- a full-screen card would hide the tiles around it, and a
+  silently missing strip would be indistinguishable from a home screen that
+  simply has no apps.
 
 litehtml has no `border-radius`, so the strip's corners are square rather than
 rounded, and the head "dot" is a 20px square. Everything else -- three states
@@ -548,7 +549,7 @@ that only survives polite input is not a budget.
 | `renderers/chat_panes.py` | geometry -> pane/row/line markup + the chrome variables |
 | `renderers/chat_fit.py` | measurement and wrapping: text -> measured rows |
 | `renderers/_html_templates.py` | the trust boundary: name, root, escaping, raw slots |
-| `renderers/_html_error.py` | the red rule and its message, shared by both views |
+| `renderers/_html_error.py` | the failure card: the panel card in the alert family, shared by both views |
 | `renderers/_html_native.py` | ctypes + Pillow; fonts, images, clipping, tiling |
 | `renderers/native/displayd_html.h` | the C ABI between them |
 | `renderers/native/pil_container.cpp` | the litehtml container |
@@ -572,4 +573,6 @@ application band (the 15-70-15 side bands) draws ONE column of 224px tiles
 instead of three 69px ones, and the drawn tiles and the generated touch
 regions stay the same numbers because both come from that one grid. Nothing
 draws in Pillow on that path any more, which is also why the failure card lives
-in `renderers/_html_error.py`: both views share one.
+in `renderers/_html_error.py`: it is `ui.panel.card` (or `ui.panel.strip`,
+confined to a rect of a bigger frame) in the alert family, so both views share
+one definition.

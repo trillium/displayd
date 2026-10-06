@@ -417,10 +417,11 @@ keeps running the old tick until the installer runs (`install-mac.sh
   the panel's bottom-right corner black. Verified 1px-tile-over-full-HD in
   ~2ms.
 - The failure card lives in `renderers/_html_error.py`, NOT in either view:
-  `renderers/picker.py` must not import `ImageDraw`, so the html view and the
-  picker share one `error_frame`. A view composited INTO a bigger frame (the
-  home screen's dock) shares the other one, `error_strip`, which confines the
-  same red rule and message to that view's own rect.
+  `renderers/picker.py` must not import a drawing primitive, so the html view
+  and the picker share one `error_frame`. It is `ui.panel.card` in the alert
+  family -- and `ui.panel.strip`, the same card confined to a rect, for a view
+  composited INTO a bigger frame (the home screen's dock) -- so a failure
+  cannot drift away from how every other card is drawn.
 - Cost (`python3 tools/bench_html.py`, 1920x1080 `status.html`): ~7ms cold,
   ~5.6ms warm median, and RSS per render falls 9.6 -> 4.3 -> 0.6 -> 0.2 KiB as
   the font/image caches fill, i.e. flat in steady state. A leak holds a
