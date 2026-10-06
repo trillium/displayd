@@ -778,8 +778,9 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   frame; a single snapshot can legitimately catch a half-black composite
   under load, which is how the full `discover` run reddened the former
   once (it passes on its own and in the 524-test prefix sweep).
-- **PR**: this run's branch is pushed by the orchestrator; the PR itself
-  has not been opened from here.
+- ~~**PR**~~ — **done this increment** (section 8): the branch is pushed
+  and PR #51 is open against `main`. It is not merged (the objective says
+  not to). See section 8 for the keep-it-current rule.
 
 ## Recorded evidence
 
@@ -1626,6 +1627,45 @@ whose old colours the four inequalities above prove are not the tokens.
 `tests/test_layout_presets.py`'s split test fails on HEAD for the simpler
 reason that the two views are declared `full` there, so
 `POST /layout {"preset": "split-50-50", ...}` is a 400.
+
+## 8. The branch and the pull request — opened this increment
+
+Iterations 1-12 never pushed anything: the remote had no
+`gnhf/objective-coalesce-t-0df99b-1` ref, so the objective's finish step
+("push your branch and open a PR") was the one deliverable still missing.
+This increment pushed 11 commits and opened:
+
+- branch `gnhf/objective-coalesce-t-0df99b-1` -> pushed to
+  `origin` (`git push -u origin gnhf/objective-coalesce-t-0df99b-1`)
+- **PR #51** — <https://github.com/trillium/displayd/pull/51>, base
+  `main`, head `gnhf/objective-coalesce-t-0df99b-1`, created with
+  `gh-axi pr create --base main --head gnhf/objective-coalesce-t-0df99b-1
+  --title ... --body-file /tmp/displayd-component-layer-pr.md`.
+  **Not merged**, per the objective.
+
+The two gates were re-run immediately before the push and both were green
+(the exact stop-condition output and `check-repo-health` output are below).
+
+**Keep-it-current rule for later increments.** A push sends *commits*,
+and this run is not allowed to commit (the orchestrator commits at the end
+of each iteration). So the PR tip lags the working tree by at most one
+increment. **The first thing every later increment should do is push again**
+(`git push`), which carries the previous increment's commit to the PR; the
+last increment must push too, otherwise the PR stops at the state before
+it. `notes.md` inside the repo is the PR-readable record, so it should stay
+updated even when the PR body itself is not rewritten.
+
+### The PR-body summary it published
+
+The body states: the token layer, the load-time template composition, the
+`renderers/ui/` component vocabulary, the four layout presets over the
+existing grammar, the declared `FULL`/`PARTIAL`/`PRIMARY` capability, and
+the structural gate; the eight migrated views; the 16 left behind with the
+reason; the stop-condition output verbatim; and the three known-red test
+modules that are not gates here. It deliberately contains no direct
+address (the repo's artifact rule), and it records that the deploy
+scripts, the touch action table and the public endpoint shapes were not
+touched.
 
 ## Note on the stop condition
 
