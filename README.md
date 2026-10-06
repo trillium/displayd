@@ -289,13 +289,16 @@ picker can no longer disagree about where a box goes. `picker_regions()` — the
 target stay the same four numbers.
 
 The band a full-panel view wears is a component too, `renderers/ui/shell.py`
-(title, detail, the health dot and its honest age, the rule under it, the
-footer line), and the label/value rows under it are `renderers/ui/stat.py`
-(`row`, the supporting `body` line, and a clamped `meter` for a fraction of a
-whole). Both draw through `renderers/ui/text.py` — the layer's one font,
-measurement and trim-to-room rule. The two views that used to carry that band
-twice (`resources`, `services`) are now composers over them, and carry no
-colour, font or truncation rule of their own.
+(title, detail, the health dot, the footer line, and the one bucket rule
+behind every age — `short_age`/`age`), and the entries under it are
+`renderers/ui/stat.py` (`row` for a label over its value, `list_row` for one
+horizontal entry: status dot, name, right-aligned value, and a clamped
+`meter` for a fraction of a whole). Both draw through
+`renderers/ui/text.py` — the layer's one font, measurement, trim-to-room rule
+and `wrap` for a paragraph broken to a width. The four views that used to
+carry that band and those rows by hand (`resources`, `services`,
+`feed_health`, `activity`) are now composers over them, and carry no colour,
+font, truncation, wrap or age rule of their own.
 
 A **panel** — a titled region with a body — is `renderers/ui/panel.py`: one
 scale-to-fit rule (the whole block is scaled to the region and never cut), a

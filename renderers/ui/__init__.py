@@ -30,11 +30,15 @@ Layout of the package:
 - ``system_buttons`` -- the home and sleep badges: one module, one
   definition, composable by every view regardless of which path it uses.
 - ``text`` -- one font resolution, one measurement, one fitting rule, so
-  a line of type is asked for rather than re-implemented per view.
+  a line of type is asked for rather than re-implemented per view -- and
+  ``wrap``, the one way a paragraph is broken to a width.
 - ``shell`` -- the band a full-panel view wears: title, detail, health
-  dot and its honest age, the rule under it, and the footer line.
-- ``stat`` -- a label plus a value line (``row``), a supporting ``body``
-  line, and the ``meter`` bar for a fraction of a whole.
+  dot and its honest age, the rule under it, the footer line, and
+  ``short_age``/``age`` (the one age-bucket rule).
+- ``stat`` -- a label plus a value line (``row``), one horizontal list
+  entry (``list_row``: status dot, name, right-aligned value), a
+  supporting ``body`` line, and the ``meter`` bar for a fraction of a
+  whole.
 - ``tile`` -- a bounded box with a label: the declared-box rule, the label
   fit and centring, plus a markup half (``cell``/``layer``, what the
   picker and options fill their raw slot with) and a drawing half

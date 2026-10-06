@@ -34,7 +34,8 @@ from ui import text as ui_text
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
-MIGRATED = ("renderers/resources_draw.py", "renderers/services_draw.py")
+MIGRATED = ("renderers/resources_draw.py", "renderers/services_draw.py",
+            "renderers/feed_health.py", "renderers/activity.py")
 
 
 class FakeScreen:
@@ -96,6 +97,27 @@ class TextTest(unittest.TestCase):
         self.assertIs(ui_text.write(None, self.screen, (0, 0), "x", (0, 0, 0), 9),
                       None)
 
+    def test_wrap_breaks_a_paragraph_to_the_room_it_is_given(self):
+        words = " ".join(["word"] * 60)
+        wide = ui_text.wrap(self.screen, words, 34, 900, rows=None)
+        narrow = ui_text.wrap(self.screen, words, 34, 300, rows=None)
+        self.assertTrue(all(ui_text.width(self.screen, line, 34) <= 900
+                            for line in wide))
+        self.assertGreater(len(narrow), len(wide))
+        self.assertTrue(all(ui_text.width(self.screen, line, 34) <= 300
+                            for line in narrow))
+
+    def test_wrap_is_total_and_never_empty(self):
+        for value in (None, "", "junk", 7, [1, 2]):
+            with self.subTest(value=value):
+                self.assertEqual(len(ui_text.wrap(self.screen, value, 34, 0)), 1)
+        self.assertEqual(ui_text.wrap(self.screen, "a b c d", 34, 0, rows=1),
+                         ["a b c d"])
+        self.assertEqual(len(ui_text.wrap(self.screen, "a " * 90, 34, 300,
+                                          rows=3)), 3)
+        self.assertEqual(ui_text.wrap(self.screen, "a\nb", 34, 0),
+                         ["a", "b"])
+
 
 class ShellTest(unittest.TestCase):
     """The band: title, health status, dot, rule, footer."""
@@ -128,6 +150,29 @@ class ShellTest(unittest.TestCase):
         self.assertEqual(shell.age(now - 30), "updated 30s ago")
         self.assertEqual(shell.age(now - 90), "updated 1m ago")
         self.assertEqual(shell.age(now - 7200), "updated 2h ago")
+
+    def test_short_age_owns_the_buckets(self):
+        # Five copies of this rule used to exist (this module's ``age`` and
+        # each polled dashboard's own); the band's line is built on it.
+        self.assertEqual(shell.short_age(None), "never")
+        self.assertEqual(shell.short_age("junk"), "never")
+        self.assertEqual(shell.short_age(-5), "0s")
+        self.assertEqual(shell.short_age(59.9), "59s")
+        self.assertEqual(shell.short_age(60), "1m")
+        self.assertEqual(shell.short_age(3599), "59m")
+        self.assertEqual(shell.short_age(3600), "1h")
+        self.assertEqual(shell.short_age(86400 * 3), "3d")
+        self.assertEqual(shell.age(time.time() - 86400 * 3),
+                         "updated 3d ago")
+
+    def test_head_colours_its_status_line_on_request(self):
+        img = page(self.screen)
+        shell.head(img, self.screen, "FEED HEALTH", status="ALL HEALTHY",
+                   status_ink=theme.rgb("ok"))
+        self.assertGreater(count(img, theme.rgb("ok")), 50)
+        plain = page(self.screen)
+        shell.head(plain, self.screen, "FEED HEALTH", status="ALL HEALTHY")
+        self.assertGreater(count(plain, theme.rgb("muted")), 50)
 
     def test_status_line_names_the_health_and_the_age(self):
         self.assertEqual(shell.status_line("warm", 0), "warm \u00b7 no data yet")
@@ -232,6 +277,33 @@ class StatTest(unittest.TestCase):
         self.assertEqual(stat.width(self.screen, "", stat.ROW_SIZE), 0)
         self.assertGreater(stat.width(self.screen, "PORTS", stat.BODY_SIZE), 0)
 
+    def test_list_row_paints_a_dot_a_name_and_a_right_aligned_value(self):
+        img = page(self.screen)
+        stat.list_row(img, self.screen, (60, 200), "chat.message",
+                      "WARM  5s ago  x2", ink=theme.rgb("ink"),
+                      meta_ink=theme.rgb("ok"), dot_ink=theme.rgb("ok"))
+        self.assertGreater(count(img, theme.rgb("ok")), 100)
+        self.assertGreater(count(img, theme.rgb("ink")), 20)
+        # The value is flush right to the same pad the band uses.
+        right = self.screen.W - 60
+        self.assertGreater(count(img.crop((right - 400, 200, right, 240)),
+                                 theme.rgb("ok")), 0)
+
+    def test_list_row_defaults_to_the_palette_and_never_raises(self):
+        img = page(self.screen)
+        stat.list_row(img, self.screen, (60, 200), "name", "value")
+        self.assertGreater(count(img, theme.rgb("muted")), 20)
+        for xy in (None, "x", (1,), ("a", "b")):
+            with self.subTest(xy=xy):
+                self.assertIs(stat.list_row(img, self.screen, xy, "n"), img)
+
+    def test_list_row_fits_a_long_name_clear_of_its_value(self):
+        img = page(self.screen)
+        stat.list_row(img, self.screen, (60, 200), "n" * 300, "VALUE",
+                      ink=theme.rgb("ink"), meta_ink=theme.rgb("attention"))
+        # The value keeps its own pixels: a name never runs under it.
+        self.assertGreater(count(img, theme.rgb("attention")), 20)
+
 
 class OneBandTwoPathsTest(unittest.TestCase):
     """The band is drawn twice -- a template's CSS and a Pillow view's
@@ -276,6 +348,56 @@ class MigratedViewsTest(unittest.TestCase):
                 self.assertNotIn("def _age", src)
                 self.assertNotIn("def _bar", src)
                 self.assertIn("from ui import", src)
+
+    def test_feed_health_paints_the_component_s_roles(self):
+        import feed_health
+
+        rows = feed_health.collect_rows({
+            "chat": {"message": {"count": 2, "updated_at": 1,
+                                 "age_seconds": 900, "health": "stale"}}})
+        summary, summary_ink = feed_health.summarize(rows)
+        screen = FakeScreen()
+        frame = feed_health._draw(screen, "FEED HEALTH", rows, summary,
+                                  summary_ink, theme.rgb("page"))
+        self.assertGreater(count(frame, theme.rgb("attention")), 200)
+        # The band's rule is the shared token, and the old per-view yellow
+        # (240, 200, 60) and grey (128, 128, 128) are gone from the panel.
+        self.assertIn(theme.rgb("rule"),
+                      [frame.getpixel((960, shell.RULE_Y)),
+                       frame.getpixel((960, shell.RULE_Y + 1))])
+        colours = [c for _n, c in frame.getcolors(1 << 24)]
+        self.assertNotIn((240, 200, 60), colours)
+        self.assertNotIn((128, 128, 128), colours)
+        self.assertNotIn((60, 60, 70), colours)
+
+    def test_activity_paints_the_component_s_roles(self):
+        import activity
+
+        events = [{"seq": 1, "tool": "beads_show", "outcome": "ok",
+                   "caller": "firstmate", "durationMs": 12,
+                   "summary": "summary " * 60},
+                  {"seq": 2, "tool": "beads_close", "outcome": "error",
+                   "caller": "ship"}]
+        screen = FakeScreen()
+        frame = activity._draw(screen, "ACTIVITY", events, 8,
+                               theme.rgb("page"))
+        self.assertGreater(count(frame, theme.rgb("ok")), 50)
+        self.assertGreater(count(frame, theme.rgb("alert")), 50)
+        self.assertIn(theme.rgb("rule"),
+                      [frame.getpixel((960, shell.RULE_Y)),
+                       frame.getpixel((960, shell.RULE_Y + 1))])
+        # The old per-view okay-red (255, 110, 100) and green
+        # (110, 220, 130) are gone; every line is the band's type.
+        colours = [c for _n, c in frame.getcolors(1 << 24)]
+        self.assertNotIn((110, 220, 130), colours)
+        self.assertNotIn((255, 110, 100), colours)
+
+    def test_activity_never_draws_an_empty_panel(self):
+        import activity
+
+        screen = FakeScreen()
+        frame = activity._draw(screen, "ACTIVITY", [], 8, theme.rgb("page"))
+        self.assertGreater(count(frame, theme.rgb("muted")), 50)
 
     def test_resources_view_paints_the_palette_band_and_rows(self):
         import resources

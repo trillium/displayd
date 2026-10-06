@@ -40,6 +40,9 @@ LINE_SIZE = 30    # the smallest supporting line
 GAP = 30          # label -> value
 BAR_INSET = 4     # a meter's fill inset from its own outline
 BAR_WIDTH = 2     # the meter's outline width
+DOT = 32          # the status dot's diameter in a list row
+DOT_GAP = 24      # the name's inset after that dot
+META_GAP = 44     # room kept between a name and the row's right-aligned value
 
 
 def label(img, screen, xy, text, ink=None, size=LABEL_SIZE, room=None):
@@ -77,6 +80,50 @@ def row(img, screen, xy, name, value_text, value_ink=None, name_ink=None,
           room=room)
     return value(img, screen, (x, y + int(gap)), value_text, ink=value_ink,
                  size=value_size, room=room)
+
+
+def _dot(img, xy, ink, size=DOT):
+    """A filled status dot. Never raises."""
+    try:
+        from PIL import ImageDraw
+        x, y = int(xy[0]), int(xy[1])
+        ImageDraw.Draw(img).ellipse([x, y, x + size, y + size], fill=ink)
+    except Exception:
+        pass
+    return img
+
+
+def list_row(img, screen, xy, name, meta="", ink=None, meta_ink=None,
+             dot_ink=None, name_size=ROW_SIZE, meta_size=LINE_SIZE, pad=60):
+    """One line of a list: an optional dot, a bold name, a trailing value.
+
+    The horizontal sibling of :func:`row`, for a dashboard that puts many
+    entries down the panel instead of one giant number. ``dot_ink`` draws
+    a status dot (``shell.health_ink``); the name is fitted to whatever
+    room the trailing value leaves, and the value is right-aligned ``pad``
+    from the frame's own right edge. Both default to the palette's
+    ``muted`` ink, so a caller only colours what genuinely differs.
+    Nothing here raises.
+    """
+    try:
+        x, y = int(xy[0]), int(xy[1])
+        if dot_ink is not None:
+            _dot(img, (x, y + max(0, (int(name_size) - DOT) // 2)), dot_ink)
+            x += DOT + DOT_GAP
+        text = str(meta if meta is not None else "")
+        drawn = width(screen, text, meta_size) if text else 0
+        room = max(0, int(screen.W) - int(pad) - x - META_GAP - drawn)
+        label(img, screen, (x, y), name, ink=ink, size=name_size, room=room)
+        if text:
+            ui_text.write(
+                img, screen,
+                (int(screen.W) - int(pad) - drawn,
+                 y + max(0, (int(name_size) - int(meta_size)) // 2)),
+                text, theme.rgb("muted") if meta_ink is None else meta_ink,
+                meta_size)
+    except Exception:
+        pass
+    return img
 
 
 def width(screen, text, size=BODY_SIZE, bold=False):

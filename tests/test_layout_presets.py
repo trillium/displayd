@@ -30,6 +30,8 @@ import layout_presets as presets
 from displayd import parse_layout
 from PIL import Image
 
+import theme
+
 W, H = 1920, 1080
 
 
@@ -285,19 +287,63 @@ class PresetHttpTestCase(unittest.TestCase):
             "views": {"left": "picker", "center": "clock",
                       "right": "options"}})
         self.assertEqual(code, 200, out)
-        frame = self._wait_frame()
+        # A region's frame is cached a moment before its composite reaches
+        # the framebuffer, so a single snapshot can catch a composite that
+        # is still black for the region that just drew. Wait for a frame
+        # in which every band really has content.
+        end = time.time() + 8
+        frame, bands = self._wait_frame(), None
+        while time.time() < end:
+            bands = {
+                "left": frame.crop((0, 0, 288, H)),
+                "centre": frame.crop((288, 0, 1632, H)),
+                "right": frame.crop((1632, 0, W, H)),
+            }
+            if all(len(set(band.getdata())) > 4 for band in bands.values()):
+                break
+            time.sleep(0.05)
+            frame = self._wait_frame()
         self.assertEqual(frame.size, (W, H))
-        left = frame.crop((0, 0, 288, H))
-        centre = frame.crop((288, 0, 1632, H))
-        right = frame.crop((1632, 0, W, H))
-        for name, band in (("left", left), ("centre", centre),
-                           ("right", right)):
+        for name, band in bands.items():
             self.assertGreater(len(set(band.getdata())), 4,
                                "%s band is blank" % name)
+        left, centre = bands["left"], bands["centre"]
         # The bands and the centre are different surfaces, not one view
         # stretched across the panel.
         self.assertNotEqual(left.getpixel((40, 200)),
                             centre.getpixel((40, 200)))
+
+    def test_the_newly_declared_partial_views_render_in_a_split(self):
+        # feed_health and activity declare `partial`; that claim is only
+        # honest if a reduced render actually works, so the split style is
+        # asked for both and each region is checked for its own band --
+        # black cannot fake the band's rule, which is what a plain
+        # "some pixels are inked" check would let through.
+        code, out = self.call("POST", "/layout", {
+            "preset": "split-50-50",
+            "views": {"top": "feed_health", "bottom": "activity"}})
+        self.assertEqual(code, 200, out)
+        rule = theme.rgb("rule")
+        end = time.time() + 8
+        seen = set()
+        while time.time() < end and len(seen) < 2:
+            frame = self._wait_frame()
+            if frame.getpixel((960, 128)) == rule:
+                seen.add("top")
+            if frame.getpixel((960, 540 + 128)) == rule:
+                seen.add("bottom")
+            time.sleep(0.05)
+        self.assertEqual(seen, {"top", "bottom"})
+        code, out = self.call("GET", "/layout/presets")
+        offered = {n for preset in out["presets"]
+                   for slot in preset["slots"] for n in slot["views"]}
+        self.assertIn("feed_health", offered)
+        self.assertIn("activity", offered)
+        code, out = self.call("GET", "/layout/presets")
+        offered = {n for preset in out["presets"]
+                   for slot in preset["slots"] for n in slot["views"]}
+        self.assertIn("feed_health", offered)
+        self.assertIn("activity", offered)
 
     def test_presets_are_published(self):
         code, out = self.call("GET", "/layout/presets")

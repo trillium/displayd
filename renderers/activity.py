@@ -10,16 +10,28 @@ Ambient-first: newest at the top, one row per call (tool + outcome +
 caller/duration meta + summary). Inputs pushed while another view is
 selected accumulate in the daemon's feed cache, so switching here is
 instantly populated, never empty.
+
+Presentation only: the band is ``ui.shell``, each row is ``ui.stat``'s
+type steps, and a long summary is broken by ``ui.text.wrap``. The outcome
+colour is the palette's ``ok`` / ``alert`` role, so this module holds no
+colour literal, no font loader and no wrap rule of its own.
 """
 
-import textwrap
+import os
+import sys
 import time
 
-from PIL import ImageDraw, ImageFont
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import theme
+from ui import shell, stat
+from ui import text as ui_text
 
 NAME = "activity"
 DESCRIPTION = "Live beads-bridge MCP activity fed live (POST /feed/activity/event)"
 STATIC = False
+# A band over a list of rows: a preset may put it in a reduced region.
+CAPABILITY = "partial"
 PARAMS = {
     "title": {"type": "string", "help": "header text, default ACTIVITY"},
     "lines": {"type": "integer", "help": "events on screen, default 8"},
@@ -50,22 +62,13 @@ INPUTS = {
     },
 }
 
-POLL = 0.5  # seconds between buffer checks; draws happen only on change
-HEADER_H = 110
-PAD = 48
+POLL = 0.5      # seconds between buffer checks; draws happen only on change
+ROW_Y = 150     # the first event's tool line, under the band's rule
 TOOL_SIZE = 44
 META_SIZE = 34
+INDENT = 40     # the meta and the summary hang under the tool line
 LINE_GAP = 16
-
-C_OK = (110, 220, 130)
-C_ERR = (255, 110, 100)
-
-
-def _font(screen, name, size):
-    path = screen.font_path(name)
-    if path is None:
-        return None
-    return ImageFont.truetype(path, size)
+ROOM_Y = 60     # room kept at the bottom of the panel
 
 
 def _snapshot(screen):
@@ -107,70 +110,42 @@ def _meta(event):
     return " \u00b7 ".join(parts)
 
 
-def _wrap(draw, text, font, max_w, rows=2, width=52):
-    if font is not None:
-        try:
-            avg = draw.textlength("0123456789", font=font) / 10.0
-            width = max(12, int(max_w / max(avg, 1)))
-        except Exception:
-            pass
-    out = []
-    for para in str(text or "").splitlines() or [""]:
-        out.extend(textwrap.wrap(para, width) or [""])
-    return out[:rows]
-
-
 def _draw(screen, title, events, max_lines, bg):
     img = screen.new_image(bg)
-    draw = ImageDraw.Draw(img)
-    tool_font = _font(screen, "DejaVuSans-Bold", TOOL_SIZE)
-    meta_font = _font(screen, "DejaVuSans", META_SIZE)
-    head_font = _font(screen, "DejaVuSans-Bold", 54)
-    plain = head_font or tool_font or meta_font
+    col_w = screen.W - 2 * shell.PAD
+    shown = events[-max_lines:]
+    shell.head(img, screen, title, detail="%d recent" % len(shown))
 
-    # Header: title + live count.
-    draw.text((PAD, 26), title, font=plain, fill=(255, 255, 255))
-    count = "%d recent" % len(events[-max_lines:])
-    if meta_font is not None:
-        try:
-            w = draw.textlength(count, font=meta_font)
-        except Exception:
-            w = 0
-        draw.text((screen.W - PAD - w, 40), count, font=meta_font,
-                  fill=(140, 140, 150))
-    draw.line([(PAD, HEADER_H - 14), (screen.W - PAD, HEADER_H - 14)],
-              fill=(60, 60, 70), width=2)
-
-    y = HEADER_H
-    max_text_w = screen.W - 2 * PAD
-    for event in events[-max_lines:]:
+    y = ROW_Y
+    for event in shown:
         ok = event.get("outcome") == "ok"
-        color = C_OK if ok else C_ERR
+        ink = theme.rgb("ok") if ok else theme.rgb("alert")
         glyph = "\u2713" if ok else "\u2717"  # never blank, never emoji-dependent
         tool = str(event.get("tool") or "???")
-        row0 = "%s %s" % (glyph, tool)
-        draw.text((PAD, y), row0, font=tool_font or plain, fill=color)
+        stat.label(img, screen, (shell.PAD, y), "%s %s" % (glyph, tool),
+                   ink=ink, size=TOOL_SIZE, room=col_w)
         y += TOOL_SIZE + 6
         meta = _meta(event)
         if meta:
-            for row in _wrap(draw, meta, meta_font, max_text_w, rows=1):
-                draw.text((PAD + 40, y), row, font=meta_font or plain,
-                          fill=(140, 140, 150))
-                y += META_SIZE + 4
+            stat.body(img, screen, (shell.PAD + INDENT, y), meta,
+                      size=META_SIZE, room=col_w - INDENT)
+            y += META_SIZE + 4
         summary = str(event.get("summary") or "")
         if summary:
-            for row in _wrap(draw, summary, meta_font, max_text_w - 40):
-                draw.text((PAD + 40, y), row, font=meta_font or plain,
-                          fill=(225, 225, 232))
+            for row in ui_text.wrap(screen, summary, META_SIZE,
+                                    col_w - INDENT, rows=2):
+                stat.body(img, screen, (shell.PAD + INDENT, y), row,
+                          ink=theme.rgb("muted-soft"), size=META_SIZE,
+                          room=col_w - INDENT)
                 y += META_SIZE + 4
         y += LINE_GAP
-        if y > screen.H - 60:
+        if y > screen.H - ROOM_Y:
             break
 
-    if not events:
-        idle = "waiting for activity \u2014 bridge feeds /feed/activity/event"
-        draw.text((PAD, HEADER_H + 40), idle, font=meta_font or plain,
-                  fill=(120, 120, 130))
+    if not shown:
+        stat.body(img, screen, (shell.PAD, ROW_Y),
+                  "waiting for activity \u2014 bridge feeds /feed/activity/event",
+                  size=META_SIZE, room=col_w)
     return img
 
 
@@ -180,7 +155,7 @@ def run(screen, params, stop):
         max_lines = max(1, min(12, int((params or {}).get("lines") or 8)))
     except (TypeError, ValueError):
         max_lines = 8
-    bg = screen.color((params or {}).get("background"), (10, 10, 14))
+    bg = screen.color((params or {}).get("background"), theme.rgb("page"))
 
     last_key = None
     while not stop.is_set():

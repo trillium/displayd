@@ -134,6 +134,36 @@ def write(img, screen, xy, text, ink, size, bold=False, room=None,
     return img
 
 
+def wrap(screen, text, size, room, rows=2, bold=False, family=None,
+         assumed=52):
+    """``text`` broken to ``room`` px, at most ``rows`` lines.
+
+    The panel had four copies of this rule -- ``activity``, ``beads_common``,
+    ``macbook_strip`` and the failure card each measured an average
+    character width and handed a column count to :mod:`textwrap` -- so
+    "how a paragraph is broken to a width" had no owner. This owns it.
+
+    ``assumed`` is the column count used when the face cannot be measured,
+    which is why the result is never empty: a block that cannot be
+    measured still says something. ``rows=None`` keeps every line.
+    """
+    import textwrap
+    out = []
+    for para in str(text if text is not None else "").splitlines() or [""]:
+        columns = assumed
+        try:
+            average = width(screen, "0123456789", size, bold=bold,
+                            family=family) / 10.0
+            if average > 0 and room and int(room) > 0:
+                columns = max(12, int(int(room) / average))
+        except Exception:
+            columns = assumed
+        out.extend(textwrap.wrap(para, columns) or [""])
+    if rows is not None:
+        out = out[:max(1, int(rows))]
+    return out
+
+
 def line(img, ink, xy, xy2, width_px=2):
     """A horizontal/vertical hairline between two points. Never raises.
 
