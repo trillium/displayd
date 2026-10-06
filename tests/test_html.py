@@ -35,8 +35,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
                                 "renderers"))
 
 import displayd
+import _html_compose
 import _html_native
 import _html_templates as templates
+import theme
+
+
+def body(text):
+    """The template's own text, with the injected token layer removed.
+
+    Every loaded document carries the palette as a ``:root`` block (see
+    ``_html_compose``). That block is fixed decoration generated from
+    ``theme.py``, so the substitution contract is asserted on the text
+    around it -- exactly, not loosely.
+    """
+    return _html_compose.strip_tokens(text)
 
 HTML_PATH = os.path.join(displayd.RENDERER_DIR, "html.py")
 REPO = os.path.dirname(os.path.abspath(displayd.__file__))
@@ -212,8 +225,9 @@ class TestTemplateValues(TempRoot):
             "a": "</p><style>body{display:none}</style><p>",
             "b": "x",
         })
-        self.assertNotIn("<style>", text)
-        self.assertNotIn("</p><style>", text)
+        self.assertEqual(text.count("<style"), 1)  # the token layer, only
+        self.assertNotIn("<style>", body(text))
+        self.assertNotIn("</p><style>", body(text))
 
     def test_missing_variable_is_an_error_naming_it(self):
         with self.assertRaises(templates.TemplateError) as caught:
@@ -233,7 +247,7 @@ class TestTemplateValues(TempRoot):
     def test_whitespace_in_placeholder_is_fine(self):
         write_template(self.dir.name, "ok.html", "<p>{{  spaced  }}</p>")
         text, _ = self.load("ok.html", {"spaced": "yes"})
-        self.assertEqual(text, "<p>yes</p>")
+        self.assertEqual(body(text), "<p>yes</p>")
 
     def test_non_string_values_become_text(self):
         text, _ = self.load("t.html", {"a": 42, "b": 3.5})
@@ -248,11 +262,11 @@ class TestTemplateValues(TempRoot):
     def test_bool_reads_as_yes_no(self):
         write_template(self.dir.name, "b.html", "<p>{{flag}}</p>")
         text, _ = self.load("b.html", {"flag": False})
-        self.assertEqual(text, "<p>no</p>")
+        self.assertEqual(body(text), "<p>no</p>")
 
     def test_long_value_truncated_not_refused(self):
         text, _ = self.load("t.html", {"a": "y" * 9000, "b": ""})
-        self.assertLess(len(text), templates.MAX_VALUE_CHARS + 200)
+        self.assertLess(len(body(text)), templates.MAX_VALUE_CHARS + 200)
 
     def test_bad_variable_name_refused(self):
         with self.assertRaises(templates.TemplateError):
@@ -290,7 +304,7 @@ class TestRawSlots(TempRoot):
 
     def test_a_raw_value_is_filled_verbatim(self):
         text, _ = self.load("t.html", raw={"tiles": '<b class="x">hi</b>'})
-        self.assertEqual(text, '<div><b class="x">hi</b></div>')
+        self.assertEqual(body(text), '<div><b class="x">hi</b></div>')
 
     def test_a_caller_cannot_reach_the_raw_slot(self):
         # Same template, same key, no raw mapping: the value is escaped
@@ -314,7 +328,7 @@ class TestRawSlots(TempRoot):
         # A template that declares no raw slot gets no markup either way.
         write_template(self.dir.name, "plain.html", "<p>{{a}}</p>")
         text, _ = self.load("plain.html", {"a": "x"}, raw={"tiles": "<b>"})
-        self.assertEqual(text, "<p>x</p>")
+        self.assertEqual(body(text), "<p>x</p>")
 
     def test_the_shipped_picker_template_only_has_one(self):
         names = templates.available(SHIPPED_ROOT)
@@ -811,8 +825,10 @@ class TestViewFailuresAreVisible(unittest.TestCase):
         """
         self.assertIsNotNone(frame, "no frame after the good push")
         self.assertFalse(_is_error_card(frame), "still showing the error rule")
+        # The template's own background, which is the palette's page token:
+        # asserted through theme so a panel background has one owner.
         self.assertEqual(frame.getpixel((2, frame.size[1] - 2)),
-                         (11, 13, 16), "not the template background")
+                         theme.rgb("page"), "not the template background")
 
     @requires_native
     def test_view_recovers_after_a_bad_push(self):

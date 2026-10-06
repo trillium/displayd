@@ -126,6 +126,54 @@ tile that shows a red card the moment it is tapped is not a usable home
 tile. Every other template, and every partial push, still names its missing
 key.
 
+## Design tokens: the palette lives in one module
+
+`renderers/theme.py` owns every colour the panel shows. It is not a
+stylesheet and not a per-view constant: it is a table of roles --
+`page`, `band`, `panel`, `pane`, `edge`, `rule`, `badge`, `ink`,
+`ink-strong`, `ink-soft`, `muted`, `muted-soft`, `faint`, `accent`, the
+alert family (`alert`, `alert-ink`, `alert-body`, `alert-page`),
+`attention`, `ok` -- plus one accent per view under
+`theme.ACCENT_SLOTS`.
+
+Both rendering paths read that table, and they read it differently
+because they are different technologies:
+
+- **Templates** get it as CSS custom properties. `_html_compose.compose()`
+is called by `_html_templates.load()`, so every document the engine lays
+out carries one generated `<style>` block:
+
+      :root { --page: #07080c; --ink: #eef2fa; ... }
+      :root { --accent-clock: #4DC3FF; ... }
+
+  A template then writes `color: var(--ink)` and nothing else. This works
+  because the pinned engine implements css-variables-2 (`subst_var` in
+  `style.cpp`) and inherits a custom property up the element tree; it is
+  **not** a browser feature to be assumed. An undefined name is a
+  *dropped declaration*, not a fallback colour -- which is why a template
+  that names a token must have spelled it right, and why
+  `tests/test_theme.py` renders a box to prove the resolution happens.
+- **Pillow renderers** `import theme` and call `theme.rgb("badge")` for
+the role they mean. `rgb()` is the one conversion point.
+
+A migrated template carries **no** colour literal: `layout.html` and
+`status.html` are the first two, and `tests/test_theme.py` fails on any
+`#rrggbb` in a migrated style, so a template cannot quietly re-author a
+colour the palette already owns. The same file pins that the shared
+chrome really paints those tokens at 1920x1080.
+
+Two consequences worth stating plainly:
+
+- loading a template returns the *composed* document, so the token block
+  is part of what a test sees. `_html_compose.strip_tokens()` takes it
+  back off, and `tests/test_html.py` asserts the substitution contract on
+the text around it -- exactly, not loosely.
+- `renderers/home_chrome.py`, `renderers/sleep_chrome.py` and
+`renderers/_html_error.py` already read roles from the palette (the badge
+tile, the glyph, the alert family) instead of carrying their own
+literals: that is the shape the remaining Pillow views migrate towards,
+and it is why the two system buttons cannot drift apart.
+
 ## picker.html: the tile grid
 
 `html-templates/picker.html` is the same chrome (header, side strips, bottom

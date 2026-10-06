@@ -29,6 +29,7 @@ Layout of the contract:
 import os
 import re
 
+import _html_compose
 import _html_native
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\.html$")
@@ -175,6 +176,13 @@ def load(name, variables=None, root=None, raw=None):
     escaped. Only a renderer that builds its own document -- the picker,
     for one -- passes `raw`, and what it passes is its own markup over
     values it escaped itself.
+
+    The returned document also carries the design tokens
+    (``_html_compose.compose``), so a template can use ``var(--ink)`` and
+    friends instead of repeating a colour literal. That block is generated
+    in-process from ``theme.py`` and holds no caller data;
+    ``_html_compose.strip_tokens`` takes it back off for a test that wants
+    the substitution contract exactly.
     """
     if not isinstance(name, str) or not NAME_RE.match(name):
         raise TemplateError("bad template name %r (want letters, digits, _ or -)"
@@ -198,4 +206,5 @@ def load(name, variables=None, root=None, raw=None):
             text = handle.read()
     except (OSError, UnicodeDecodeError) as err:
         raise TemplateError("cannot read %s: %s" % (name, err))
-    return _substitute(text, variables or {}, raw=raw), base
+    filled = _substitute(text, variables or {}, raw=raw)
+    return _html_compose.compose(filled), base

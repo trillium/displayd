@@ -18,8 +18,10 @@ Pieces:
   so a cached re-entry never serves a stale badge -- the same discipline
   as the progress bar.
 - ``draw_home_button(img)`` -- pure draw of the top-left badge: a dark
-  rounded tile with a white house glyph, no font needed. Reads on dark
-  views (beads) and light ones (qr) alike.
+  rounded tile with a house glyph, no font needed. Its colours are the
+  palette's ``badge`` fill and ``ink-strong`` glyph from theme.py -- the
+  same roles every other surface uses, so home and sleep cannot drift.
+  Reads on dark views (beads) and light ones (qr) alike.
 - ``home_overlay(screen)`` -- overlay-fn factory. Suppressed on views
   where the button is meaningless or harmful (see SUPPRESSED_VIEWS), so
   the reload QR stays fully scannable and its generous tap-to-dismiss
@@ -47,14 +49,21 @@ Suppression (deliberate, see TOUCH.md "Home button"):
   every overlap), so no home badge is drawn where no home tap lands.
 """
 
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import theme
+
 HOME_STRIP = 160  # button lives inside the left gesture strip's width,
 # so it never covers picker tiles (the grid starts at x=160).
 HOME_VIEW = "unified"  # select_view target: the merged home screen.
 SUPPRESSED_VIEWS = ("unified", "picker", "reload", "notice", "sleep")
 
-BADGE_FILL = (13, 17, 28)
-BADGE_EDGE = (255, 255, 255)
-GLYPH = (255, 255, 255)
+# The badge's colours are palette roles (renderers/theme.py), read at draw
+# time: this module is one of the places a Pillow view and a template show
+# the same surface, so the tile fill has to have one owner.
 
 
 def home_rect(w=1920, h=1080):
@@ -116,10 +125,12 @@ def draw_home_button(img, rect=None):
         side = max(16, min(rw, rh))
         pad = max(2, side // 18)
         bx0, by0, bx1, by1 = x0 + pad, y0 + pad, x0 + side - pad, y0 + side - pad
+        fill = theme.rgb("badge")
+        glyph = theme.rgb("ink-strong")
         draw = ImageDraw.Draw(img)
         draw.rounded_rectangle([bx0, by0, bx1, by1],
                                radius=max(4, side // 8),
-                               fill=BADGE_FILL, outline=BADGE_EDGE,
+                               fill=fill, outline=glyph,
                                width=max(2, side // 48))
         # House glyph: roof polygon over a body rect, door cut out in
         # the badge fill. All proportional so small screens stay legible.
@@ -132,13 +143,13 @@ def draw_home_button(img, rect=None):
         eave = int(bw * 0.10)
         draw.polygon([(cx, roof_y),
                       (bx1 - eave, eave_y),
-                      (bx0 + eave, eave_y)], fill=GLYPH)
+                      (bx0 + eave, eave_y)], fill=glyph)
         draw.rectangle([bx0 + inset, eave_y, bx1 - inset, body_y1],
-                       fill=GLYPH)
+                       fill=glyph)
         dw = max(3, int(bw * 0.12))
         dh = max(4, int(bw * 0.20))
         draw.rectangle([cx - dw, body_y1 - dh, cx + dw, body_y1],
-                       fill=BADGE_FILL)
+                       fill=fill)
     except Exception:
         pass
     return img

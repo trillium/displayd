@@ -24,9 +24,10 @@ Pieces (mirroring home_chrome.py):
   view content (picker grid ends at x=1760, the macbook map starts at
   y=250, talon columns start at y=250). List it before "playlist-next":
   hit_test() gives earlier entries every overlap.
-- ``draw_sleep_button(img)`` -- pure draw of the badge: the same dark
-  rounded tile as home, moon glyph (disc with an offset cutout), no font
-  needed. Reads on dark views and light ones alike.
+- ``draw_sleep_button(img)`` -- pure draw of the badge: the palette's
+  ``badge`` tile with an ``ink-strong`` moon glyph (disc with an offset
+  cutout), no font needed -- the same roles as the home badge, so the two
+  system buttons cannot drift apart.
 - ``sleep_overlay(screen)`` -- overlay-fn factory. Suppressed on sleep
   (nothing to sleep while asleep), reload (the QR stays fully scannable),
   and notice (short-lived transient, matching the playlist bar). VISIBLE
@@ -34,13 +35,18 @@ Pieces (mirroring home_chrome.py):
   from the selection screen is meaningful and the corner is tile-free.
 """
 
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import theme
+
 SLEEP_STRIP = 160  # badge lives inside the right gesture strip's width,
 # so it never covers view content (same discipline as HOME_STRIP).
 SUPPRESSED_VIEWS = ("sleep", "reload", "notice")
-
-BADGE_FILL = (13, 17, 28)
-BADGE_EDGE = (255, 255, 255)
-GLYPH = (255, 255, 255)
+# One tile fill and one glyph colour for both system buttons, from the
+# palette in renderers/theme.py, read at draw time.
 
 
 def sleep_rect(w=1920, h=1080):
@@ -81,10 +87,12 @@ def draw_sleep_button(img, rect=None):
         side = max(16, min(rw, rh))
         pad = max(2, side // 18)
         bx0, by0, bx1, by1 = x0 + pad, y0 + pad, x0 + side - pad, y0 + side - pad
+        fill = theme.rgb("badge")
+        glyph = theme.rgb("ink-strong")
         draw = ImageDraw.Draw(img)
         draw.rounded_rectangle([bx0, by0, bx1, by1],
                                radius=max(4, side // 8),
-                               fill=BADGE_FILL, outline=BADGE_EDGE,
+                               fill=fill, outline=glyph,
                                width=max(2, side // 48))
         # Moon glyph: full disc with an offset badge-coloured cutout,
         # all proportional so small screens stay legible.
@@ -92,10 +100,10 @@ def draw_sleep_button(img, rect=None):
         cx = (bx0 + bx1) // 2
         cy = (by0 + by1) // 2
         r = bw * 0.30
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=GLYPH)
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=glyph)
         ox, oy, orad = cx + r * 0.55, cy - r * 0.35, r * 0.85
         draw.ellipse([ox - orad, oy - orad, ox + orad, oy + orad],
-                     fill=BADGE_FILL)
+                     fill=fill)
     except Exception:
         pass
     return img
