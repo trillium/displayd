@@ -182,16 +182,24 @@ def build(payload, renderers=None):
 
 def doc(renderers=None):
     """The read-only projection ``GET /layout/presets`` serves: every
-    style, its slots, and the views each slot may be given."""
+    style, its slots, and the views each slot may be given.
+
+    ``default`` is computed with the same no-repeat rule ``build`` uses,
+    so the projection names the panel a bare ``{"preset": name}`` would
+    actually produce -- a caller that prefills its selects from here sends
+    back exactly that, not a worse one."""
     out = []
     for name, spec in PRESETS.items():
         roles = slot_roles(name)
-        slots = []
+        slots, used = [], set()
         for slot, geometry in spec["regions"]:
             role = roles[slot]
+            default = _default(role, renderers, used)
+            if default is not None:
+                used.add(default)
             slots.append({"name": slot, "role": role,
                           "geometry": dict(geometry),
-                          "default": _default(role, renderers, ()),
+                          "default": default,
                           "views": _candidates(role, renderers)})
         out.append({"name": name, "label": spec["label"],
                     "hint": spec["hint"], "primary": spec.get("primary"),

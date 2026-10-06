@@ -102,7 +102,7 @@ publishes an unauthenticated control surface to everything that can route to it.
 
 | Method | Path | Body | Meaning |
 | --- | --- | --- | --- |
-| GET | `/` | – | web control panel (live preview, renderer picker, power) |
+| GET | `/` | – | web control panel (live preview, renderer picker, layout styles, power) |
 | GET | `/health` | – | liveness |
 | GET | `/version` | – | application semver (`{"version": ...}`); same value is in `/state`'s `"version"` key and the startup log |
 | GET | `/state` | – | what is showing, screen power, display facts |
@@ -151,6 +151,36 @@ Every mutating call returns the new `/state` payload, so a caller never has to
 poll to find out what happened. `/state` also carries `feeds` (per-input
 buffer counts, last-update age, and `cold`/`warm`/`stale` health) and `switch`
 (request-to-first-pixel and request-to-fresh-frame timings in milliseconds).
+
+## Layout styles
+
+`POST /layout` takes either raw region geometry or one of four named styles --
+named region specs in the same grammar (`layout_presets.py`), not a second
+layout system:
+
+| Style | Geometry | Slots |
+| --- | --- | --- |
+| `full` | whole panel | `view` (primary) |
+| `split-50-50` | two equal rows | `top`, `bottom` |
+| `split-50-50-columns` | two 50-wide columns | `left`, `right` |
+| `15-70-15` | 15% / 70% / 15% columns | `left` and `right` (navigation), `center` (primary) |
+
+`GET /layout/presets` answers each style's slots, their geometry, the view each
+slot defaults to, and the views that slot may be *given*. That last list is
+deliberately not "every renderer": it is the views that declare they render
+reduced (`CAPABILITY`), are loaded, and need no parameters, so a view that
+needs the whole panel is never offered in a band -- and `POST /layout` refuses
+it by name if it is named anyway. The `15-70-15` centre is the primary slot
+(the `row` view: Talon's streak row fits it) and the two side bands are
+navigation: the tappable application list, each band carrying its own
+applicable list explicitly.
+
+The control page's Layout section is the operator surface for this -- one tap
+per style, one select per slot listing exactly that slot's applicable views,
+"Apply style" (`POST /layout`) and "Single view" (`DELETE /layout`). The
+selects are prefilled from the projection's `default`, which follows the same
+no-repeat rule a bare `{"preset": ...}` uses, so a style applied from the
+phone is the panel the API would have built.
 
 ## Versioning
 

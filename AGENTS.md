@@ -61,13 +61,18 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - One template owns it: `CONTROL_PAGE` in `control_page.py` (presentation
   only -- every control drives an existing API endpoint, no page-specific
   routes). Sections top-to-bottom: Views (one-tap grid, big four pinned:
-  clock/chat/row/stream, current view highlighted) / Playback / Proof
-  (reload + deploy stamp, also pinned in the sticky top bar) / Feedback
-  (rate + summary) / Now showing / Notify / Policy / Tap actions.
+  clock/chat/row/stream, current view highlighted) / Playback / Layout
+  (style grid + one select per slot, both filled from `GET
+  /layout/presets`) / Proof (reload + deploy stamp, also pinned in the
+  sticky top bar) / Feedback (rate + summary) / Now showing / Notify /
+  Policy / Tap actions.
 - Guardrails in `tests/test_control.py` (`TestPhoneFirstRebuild`): no
-  hardcoded renderer names, tap-action list matches `touch.ACTION_TABLE`,
-  every fetched path has a daemon route. Verify against a live headless
-  daemon (`DISPLAYD_FAKE_FB=1`) by curling each button's endpoint.
+  hardcoded renderer names (the layout section's slots list `slot.views`
+  only -- never the advertised set), tap-action list matches
+  `touch.ACTION_TABLE`, every fetched path has a daemon route, and the
+  one `<script>` parses (`node --check`, skipped where node is absent).
+  Verify against a live headless daemon (`DISPLAYD_FAKE_FB=1`) by curling
+  each button's endpoint.
 
 ## MCP + display feedback
 

@@ -2,7 +2,7 @@
 
 Single concept: the page's remaining controls -- the policy and playlist
 editors, the notify and reload buttons, tap-to-rate feedback, and the boot
-sequence that starts the refresh timers.
+sequence that starts the refresh timers (including the layout section's).
 """
 
 _SCRIPT_CONTROLS = """async function refreshPolicy() {
@@ -196,10 +196,12 @@ document.getElementById("fbsend").onclick = async () => {
   refreshPreview();
   refreshPolicy();
   refreshPlaylist();
+  refreshLayout();
   refreshFeedbackSummary();
   setInterval(refreshState, 2000);
   setInterval(refreshPreview, 2000);
   setInterval(refreshPlaylist, 2000);
+  setInterval(refreshLayout, 4000);
   setInterval(async () => {
     try { await refreshRenderers(true); } catch (e) { /* next tick */ }
     refreshFeedbackSummary();

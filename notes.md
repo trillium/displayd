@@ -850,7 +850,10 @@ three columns.
 `GET /layout/presets` is the read-only projection: per style, its slots,
 their geometry, the default view, and the views each slot accepts. That is
 the “offered per style, not unconditionally” surface; `GET /layout` now
-reports the style a live layout came from (`"preset"`).
+reports the style a live layout came from (`"preset"`). Since section 2l the
+control page's Layout section renders that projection -- one tap per style,
+one select per slot listing exactly `slot.views` -- so the rule is visible to
+an operator, not only to an HTTP caller.
 
 ### 7. The system buttons over a layout (a hole this increment closed)
 
@@ -885,12 +888,13 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   `theme.rgb("rule")`, `tests/test_shell.py`). Unifying the geometry needs a
   cross-language constant, the way `ui.tile.BORDER` ↔ the stylesheet's
   `border-width` already works in `tests/test_tile.py`.
-- **The control page does not offer the styles yet.** `GET /layout/presets`
-  publishes them and `POST /layout {"preset": ...}` applies them, but the
-  phone page has no style picker and no per-slot view selects. That is the
-  operator surface for the “offered per style” rule and the next UI step.
-  (The per-view colours are no longer part of that surface's work: a
-  renderer list now carries the palette accent, not a view literal.)
+- ~~**The control page does not offer the styles yet.**~~ — **done this
+  increment** (section 2l): the phone page has a Layout section -- one tap
+  per style, one select per slot listing exactly that slot's applicable
+  views from `GET /layout/presets`, Apply (`POST /layout`) and Single view
+  (`DELETE /layout`). `doc()`'s `default` was also fixed to follow the same
+  no-repeat rule `build()` uses, so the prefilled selects cannot send back
+  a worse panel than a bare `{"preset": ...}`.
 - ~~**A narrow-band application column.**~~ — **done this increment**
   (section 2f): the column count is a component decision read off the
   region's shape, so a 288px band is ONE column of 224px tiles (label fit
@@ -912,6 +916,13 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   band's tiles need global `touch.json` entries at the band geometry
   (`picker.picker_regions(w, h, views, rect=<absolute band rect>)`
   produces them). Not wired into a shipped config yet.
+- **The release cut is still owed.** `README.md` "Versioning" asks every
+  change to bump `APP_VERSION` and add a `CHANGELOG.md` entry; `main` is at
+  `0.8.0` and this branch's 17 increments carry no bump. Deliberate here:
+  the bump is a release decision for the whole component-layer PR (and
+  `CHANGELOG.md`'s header still names `displayd.py` as the source of truth
+  while `daemon_config.APP_VERSION` is the real one), so it belongs with the
+  final push, not with each increment.
 - **Two copies of “broken to a width” survive** in exempt views:
   `beads_common._wrap` and `macbook_strip._wrap` (`activity`'s went in
   section 2g, `_html_error`'s in section 2j). They take a PIL `draw` +
@@ -1962,6 +1973,151 @@ Homebrew ffmpeg path) as failures, and `test_talon_apps` as a loader
 error. `test_obs_poll` (the flaky live-socket module from iteration 12)
 passed in this sweep. No failure or error touches this increment's files.
 
+### 2l. The layout styles on the operator surface (this increment)
+
+The presets and the capability vocabulary landed in iteration 5, but they
+were API-only: `GET /layout/presets` published the styles and each slot's
+applicable views, and nothing on the phone could apply one. The objective's
+requirement 5 names the surface ("the picker/home surface lists applicable
+views per style rather than all of them unconditionally"), so this increment
+is the surface, with no new endpoint and no new geometry rule.
+
+- New part of the page: `control_page_script_layout.py` (`_SCRIPT_LAYOUT`,
+a third single-concept part of the client script, concatenated between the
+read half and the controls half so the page stays ONE `<script>`). It owns
+four things: the style grid, the per-slot selects, Apply, and Single view.
+- Markup in `control_page_body.py`: a `Layout` card between Playback and
+Proof, with `#laystyles`, `#layslots`, `#layapply`, `#layclear`,
+`#lay-status` and a line saying a style splits the panel and each slot
+offers only the views that fit it.
+- The style buttons and every slot's options come from the daemon: the style
+name is `preset.name`, the option list is `slot.views`, the preselected value
+is `slot.default`. `_SCRIPT_LAYOUT` contains no renderer name and never
+touches `SCHEMAS` (the advertised set), which is the structural form of
+"offered per style, not unconditionally".
+- Apply is `POST /layout {"preset": name, "views": {slot: view}}` -- the
+existing shape -- and Single view is `DELETE /layout`. The page never sends
+`regions` or `rect`, so `parse_layout` keeps its monopoly on geometry and
+capability fit.
+- The live style is marked (dashed border) from `GET /layout`'s `preset`,
+re-picking the live style prefills its selects from the live regions, and the
+status line names the style, its region count and each region's renderer
+(plus a region error when one exists).
+- `GET /state`'s renderer row now reads `regions (n)` while a layout owns the
+panel, instead of the misleading `(blank)` (`control_page_script_read.py`).
+- The two one-tap grids (views and styles) share ONE CSS rule set: the three
+`#viewgrid button` rules became `.pickgrid button` in `control_page_shell.py`,
+so the style grid cannot drift from the view grid's thumb geometry.
+- **A real defect in the projection, fixed here**: `layout_presets.doc()`
+computed each slot's `default` with an empty `used` set, so it claimed
+`split-50-50` = `top: row, bottom: row` while a bare `POST /layout {"preset":
+"split-50-50"}` builds `top: row, bottom: activity` (`build()` avoids
+repeating a renderer). A caller that prefills its selects from the
+projection and sends them back therefore got a *worse* panel than one that
+sent nothing. `doc()` now folds `used` the same way, and
+`tests/test_layout_presets.py::test_doc_defaults_are_what_a_bare_preset_builds`
+pins the projection to the builder for every style.
+- New guard in `tests/test_control.py`: the page's one `<script>` must parse
+(`node --check`, skipped where node is absent). Nothing else checked the
+page's JavaScript, and a syntax error in any of the three halves would leave
+the phone with dead controls and no server-side signal.
+
+Not done here: the on-panel `picker` view still selects *views*, not styles
+(it is a tile grid with tap regions, so offering styles there needs new
+touch regions -- its own increment), and `POST /layout` still has no
+"remember this for boot" path, so a style applied from the phone is not
+persisted across a daemon restart.
+
+### The layout surface, rendered headless (this increment)
+
+A real daemon at 1920x1080 (`DISPLAYD_FAKE_FB=1`, real `ThreadingHTTPServer`
+on 127.0.0.1), script `/tmp/layout_surface_evidence.py`, frames under
+`/tmp/layout-surface-*.png`:
+
+    == the page served at GET / carries the layout section ==
+      id="laystyles"         True
+      id="layslots"          True
+      id="layapply"          True
+      id="layclear"          True
+      id="lay-status"        True
+      "/layout/presets"      True
+      refreshLayout          True
+      slot.views             True
+      page bytes: 37706
+
+    == GET /layout/presets: styles, slots, applicable views ==
+      split-50-50         Two rows
+        top    plain      {"height": "50%"} default=row      views=row,activity,chat,clock,feed_health,html,options,picker,solid
+        bottom plain      {"height": "50%"} default=activity views=row,activity,chat,clock,feed_health,html,options,picker,solid
+      15-70-15            Bands
+        left   navigation {"width": "15%"} default=picker   views=picker,activity,chat,clock,feed_health,html,options,row,solid
+        center primary    {"width": "70%"} default=row      views=row,activity,chat,clock,feed_health,html,options,picker,solid
+        right  navigation {"width": "15%"} default=picker   views=picker,activity,chat,clock,feed_health,html,options,row,solid
+      full-panel-only 'beads' in a 15-70-15 band: False (centre has it: False)
+
+    == apply each style the way the page does (preset + slot defaults) ==
+      full                regions=[('view','row',1920,1080)] first_pixel_ms=4.0 badge px=1867 errors=[]
+      split-50-50         regions=[('top','row',1920,540),('bottom','activity',1920,540)] first_pixel_ms=4.6 badge px=1867 errors=[]
+      split-50-50-columns regions=[('left','row',960,1080),('right','activity',960,1080)] first_pixel_ms=4.5 badge px=1867 errors=[]
+      15-70-15            regions=[('left','picker',288,1080),('center','row',1344,1080),('right','picker',288,1080)] first_pixel_ms=3.8 badge px=1867 errors=[]
+
+    == 'Single view' is DELETE /layout ==
+      layout after DELETE: {'layout': None}
+      state.layout: None  renderer: clock  badge px=1867
+
+    == the system buttons over a template view (html/status) ==
+      alert-page px=0 (0 means no failure card)  badge px=1867
+
+(`badge px` is a stride-4 sample of the palette `badge` role, so it counts
+both system buttons on every frame; `errors=[]` is every region error field;
+`first_pixel_ms` is the layout switch's own measurement, 3.8-4.6ms against
+the 100ms budget.)
+
+### The page's layout assertions fail before, pass after (this increment)
+
+Deterministic, against HEAD's tree:
+
+    $ git show HEAD:control_page.py | grep -c SCRIPT_LAYOUT
+    0
+    $ git show HEAD:control_page_body.py | grep -c 'laystyles\|layslots\|layapply'
+    0
+    $ git show HEAD:control_page_shell.py | grep -c pickgrid
+    0
+    $ (cd HEAD-tree; python3 -c "import control_page_script_layout")
+    ModuleNotFoundError: No module named 'control_page_script_layout'
+
+so `test_layout_style_picker`, `test_layout_applies_and_clears_through_existing_shapes`
+and `test_layout_shows_the_live_style` are red on HEAD; and the projection
+defect is directly visible in HEAD's own code path:
+
+    HEAD doc() defaults:      split-50-50 -> [('top','row'), ('bottom','row')]
+    HEAD bare preset build:   split-50-50 -> ['row', 'activity']
+    -> the new assertion `doc defaults == build defaults` fails on HEAD
+
+### The whole suite after this increment
+
+    $ python3 tools/check-components.py && python3 -m unittest tests.test_picker \
+        tests.test_unified tests.test_chat tests.test_html \
+        tests.test_html_runtime_install tests.test_control tests.test_options \
+        tests.test_layout && python3 tools/check-lines.py
+    component layer ok: 11 shipped module(s) still draw by hand; all exempt, none stale
+    Ran 336 tests in 52.7s
+    OK
+    line budget ok: all source files within 250 lines
+    $ echo $?
+    0
+
+    $ python3 tools/check-repo-health.py
+    line budget ok: all source files within 250 lines
+    ok: no generated native artifacts tracked
+    component layer ok: 11 shipped module(s) still draw by hand; all exempt, none stale
+    rc=0
+
+    Affected modules outside the gate, run separately:
+    tests.test_layout_presets   Ran 27 tests, OK  (includes the new
+                                doc-defaults-vs-build pin; the rest of the
+                                suite was unchanged by this increment)
+
 ## 8. The branch and the pull request — opened this increment
 
 Iterations 1-12 never pushed anything: the remote had no
@@ -2004,6 +2160,14 @@ the same step (`gh-axi pr edit 51 --body-file /tmp/pr51-body.md`) to state
 the 11-exemption ratchet, the `progress` component, the `install.sh`
 component-layer fix and this increment's stop-condition output, so a
 reviewer reading the PR does not see iteration 13's numbers.
+
+Section 2l's increment followed it once more: the same push moved the ref
+`f871285..fcef9c4`, i.e. it carried iteration 16's committed progress-bar
+increment to the PR, and **this increment's own layout-surface work is
+uncommitted in the working tree** (the orchestrator commits it after the
+iteration ends), so it reaches the PR with the next push. The PR body was
+left as iteration 16 wrote it because that is what the tip now shows; if a
+later increment rewrites the body it must state the layout section too.
 
 ### The PR-body summary it published
 

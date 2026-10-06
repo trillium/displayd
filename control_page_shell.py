@@ -32,16 +32,20 @@ _SHELL = """<!DOCTYPE html>
   .dot.ok { background: #3d3; } .dot.bad { background: #f44; }
   #preview { width: 100%; aspect-ratio: 16/9; background: #000; object-fit: contain;
              border: 1px solid #333; border-radius: 8px; }
-  /* one-tap view grid: two fat thumb columns */
-  #viewgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  #viewgrid button { min-height: 56px; font-size: 1rem; margin: 0;
+  /* one-tap pick grids (views, layout styles): two fat thumb columns */
+  .pickgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .pickgrid button { min-height: 56px; font-size: 1rem; margin: 0;
                      background: #2b2b2b; color: #eee; border: 2px solid #444;
                      border-radius: 10px; font-weight: bold; cursor: pointer;
                      overflow: hidden; text-overflow: ellipsis; }
-  #viewgrid button:active { background: #3a3a3a; }
-  #viewgrid button.active { border-color: #2a5; background: #17351f;
+  .pickgrid button:active { background: #3a3a3a; }
+  .pickgrid button.active { border-color: #2a5; background: #17351f;
                             box-shadow: 0 0 0 1px #2a5; }
-  #viewgrid button:disabled { opacity: 0.45; }
+  .pickgrid button.live { border-style: dashed; border-color: #2a5; }
+  .pickgrid button:disabled { opacity: 0.45; }
+  #laystyles { margin-top: 10px; }
+  #layslots select { margin-bottom: 4px; }
+  #layslots label { margin-top: 10px; }
   .btnrow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
             margin-top: 10px; }
   .btnrow.two { grid-template-columns: 1fr 1fr; }
