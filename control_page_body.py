@@ -1,14 +1,14 @@
 """The control page body markup: one card per section.
 
 Single concept: the controls themselves, top to bottom -- views, playback,
-proof, feedback, now showing, notify, policy, and the tap-action list. Every
-control drives an existing API endpoint; the wiring lives in the client script
-(control_page_script_*).
+layout styles, proof, feedback, now showing, notify, policy, and the
+tap-action list. Every control drives an existing API endpoint; the wiring
+lives in the client script (control_page_script_*).
 """
 
 _BODY = """<h2>Views &mdash; one tap to show</h2>
 <div class="card">
-  <div id="viewgrid" aria-label="all views, one tap each"></div>
+  <div id="viewgrid" class="pickgrid" aria-label="all views, one tap each"></div>
   <div class="btnrow one">
     <button id="clear" class="big ghost">Blank screen</button>
   </div>
@@ -45,6 +45,20 @@ _BODY = """<h2>Views &mdash; one tap to show</h2>
     <input type="text" id="pl-views">
     <button id="plsave">Save playlist</button>
   </details>
+</div>
+
+<h2>Layout &mdash; one view, or a named style</h2>
+<div class="card">
+  <div class="meta">A style splits the panel into regions. Each slot below
+offers only the views that fit it: a view that needs the whole panel is
+never offered in a band.</div>
+  <div id="laystyles" class="pickgrid" aria-label="layout styles, one tap each"></div>
+  <div id="layslots"></div>
+  <div class="btnrow two">
+    <button id="layapply" class="big">Apply style</button>
+    <button id="layclear" class="big ghost">Single view</button>
+  </div>
+  <div class="meta" id="lay-status">layout: loading&hellip;</div>
 </div>
 
 <h2>Proof &mdash; reload &amp; deploy stamp</h2>

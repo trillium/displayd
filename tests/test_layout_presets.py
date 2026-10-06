@@ -184,6 +184,19 @@ class TestPresetGeometry(unittest.TestCase):
                         caps.reduced_ok(renderers[name]["capability"]),
                         "%s offers %s" % (preset, name))
 
+    def test_doc_defaults_are_what_a_bare_preset_builds(self):
+        """The read-only projection must name the panel a bare
+        {"preset": name} produces: a surface that prefills its selects
+        from the doc then sends those views back must not get a worse
+        panel than one that sent nothing."""
+        renderers = _renderers()
+        for entry in presets.doc(renderers):
+            regions = self._parse(presets.build({"preset": entry["name"]},
+                                                renderers))
+            self.assertEqual([s["default"] for s in entry["slots"]],
+                             [r["renderer"] for r in regions],
+                             entry["name"])
+
     def test_doc_lists_every_style_with_its_slots(self):
         doc = presets.doc(_renderers())
         self.assertEqual([d["name"] for d in doc],
