@@ -35,7 +35,13 @@ from ui import text as ui_text
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 MIGRATED = ("renderers/resources_draw.py", "renderers/services_draw.py",
-            "renderers/feed_health.py", "renderers/activity.py")
+            "renderers/feed_health.py", "renderers/activity.py",
+            "renderers/qr.py")
+
+# Views that now draw through the layer but still need a Pillow *image*
+# operation of their own (stream resizes a decoded frame), so they cannot
+# join MIGRATED's stricter "no PIL at all" rule.
+MIGRATED_PIL_IMAGE = ("renderers/stream.py",)
 
 
 class FakeScreen:
@@ -330,6 +336,41 @@ class StatTest(unittest.TestCase):
         self.assertGreater(count(img, theme.rgb("attention")), 20)
 
 
+class PillTest(unittest.TestCase):
+    """The overlay status chip: a dot and a line on the panel's own page.
+
+    The stream view's live tag used to draw its own rounded rectangle, dot
+    and label with three colour literals and a truetype call that never
+    resolved; the pill is that shape, once, for any view that labels a
+    frame it did not paint.
+    """
+
+    def setUp(self):
+        self.screen = FakeScreen()
+
+    def test_pill_paints_its_surface_its_dot_and_its_label(self):
+        img = self.screen.new_image((9, 9, 9))
+        stat.pill(img, self.screen, (14, 8), "LIVE  2.0 fps",
+                  dot_ink=theme.rgb("ok"))
+        self.assertGreater(count(img, theme.rgb("page")), 100)
+        self.assertGreater(count(img, theme.rgb("ok")), 100)
+        self.assertGreater(count(img, theme.rgb("ink-strong")), 20)
+
+    def test_pill_without_a_dot_still_labels_itself(self):
+        img = self.screen.new_image((9, 9, 9))
+        stat.pill(img, self.screen, (14, 8), "LIVE")
+        self.assertEqual(count(img, theme.rgb("ok")), 0)
+        self.assertGreater(count(img, theme.rgb("ink-strong")), 20)
+
+    def test_pill_takes_a_caller_ink_and_is_total_on_garbage(self):
+        img = self.screen.new_image((9, 9, 9))
+        stat.pill(img, self.screen, (14, 8), "LIVE", ink=(3, 4, 5))
+        self.assertGreater(count(img, (3, 4, 5)), 0)
+        for xy in (None, "x", (1,), ("a", "b")):
+            with self.subTest(xy=xy):
+                self.assertIs(stat.pill(img, self.screen, xy, "L"), img)
+
+
 class BandClearsTheBadgesTest(unittest.TestCase):
     """The band and the badges are two components that must not overlap.
 
@@ -425,6 +466,18 @@ class MigratedViewsTest(unittest.TestCase):
                 self.assertNotIn("def _age", src)
                 self.assertNotIn("def _bar", src)
                 self.assertIn("from ui import", src)
+
+    def test_stream_composes_the_layer_instead_of_drawing(self):
+        """stream's banner and idle frame are the pill and the panel block."""
+        for rel in MIGRATED_PIL_IMAGE:
+            src = self.source(rel)
+            with self.subTest(module=rel):
+                self.assertNotIn("ImageDraw", src)
+                self.assertNotIn("ImageFont", src)
+                self.assertEqual(HEX_RE.findall(src), [])
+                self.assertNotIn("def _font", src)
+                self.assertIn("from ui import", src)
+                self.assertIn("theme.rgb", src)
 
     def test_feed_health_paints_the_component_s_roles(self):
         import feed_health

@@ -89,8 +89,9 @@ column. See §2f.
   and `short_age` (the one bucket rule, 5 copies before it).
 - `renderers/ui/stat.py` — a label plus a value line: `label`/`value`/
   `body`, `row` (the component itself), `list_row` (one horizontal entry:
-  dot, name, right-aligned value), `meter` (a clamped fraction bar) and
-  `width`. See §2c and §2g.
+  dot, name, right-aligned value), `meter` (a clamped fraction bar),
+  `pill` (a dot and a line of type on the page surface: the tag a view
+  wears over a frame it did not paint) and `width`. See §2c, §2g and §2m.
 
 ### 2b. The tile component (this increment)
 
@@ -767,7 +768,11 @@ sorted).
      (`head`/`foot`/`rule` + the health dot + `short_age`/`age`), and it is
      already inset clear of the home/sleep badges (`band_pad`); a label
      with its value is `ui.stat.row`, one list entry is
-     `ui.stat.list_row`, a fraction is `ui.stat.meter`; centred words are
+     `ui.stat.list_row`, a fraction is `ui.stat.meter`, and a label sitting
+     over content the view did not paint (a live frame) is `ui.stat.pill`
+     -- placed at `ui.shell.band_pad(screen)` rather than at the panel's
+     own corner, because the home badge is composited over every frame and
+     would otherwise cover it; centred words are
      `ui.text.write`/`ui.panel.card` (a title, an optional body, a corner
      tag, an accent bar, and the one scale-to-fit rule; `ui.panel.strip`
      is the same card confined to a rect of a bigger frame, which is what
@@ -901,16 +906,16 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   20px) instead of three 69px ones (12px floor), `cols` is a real param,
   and `picker_regions` generates the matching tap rects. A dedicated
   narrow-band renderer is no longer needed.
-- **The remaining hand-drawing views** (the gate's 11 exemptions) are the
+- **The remaining hand-drawing views** (the gate's 9 exemptions) are the
   bigger migration: `beads*`, `macbook_draw`/`macbook_strip`,
-  `qr`/`qr_common`, `reload`, `stream`, `retro_grid_draw`,
+  `qr_common`, `reload`, `retro_grid_draw`,
   `life` and `_html_native` (the engine itself,
   which draws through the C ABI rather than by hand). The vocabulary they
   need all exists now (`tile` + `grid`, `text` + `wrap` + `fit_size`,
-  `shell`, `stat` + `list_row`, `panel` + `strip`, `progress`), so each is
-  a straight migration with its own test story, not new design. `clock`,
-  `touch_confidence_draw`, `_html_error`, `playlist` and `playlist_bar`
-  left the list in sections 2i, 2j and 2k.
+  `shell`, `stat` + `list_row` + `pill`, `panel` + `strip`, `progress`), so
+  each is a straight migration with its own test story, not new design.
+  `clock`, `touch_confidence_draw`, `_html_error`, `playlist`,
+  `playlist_bar`, `qr` and `stream` left the list in sections 2i-2m.
 - **Layout-mode taps.** While a layout owns the panel the touch service
   evaluates global regions only (view-scoped regions are skipped), so a
   band's tiles need global `touch.json` entries at the band geometry
@@ -934,8 +939,9 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   2g/2h, the shared bucket rule is `ui.shell.short_age`). They are inside
   an exempt view, so they go with that view's migration.
 - **Hand-drawn views still sit under the badges.** `ui.shell` now keeps
-  the band clear of the home/sleep badges (§2h), but a view that draws at
-  its own `PAD` (beads, macbook, qr, reload, stream, retro_grid,
+  the band clear of the home/sleep badges (§2h) and `stream`'s live tag
+  takes the same inset (`shell.band_pad`, §2m), but a view that draws at
+  its own `PAD` (beads, macbook, reload, retro_grid,
   life) is still covered by the home badge in the top
   160px of the panel. Fixing each one is part of its own migration, which
   is exactly why the band's version went into the component.
@@ -2118,7 +2124,163 @@ defect is directly visible in HEAD's own code path:
                                 doc-defaults-vs-build pin; the rest of the
                                 suite was unchanged by this increment)
 
-## 8. The branch and the pull request — opened this increment
+### 2m. stream + qr on the component layer (this increment)
+
+Two more views left the ratchet (11 -> 9 exemptions). Both were text work
+that had no owner, and one exposed the same edge-ownership defect the band
+hit in iteration 12.
+
+**`ui.stat.pill` — the overlay status chip.** `renderers/ui/stat.py` gained
+`pill(img, screen, xy, text, ink=None, dot_ink=None, ...)`: a dot and one
+line of type on the panel's own `page` surface, at a stated box corner. It
+is what a view wears when its label sits over content the view did not
+paint. `stream`'s live tag was exactly that shape drawn by hand (a rounded
+rectangle, an ellipse and two text calls, three colour literals, and a
+`ImageFont.truetype("DejaVuSans-Bold", 34)` — a *relative path*, which
+never resolves, so on every host the tag fell back to `"o LIVE"` in the
+default face with no backdrop at all).
+
+**`ui.text.write(anchor=...)`** — the layer's one line-of-type rule now
+takes PIL's own anchor letters, because a centred caption had no way to ask
+for its own centring without going around the component. `qr`'s caption is
+that anchored line, fitted by `ui.text.fit_size` (the previous inline
+`while size_px > 20: size_px -= 4` loop is gone).
+
+**`theme.ink_on(surface, dark=None, light=None)`** — the token layer now
+owns *which ink reads on which surface* (`on-accent` on a bright fill,
+`muted` on a dark one; an unreadable surface counts as dark, because
+dark-on-dark is a legibility failure). `qr` draws its placeholder on a card
+whose page colour the caller chose, so it cannot name a single ink; the
+inline rule it used (`(90,90,100) if sum(bg) > 384 else (160,160,170)`) plus
+both greys are deleted.
+
+**The defect the pixels found: the home badge sat on the live tag.** The
+first headless render of the pill showed `0` dot pixels and only 189
+page-surface pixels in the tag box: the pill had been placed at the panel's
+own top-left corner `(14, 8)`, which is *inside* the home gesture strip
+(`system_buttons.STRIP` = 160 wide), and the badges are composited over
+every presented frame — so the badge covered the dot and the first letters
+of `LIVE`. Same class as iteration 12's band defect, same fix: the tag
+takes its inset from the component that owns that edge. `stream._draw_status`
+now places the pill at `ui.shell.band_pad(screen)` (184 on a full panel,
+which is `STRIP + 24`) and the test pins both directions: nothing of the tag
+inside the strip, and the dot still present after the overlay chain
+composites the badges over it. With the fix the same probe reads 7513
+page-surface pixels, 657 accent-dot pixels and 0 pixels under the strip.
+
+**Deliberate pixel changes** (all recorded, none accidental):
+
+| Where | Before | Now |
+| --- | --- | --- |
+| live tag dot | `(255, 70, 70)` | `theme.accent_rgb("stream")` = `(255, 77, 77)` |
+| live tag backdrop | `(0, 0, 0)` | `theme.rgb("page")` `(7, 8, 12)` |
+| live tag position | x = 14 (under the home badge) | x = `shell.band_pad` = 184 |
+| tag label face | a `truetype` call that always failed | the layer's face at 34 bold |
+| idle frame ink | `(120, 120, 130)` | `theme.rgb("muted")` `(139, 147, 167)` |
+| idle frame face | 44 px truetype that always failed | the layer's face at 44 |
+| qr prompt ink | `(90, 90, 100)` / `(160, 160, 170)` | `theme.rgb("on-accent")` `(18, 12, 32)` / `theme.rgb("muted")` |
+| qr prompt body spacing | 10 px | the component's `size // 4` = 12 |
+
+**Migrated this increment:** `renderers/stream.py` (244 -> 250 lines: the
+banner and the idle frame are `ui.stat.pill` and `ui.panel.block`; it keeps
+`Image` for the decode/resize, which is why it is not in `tests/test_shell.py`'s
+strict no-PIL list, and joins the new `MIGRATED_PIL_IMAGE` tuple there),
+`renderers/qr.py` (146 -> 121: no PIL import at all, no `_font`, no fit loop;
+joins the strict `MIGRATED` tuple). **Still owed:** `beads*`,
+`macbook_draw`/`macbook_strip`/`macbook_glance*`, `qr_common` (the badge), `reload`,
+`retro_grid_draw`, `life`, and `_html_native` (the vendored engine's
+Pillow container, which is not a view).
+
+### The status pill and the qr prompt, rendered headless (this increment)
+
+    $ DISPLAYD_FAKE_FB=1 python3 /tmp/stream_qr_evidence.py
+    daemon: DISPLAYD_FAKE_FB=1 http://127.0.0.1:65073
+    display: {'width': 1920, 'height': 1080, 'bpp': 32, 'stride': 7680, ...}
+    panel: 1920x1080  stream accent slot=(255, 77, 77)  pill pad=184 (band_pad=184)
+
+    == stream: the idle frame is the panel block ==
+      muted ink pixels: 7215   old idle grey (120,120,130): 0
+      never blank: non-black pixels=53582
+      both system buttons over it: badge px=29416
+
+    == stream: the live tag is the stat pill, clear of the badges ==
+      pill surface is the page role in the tag box (184, 8, 484, 90): 7513 px
+      nothing of the tag under the home badge strip (160 wide): 0 px
+      stream accent dot pixels (slot): 657   old literal (255,70,70): 0
+      label ink-strong pixels: 12286   old bare backdrop (0,0,0): 0
+      switch -> stream, first_pixel_ms=1.9
+
+    == qr: the prompt wears the ink that reads on the card ==
+      card page (255,255,255) at (0,0): True  prompt ink (18, 12, 32) px=12763
+      old prompt grey (90,90,100)=0  (160,160,170)=0
+      no failure card on the panel (alert-page px=0)
+
+    == qr: a caption long enough to be fitted stays inside ==
+      ink in the outermost 40px columns of the caption band: 0
+
+    == the four layout styles, with the system buttons ==
+      full                   regions=1 renderers=['stream'] badge px=29416 first_pixel_ms=1.5
+      split-50-50            regions=2 renderers=['clock', 'picker'] badge px=29416 first_pixel_ms=3.2
+      split-50-50-columns    regions=2 renderers=['clock', 'options'] badge px=29416 first_pixel_ms=2.4
+      15-70-15               regions=3 renderers=['picker', 'clock', 'picker'] badge px=29416 first_pixel_ms=5.0
+
+    == system buttons over a template view (html/status) ==
+      no failure card (alert-page px=0): True
+      both badges present: badge px=29416
+
+    frames under /tmp/pill-evi-*.png; first pixel 1.5-5.0 ms against the
+    100 ms budget, and the badge count is identical in every style.
+
+### The stream/qr assertions fail before, pass after (this increment)
+
+    $ git show HEAD:renderers/stream.py | grep -n 'ImageDraw|ImageFont|255, 70, 70|...'
+    31:from PIL import Image, ImageDraw, ImageFont
+    126:    draw = ImageDraw.Draw(base)
+    128:        font = ImageFont.truetype("DejaVuSans-Bold", 34)
+    131:    dot = (255, 70, 70) if not stale else (120, 120, 130)
+    137:                               radius=10, fill=(0, 0, 0))
+    155:        draw.text((screen.W // 2, y), line, font=font, fill=(120, 120, 130),
+    $ git show HEAD:renderers/qr.py | grep -n 'ImageDraw|from PIL|def _font|90, 90, 100'
+    21:from PIL import ImageDraw, ImageFont
+    47:def _font(screen, name, size):
+    66:    ink = (90, 90, 100) if sum(bg) > 384 else (160, 160, 170)
+    $ git show HEAD:renderers/ui/stat.py | grep -c 'def pill'      -> 0
+    $ git show HEAD:renderers/theme.py   | grep -c 'def ink_on'    -> 0
+    $ git show HEAD:tools/check-components.py | grep -c '^    "renderers/'  -> 11
+
+So on HEAD the new tests are structurally red (`stat.pill`, `theme.ink_on`
+do not exist; `_draw_status` had a different signature), the gate listed
+`stream.py` and `qr.py` as exemptions, and the old literals the new pixel
+assertions forbid were present in both modules. Raising the ratchet the
+other way (leaving the two entries in `EXEMPTIONS`) makes the gate itself
+report `stale exemption ... renderers/stream.py`, i.e. it fails in both
+directions as designed.
+
+### Contact points changed outside the migrations
+
+- `tools/check-components.py`: `EXEMPTIONS` 11 -> 9.
+- `renderers/ui/stat.py` (173 -> 215 lines) and `renderers/ui/text.py`
+  (216 -> 220) and `renderers/theme.py` (194 -> 225): all still under the
+  250-line budget; `renderers/stream.py` sits exactly at 250, which is why
+  its docstring was trimmed twice.
+- Docs of record: `README.md` (the stat paragraph and a new pill paragraph),
+  `docs/HTML_RENDERER.md` (the component table row and `theme.ink_on`),
+  `renderers/ui/__init__.py` (the component list).
+
+### The whole suite after this increment
+
+    $ python3 -m unittest discover -s tests
+    ...
+    Ran 1546 tests in 367.046s
+    FAILED (failures=3, errors=1, skipped=10)
+
+which is exactly the three known-red modules (`test_deploy_reload_proof`,
+`test_mac_zoom` as failures and `test_talon_apps` as a loader error) plus
+`test_obs_poll.TestLiveWire.test_against_real_tcp_obs_server`, the
+pressure-dependent live-socket test recorded in §2k; run alone it passes
+(`Ran 18 tests, OK`). No module touched by this increment regressed.
+
+## 8. The branch and the pull request — opened in an earlier increment
 
 Iterations 1-12 never pushed anything: the remote had no
 `gnhf/objective-coalesce-t-0df99b-1` ref, so the objective's finish step
@@ -2183,24 +2345,27 @@ touched.
 
 ## Note on the stop condition
 
-The command above exits zero as of this increment. Its exact output:
+The command above exits zero as of this increment. Its exact output (the
+9-exemption ratchet, from section 2m):
 
     $ python3 tools/check-components.py && python3 -m unittest tests.test_picker tests.test_unified tests.test_chat tests.test_html tests.test_html_runtime_install tests.test_control tests.test_options tests.test_layout && python3 tools/check-lines.py
-    component layer ok: 11 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 332 tests in 52.667s
+    component layer ok: 9 shipped module(s) still draw by hand; all exempt, none stale
+    Ran 336 tests in 52.809s
     OK
     line budget ok: all source files within 250 lines
+    $ echo $?
+    0
 
 (`python3 tools/check-repo-health.py` also exits 0, printing the same line
 budget line plus `ok: no generated native artifacts tracked` and the
 component line.)
 
 That is a **floor, not the finish line**:
-the gate is a ratchet with 11 exemptions, most views still hand-draw, and
+the gate is a ratchet with 9 exemptions, most views still hand-draw, and
 the component vocabulary exists (`system_buttons`, `ui.tile` + `ui.grid`,
 `ui.shell` + `ui.stat` + `ui.text`, `ui.panel`, `ui.progress`, and the
 `ui.base.chain` primitive) but the larger views (`beads*`, `macbook_*`,
-`qr`, `reload`, `stream`, `retro_grid`, `life`)
+`qr_common`, `reload`, `retro_grid`, `life`)
 have not been migrated onto it. What is left is those migrations, the
 control page's style picker, the layout-mode tap entries, and the layout
 composite seam recorded in "Still owed". The stop condition became
