@@ -41,6 +41,7 @@ NAME = "chat"
 DESCRIPTION = ("Two-pane chat: present-viewer roster + rolling messages "
                "(POST /feed/chat/message, /feed/chat/roster)")
 STATIC = False
+CAPABILITY = "partial"  # the pane split follows the region
 PARAMS = {
     "title": {"type": "string", "help": "header text, default CHAT"},
     "lines": {"type": "integer", "help": "messages on screen, default 7"},

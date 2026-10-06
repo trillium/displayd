@@ -3,13 +3,15 @@
 Single concept: the opt-in layout mode on top of the single-view core -- one
 thread and cached last-good frame per region, presents recomposited from the
 per-region cache, contained renderer crashes, and the layout state the API
-reports. Geometry parsing is layout.py.
+reports. Geometry parsing is layout.py; the named styles built on it (and
+the views each slot may carry) are layout_presets.py.
 """
 
 import threading
 import time
 
 from PIL import Image
+import layout_presets as presets
 from layout import parse_layout
 from screen import RegionScreen
 
@@ -32,6 +34,23 @@ class LayoutMixin:
                         any(r["name"] == region_name for r in self.layout)):
                     self.region_errors[region_name] = "%s: %s" % (
                         type(err).__name__, err)
+
+    def _overlaid(self, base):
+        """Apply the shared overlay chain to a layout composite.
+
+        The system buttons (and the playlist bar) are always-on furniture
+        composited by ``Screen.overlay`` for a single view; a layout
+        composite is presented straight to the framebuffer, so it has to
+        pass through the same chain or the badges vanish the moment a
+        layout owns the panel -- while their touch regions stay live.
+        Never raises: a broken overlay layer is skipped."""
+        overlay = getattr(self.screen, "overlay", None)
+        if overlay is None:
+            return base
+        try:
+            return overlay(base)
+        except Exception:
+            return base
 
     def _present_region(self, region_name, img):
         """Cache one region's frame and recomposite the panel from the
@@ -81,7 +100,7 @@ class LayoutMixin:
                 if gen != self.layout_gen or self.layout is None:
                     return  # superseded by a mode change; drop it
             try:
-                self.fb.present(base)
+                self.fb.present(self._overlaid(base))
             except Exception:
                 pass
         with self.layout_lock:
@@ -114,7 +133,7 @@ class LayoutMixin:
                 if gen != self.layout_gen or self.layout is None:
                     return
             try:
-                self.fb.present(base)
+                self.fb.present(self._overlaid(base))
             except Exception:
                 pass
         with self.layout_lock:
@@ -126,10 +145,19 @@ class LayoutMixin:
     def set_layout(self, payload):
         """Activate a static-region layout, replacing the single view.
 
-        Validation (unknown renderer, bad params, bad geometry) happens
-        first via parse_layout: a bad layout is rejected and whatever is
-        on screen keeps running undisturbed. A bare POST /show exits
-        layout mode and returns to single-renderer behaviour."""
+        A request may name one of the presets instead of its regions
+        (``{"preset": "15-70-15", "views": {...}}``); the preset is
+        expanded into the same region grammar, so one parser stays the
+        only authority on geometry and capability fit.
+
+        Validation (unknown renderer, bad params, bad geometry, a
+        full-panel-only view in a reduced region) happens first via
+        parse_layout: a bad layout is rejected and whatever is on screen
+        keeps running undisturbed. A bare POST /show exits layout mode and
+        returns to single-renderer behaviour."""
+        preset = payload.get("preset") if isinstance(payload, dict) else None
+        if preset:
+            payload = presets.build(payload, self.renderers)
         regions = parse_layout(payload, self.fb.width, self.fb.height,
                                self.renderers)
         started = time.time()
@@ -143,6 +171,7 @@ class LayoutMixin:
             self.sleep_restore = None  # a layout owns the panel now
             with self.layout_lock:
                 self.layout = regions
+                self.layout_preset = preset
                 self.layout_started_at = started
                 self.layout_pending = started
                 self.layout_switch_ms = None
@@ -212,6 +241,7 @@ class LayoutMixin:
                     "updated_at": self.region_updated.get(region["name"]),
                 })
             return {
+                "preset": self.layout_preset,
                 "regions": regions,
                 "started_at": self.layout_started_at,
                 "first_pixel_ms": self.layout_switch_ms,

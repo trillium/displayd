@@ -27,6 +27,7 @@ from http.server import ThreadingHTTPServer
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 
 import displayd
+import capability as caps
 from displayd import parse_layout
 from PIL import Image
 
@@ -155,6 +156,65 @@ def _boom_run(screen, params, stop):
     raise RuntimeError("boom on purpose")
 
 
+class TestCapabilityFit(unittest.TestCase):
+    """A view declares how much panel it can render into (capability.py);
+    parse_layout is the authority that refuses a full-panel-only view in a
+    reduced region, so the rule has one home rather than one per caller."""
+
+    def test_declared_capabilities_are_valid_and_undeclared_is_full(self):
+        renderers = _renderers()
+        for name, entry in renderers.items():
+            if "module" not in entry:
+                continue
+            self.assertIn(entry["capability"], caps.ORDER, name)
+        self.assertEqual(renderers["beads"]["capability"], caps.FULL)
+        for name in ("picker", "options", "chat", "html", "row"):
+            self.assertTrue(caps.reduced_ok(renderers[name]["capability"]),
+                            name)
+
+    def test_every_offered_view_is_a_declared_reduced_one(self):
+        renderers = _renderers()
+        declared = {n for n, e in renderers.items()
+                    if "module" in e and caps.reduced_ok(e["capability"])}
+        self.assertTrue(set(caps.offered(renderers)) <= declared)
+
+    def test_full_panel_only_view_is_refused_in_a_reduced_region(self):
+        with self.assertRaises(ValueError) as ctx:
+            parse_layout({"regions": [
+                {"name": "top", "height": "50%", "renderer": "beads"},
+                {"name": "bottom", "height": "50%",
+                 "renderer": "solid"}]}, W, H, _renderers())
+        self.assertIn("beads", str(ctx.exception))
+        self.assertIn("full", str(ctx.exception))
+
+    def test_full_panel_only_view_alone_is_fine(self):
+        regions = parse_layout(
+            {"regions": [{"name": "view", "renderer": "beads"}]},
+            W, H, _renderers())
+        self.assertEqual(regions[0]["rect"], (0, 0, W, H))
+
+    def test_declared_reduced_view_fits_a_band(self):
+        regions = parse_layout({"regions": [
+            {"name": "left", "width": "15%", "renderer": "picker"},
+            {"name": "center", "width": "70%", "renderer": "row"},
+            {"name": "right", "width": "15%", "renderer": "chat"}]},
+            W, H, _renderers())
+        self.assertEqual([r["rect"] for r in regions],
+                         [(0, 0, 288, H), (288, 0, 1344, H), (1632, 0, 288, H)])
+
+    def test_an_entry_with_no_declaration_is_trusted(self):
+        # A hand-built entry (tests, embeddings) has no declaration; the
+        # registry is where the default lives, so the parser stays usable
+        # on synthetic trees without loosening the rule for loaded views.
+        regions = parse_layout(
+            {"regions": [{"name": "a", "renderer": "fake"},
+                         {"name": "b", "renderer": "solid"}]},
+            W, H, {"fake": {"module": object(), "params": {}},
+                   "solid": {"module": object(), "params": {},
+                             "capability": caps.PARTIAL}})
+        self.assertEqual(len(regions), 2)
+
+
 class LayoutDaemonTestCase(unittest.TestCase):
     def setUp(self):
         self._env = os.environ.get("DISPLAYD_FAKE_FB")
@@ -250,6 +310,30 @@ class LayoutDaemonTestCase(unittest.TestCase):
         self.assertIsNone(state["layout"])
         self.assertEqual(state["renderer"], "solid")
         self.assertGreater(self._pixel(self._frame(), 10, 10)[0], 200)
+
+    def test_system_buttons_stay_drawn_over_a_layout(self):
+        """The badges are always-on furniture: a layout composite passes
+        through the same overlay chain as a single view, so the drawn
+        panel keeps them -- their touch regions are live either way."""
+        import renderer_registry
+        buttons = renderer_registry.system_buttons_module
+        theme = renderer_registry._load_shared_helper("theme")
+        self._layout([{"name": "top", "height": "50%", "renderer": "solid",
+                       "params": {"color": "red"}},
+                      {"name": "bottom", "height": "50%",
+                       "renderer": "solid", "params": {"color": "blue"}}])
+        self.assertTrue(self._wait(
+            lambda: self._pixel(self._frame(), 960, 270)[:2] == (255, 0)),
+            "layout never painted")
+        frame = self._frame()
+        fill = theme.rgb("badge")
+        home = buttons.home_rect(W, H)
+        sleep = buttons.sleep_rect(W, H)
+        # Inside each badge tile but outside its glyph.
+        self.assertEqual(self._pixel(frame, home[0] + 30, home[1] + 130),
+                         fill, "home badge missing over the layout")
+        self.assertEqual(self._pixel(frame, sleep[0] + 15, sleep[1] + 130),
+                         fill, "sleep badge missing over the layout")
 
     def test_feed_routes_to_bound_region(self):
         self._layout([
@@ -374,6 +458,21 @@ class LayoutHttpTestCase(unittest.TestCase):
                 return True
             time.sleep(0.05)
         return False
+
+    def test_capability_rejection_keeps_the_panel(self):
+        code, out = self.call("POST", "/layout", {"regions": [
+            {"name": "only", "renderer": "solid",
+             "params": {"color": "#010203"}}]})
+        self.assertEqual(code, 200, out)
+        code, out = self.call("POST", "/layout", {"regions": [
+            {"name": "top", "height": "50%", "renderer": "beads"},
+            {"name": "bottom", "height": "50%",
+             "renderer": "solid"}]})
+        self.assertEqual(code, 400, out)
+        self.assertIn("beads", json.dumps(out))
+        code, state = self.call("GET", "/state")
+        self.assertEqual([r["renderer"]
+                          for r in state["layout"]["regions"]], ["solid"])
 
     def test_layout_roundtrip(self):
         code, out = self.call("POST", "/layout", {"regions": [

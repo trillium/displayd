@@ -46,6 +46,7 @@ NAME = "html"
 DESCRIPTION = ("Render a local HTML/CSS template (litehtml); "
                "template files only, no remote or inline markup")
 STATIC = False
+CAPABILITY = "partial"  # fills whatever viewport it is handed
 
 # No required params: this view must stay in the live picker/home set, or
 # "the UI is a template" would be true only of views nobody can reach.

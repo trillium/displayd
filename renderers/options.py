@@ -38,6 +38,7 @@ NAME = "options"
 DESCRIPTION = ("View selection: tap-anywhere landing screen naming the "
                "fastest view picks and the way back")
 STATIC = True
+CAPABILITY = "partial"  # a name grid reflows into any region
 # The bar colour this view declares to the playlist (playlist_color.accent_for
 # reads a renderer's ACCENT by name). Still a literal: folding these into
 # theme.ACCENT_SLOTS is the rest of the token migration, tracked in notes.md.

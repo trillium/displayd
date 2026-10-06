@@ -5,10 +5,16 @@ renderers/ helpers the daemon itself reuses -- the component layer's system
 buttons, macbook map and layout geometry, and talon apps. A broken plugin
 becomes a marker entry and a missing helper becomes ``None``; neither ever
 takes the daemon down.
+
+This is also where a view's capability declaration is normalized: an
+undeclared or misspelled one becomes ``full`` (see capability.py), so a
+view that has not said it can be reduced cannot land in a layout slot.
 """
 
 import importlib.util
 import os
+
+import capability
 
 RENDERER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "renderers")
 
@@ -78,5 +84,7 @@ def load_renderers(directory):
             "params": getattr(mod, "PARAMS", {}),
             "inputs": getattr(mod, "INPUTS", {}),
             "static": getattr(mod, "STATIC", True),
+            "capability": capability.coerce(
+                getattr(mod, "CAPABILITY", None)),
         }
     return found

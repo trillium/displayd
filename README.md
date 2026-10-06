@@ -109,6 +109,10 @@ publishes an unauthenticated control surface to everything that can route to it.
 | GET | `/renderers` | – | available renderers and their params |
 | GET | `/snapshot` | – | PNG of the last frame presented |
 | POST | `/show` | `{"renderer":"text","params":{...}}` | switch content |
+| POST | `/layout` | `{"regions":[{"name":...,"renderer":...,"height"?/"width"?/"rect"?/"row"?/"col"?...}]}`, or `{"preset":"full"\|"split-50-50"\|"split-50-50-columns"\|"15-70-15","views":{slot:view}?}` | split the panel into static regions, or into a named style; a view that declares itself full-panel-only is refused in a reduced region |
+| GET | `/layout` | – | current layout (null when inactive), including the named style it came from |
+| GET | `/layout/presets` | – | the named styles, their slots, and the views each slot accepts |
+| DELETE | `/layout` | – | clear the layout |
 | POST | `/feed/<renderer>/<input>` | any JSON payload | push validated data into a view |
 | POST | `/notify` | `{"title":...}`, `body`?, `severity`? (`info`/`warn`/`critical`), `duration`? | transient notice, then automatic return |
 | POST | `/reload` | `{"sha":...}`, `highlights`? | reload confirmation (RELOADED + full SHA + scan-confirm QR, plus an optional bounded commit-message summary), stays until a scan or tap confirms it; answers `relay_url` when the phone can reach it |
@@ -349,6 +353,7 @@ That is the whole extension step. No core edits, no registration, no config.
 | `NAME` | no | API name; defaults to the filename without `.py` |
 | `DESCRIPTION` | no | shown in `GET /renderers` |
 | `STATIC` | no | `True` (default) draws once; `False` loops until `stop` is set |
+| `CAPABILITY` | no | how much panel the view can render into: `full` (default), `partial`, `primary`; surfaced by `GET /renderers` and enforced by `POST /layout` |
 | `PARAMS` | no | parameter schema, surfaced verbatim by `GET /renderers` |
 | `INPUTS` | no | feed schema (`{name: {type, required, properties, buffer, help}}`); pushed payloads are validated and buffered |
 | `run(screen, params, stop)` | yes | does the drawing |
@@ -372,6 +377,12 @@ Compose one complete PIL image and hand it over with a single
 A renderer that raises is recorded in `/state` under `last_error` and does not
 take the daemon down; a plugin that fails to import is reported against its own
 name by `GET /renderers`. Neither stops the other renderers from working.
+
+`CAPABILITY` is a declaration, not a hint: `partial` (and `primary`) say the
+view renders correctly into a region smaller than the panel -- a split half or
+a `15-70-15` band -- and `POST /layout` refuses a `full` view in one of those,
+naming it. An undeclared or misspelled value is `full`, so the safe failure is
+a whole frame rather than a cropped one. See `capability.py`.
 
 ## Bridges: feeding views from the outside world
 

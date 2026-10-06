@@ -7,6 +7,7 @@ from PIL import ImageDraw, ImageFont
 NAME = "clock"
 DESCRIPTION = "A large clock that updates every second"
 STATIC = False
+CAPABILITY = "partial"  # the digit auto-fits the region
 # Playlist progress-bar colour for this view (see playlist.accent_for).
 ACCENT = "#4DC3FF"
 PARAMS = {

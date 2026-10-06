@@ -39,6 +39,7 @@ NAME = "picker"
 DESCRIPTION = ("Tappable view picker: tile grid rerouting the panel "
                "via the select_view touch action")
 STATIC = True
+CAPABILITY = "partial"  # a tile grid reflows into any region
 ACCENT = "#7BDFF2"
 PARAMS = {
     "views": {"type": "array",

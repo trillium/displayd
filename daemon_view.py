@@ -152,6 +152,7 @@ class ViewLifecycleMixin:
         self.region_threads = {}
         with self.layout_lock:
             self.layout = None
+            self.layout_preset = None
             self.region_frames = {}
             self.region_errors = {}
             self.region_updated = {}

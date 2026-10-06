@@ -2,9 +2,12 @@
 
 Single concept: turning a /layout request's region specs -- stack, grid, or an
 explicit rect -- into pixel rects, atomically: one bad spec rejects the whole
-request and nothing is applied. Pure: no framebuffer, no daemon.
+request and nothing is applied. Pure: no framebuffer, no daemon. Capability
+fit (a full-panel-only view cannot land in a reduced region) is checked here
+too, through capability.py, so the rule has one home.
 """
 
+import capability
 from schema import validate_params
 
 MAX_LAYOUT_REGIONS = 16
@@ -123,6 +126,7 @@ def parse_layout(payload, width, height, renderers):
         r["rect"] = (x, y, w, h)
         del r["_spec"]
         del r["_where"]
+    capability.check_fit(bound, renderers, width, height)
     return bound
 
 

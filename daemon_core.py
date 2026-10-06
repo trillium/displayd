@@ -67,6 +67,7 @@ class DisplayCoreMixin:
         # mode change; layout_lock guards the region tables only.
         self.layout_lock = threading.Lock()
         self.layout = None  # list of bound regions or None (single mode)
+        self.layout_preset = None  # the named style the layout came from
         self.region_threads = {}  # region name -> thread record
         self.region_frames = {}   # region name -> last-good PIL frame
         self.region_errors = {}   # region name -> "Error: detail"

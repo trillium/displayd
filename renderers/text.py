@@ -5,6 +5,7 @@ from PIL import ImageDraw, ImageFont
 NAME = "text"
 DESCRIPTION = "Show a message centred on the screen, auto-sized to fill it"
 STATIC = True
+CAPABILITY = "partial"  # centred and auto-sized to the region
 # Playlist progress-bar colour for this view (see playlist.accent_for).
 ACCENT = "#FFFFFF"
 PARAMS = {

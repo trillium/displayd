@@ -34,6 +34,7 @@ from row_ws import (WS_MAX_BYTES, WS_MAX_MESSAGES, fetch_ws_stats)
 NAME = "row"
 DESCRIPTION = "Concept2 rowing streak: current day/row streak, last row, year pace (from row_tracker rows.txt)"
 STATIC = False
+CAPABILITY = "primary"  # the 15-70-15 centre: full or a wide band
 # Playlist progress-bar colour for this view (see playlist.accent_for).
 ACCENT = "#5CFF9D"
 PARAMS = {
