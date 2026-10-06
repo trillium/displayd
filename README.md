@@ -288,6 +288,13 @@ measurement and trim-to-room rule. The two views that used to carry that band
 twice (`resources`, `services`) are now composers over them, and carry no
 colour, font or truncation rule of their own.
 
+A **panel** — a titled region with a body — is `renderers/ui/panel.py`: one
+scale-to-fit rule (the whole block is scaled to the region and never cut), a
+centred headline and body, the corner tag and the accent bar. `notice`, `text`
+and `sleep` are composers over it and hold no font, fitting search or colour
+of their own; the notice's severity is a palette role lookup
+(`accent`/`attention`/`alert`) rather than a fourth copy of red.
+
 The apps dock under the merged home screen is a template too
 (`html-templates/dock.html`), composited into the picker frame inside the rect
 its `apps-dock` tap region covers. It is authored once at the standard dock

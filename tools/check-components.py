@@ -64,15 +64,12 @@ EXEMPTIONS = (
     "renderers/life.py",
     "renderers/macbook_draw.py",
     "renderers/macbook_strip.py",
-    "renderers/notice.py",
     "renderers/qr.py",
     "renderers/qr_common.py",
     "renderers/reload.py",
     "renderers/retro_grid_draw.py",
     "renderers/row_draw.py",
-    "renderers/sleep.py",
     "renderers/stream.py",
-    "renderers/text.py",
     "renderers/touch_confidence_draw.py",
 )
 

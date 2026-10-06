@@ -40,9 +40,9 @@ Layout of the package:
   picker and options fill their raw slot with) and a drawing half
   (``draw``, for the Pillow views). Its look is authored once in the
   shared stylesheet, from palette tokens.
-
-Still owed by the vocabulary: ``panel`` (a titled region with a body --
-what ``notice`` and the cold-start cards want).
+- ``panel`` -- a titled region with a body: the one fit rule (the whole
+  block scaled to the region, never truncated), a centred headline and
+  body, the corner tag and the accent bar across the top.
 
 Adding a component: give it its own module here, take every colour from
 ``theme``, return the frame unchanged on any failure, and add it to the

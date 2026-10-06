@@ -173,23 +173,95 @@ What the tests pin (`tests/test_shell.py`, 26 tests):
 
 Migrated so far, in order: the persistent overlay chrome (both system
 buttons); the panel's two tile layers (the picker grid, the options name
-grid), now one component with two halves; and this increment's two polled
-list views, `resources_draw` and `services_draw`, which are now composers
-over `ui.shell` + `ui.stat` (`ui.text` underneath both).
+grid), now one component with two halves; the two polled list views
+`resources_draw` and `services_draw`, now composers over `ui.shell` +
+`ui.stat` (`ui.text` underneath both); and this increment's three card
+views, `notice`, `text` and `sleep`, now composers over `ui.panel`.
 
-Deliberately left (still Pillow, still drawing by hand): the other 22
+Deliberately left (still Pillow, still drawing by hand): the other 19
 modules in the gate's exemption list — `beads` with its `beads_detail`/
 `beads_detail_card`/`services`-style draw helpers, `row_draw`, `macbook_draw`/
 `macbook_strip`, `qr`/`qr_common`, `reload`, `stream`, `activity`, `clock`,
-`notice`, `text`, `retro_grid_draw`, `touch_confidence_draw`, `sleep`,
-`feed_health`, `life`, `playlist`/`playlist_bar` (the daemon-side progress
-bar), and `_html_error`/`_html_native`. Reason: the vocabulary they need is
-only partly built — `shell` and `stat` landed in this increment, `panel` (a
-titled region with a body) has not, and `notice`, `row_draw` and `beads` are
-the pull for it. `touch_confidence_draw` is partly migrated (its region
-boxes are `ui.tile.draw` now) but keeps its own accent bar, title and
-diagnostics lines, so it stays on the list until `shell`/`stat` are applied
-to it — a half-migrated file must not claim to have left the ratchet.
+`retro_grid_draw`, `touch_confidence_draw`, `feed_health`, `life`,
+`playlist`/`playlist_bar` (the daemon-side progress bar), and
+`_html_error`/`_html_native`. Reason: the vocabulary they need is now built
+(`tile`, `text`, `shell`, `stat`, `panel`) but each of them is a real
+migration — `beads` and `row_draw` are several surfaces each, `reload` owns
+the QR proof and its scan relay, `stream` is a live frame at a capped fps,
+and `_html_native` is the engine shim rather than a view.
+`touch_confidence_draw` is partly migrated (its region boxes are
+`ui.tile.draw` now) but keeps its own accent bar, title and diagnostics
+lines, so it stays on the list until `shell`/`panel` are applied to it — a
+half-migrated file must not claim to have left the ratchet.
+
+### 2d. The panel component, and the three card views it pulled (this increment)
+
+`notice`, `text` and `sleep` were the same card with different words:
+
+- `notice` drew a severity bar across the top, a headline centred above a
+  body and a severity tag in the bottom corner, with `_font`,
+  `_shrink_to_fit` (a binary search over the *first line's* width) and a
+  three-entry RGB severity map;
+- `text` drew one auto-fitted message centred on the panel, with its own
+  `_font`/`_fits`/`_autofit` (a binary search over the *whole block's* box);
+- `sleep` drew a centred hint with a third `_font`.
+
+Those two searches are two halves of one rule, and that rule is now
+`ui/panel.py`:
+
+| what | owner |
+| --- | --- |
+| "these words fit this region" | `panel.fit_size` / `panel.fits` — the largest size up to the declared one whose whole block fits, `MARGIN` applied inside (the caller states the region, not the room) |
+| the title | `panel.headline` — scaled to the region, then centred, `ink-strong` by default |
+| the body | `panel.block` — a centred multi-line block, hung from a top edge when something sits above it |
+| the corner label | `panel.tag` — bottom-left inset by `PAD`, `muted` by default |
+| the accent bar | `panel.bar` — the full-width band across the top, the palette accent by default |
+| the component | `panel.card` — bar, title, body, tag; the title is the only required part |
+
+The notice's severity map is gone, not aliased: `SEVERITY_ROLE` maps
+`info`/`warn`/`critical` onto the palette roles `accent`/`attention`/`alert`,
+so the fourth copy of "red" and the third copy of "amber" are whatever
+`theme.py` says. **That is a deliberate pixel change**: the critical bar went
+from the notice-local `(255, 70, 70)` to `theme.rgb("alert")`
+`(214, 74, 74)`, and `tests/test_policy.py`'s severity-bar assertion now
+reads the token (same intent: "the critical notice wears the critical
+colour"). The three views' backgrounds/inks default to `page`, `ink-strong`
+and `faint` instead of `(0, 0, 0)`/`(10, 10, 14)`/`(70, 74, 88)`, and the
+`text`/`notice` param help text says so.
+
+The `text` view's no-font fallback also changed for the better: it used to
+throw the message at `(20, 20)` in Pillow's bitmap face; the component's
+`ui_text.face` is never None, so a host with no font package now gets the
+same centred block in the fallback face. One fit rule is also stricter than
+the old `text` behaviour: an explicit `size` is now a *ceiling* (a block that
+still overflows is scaled down rather than clipped off the panel).
+
+What `tests/test_panel.py` (21 tests) pins:
+
+- the returned size is the LARGEST that fits (`fits(size)` true,
+  `fits(size + 1)` false), the whole block is scaled and never cut, and the
+  margin is the component's own (`MARGIN` applied inside);
+- the fit search is total: no room or an unmeasurable screen keeps the
+  declared size, garbage gives `FLOOR`, `None`/`""`/`object()` never raise;
+- the bar, headline, body and tag wear the palette roles on rendered pixels,
+  a caller's ink replaces the role, and the tag sits at the region's own
+  corner (`PAD` inset) rather than wherever a view used to put it;
+- `card` returns the frame unchanged on a broken screen and returns `None`
+  for a `None` frame (the layer's never-blank obligation);
+- the three views hold no `from PIL`, no `ImageDraw`/`ImageFont`, no
+  `_font`/`_fits`/`_autofit`/`_shrink_to_fit`, and the only hex literal left
+  in them is the view's playlist accent that `theme.ACCENT_SLOTS` also
+  carries (the one remaining per-view colour constant; see "Still owed");
+- `notice.severity_ink` is a role lookup for every severity and is total on
+  an unknown word, and the rendered bar is exactly `theme.rgb("alert")` /
+  `attention` / `accent` for critical / warn / info;
+- `text` is centred (ink on both sides of the middle) on the `page` role,
+  honours an explicit `size` and `background`, and draws nothing when there
+  is no message; `sleep` names the way back in the `faint` role.
+
+The gate's exemption list went **22 → 19** (`renderers/notice.py`,
+`renderers/text.py`, `renderers/sleep.py` removed): the gate now prints
+`19 shipped module(s) still draw by hand`.
 
 ### 3. The shared chrome, composed at load time — `html-templates/_chrome.html`
 
@@ -307,7 +379,11 @@ Wired into `tools/check-repo-health.py` as step 3.
      component it needs does not exist, that is the next component to
      write, not a reason to draw by hand. A labelled box is `ui.tile.draw`;
      a grid of them is `ui.tile.layer` (markup) with the look from the
-     shared stylesheet.
+     shared stylesheet; the band a full-panel view wears is `ui.shell`
+     (`head`/`foot`/`rule` + the health dot); a label with its value is
+     `ui.stat.row`, a fraction is `ui.stat.meter`; centred words are
+     `ui.text.write`/`ui.panel.card` (a title, an optional body, a corner
+     tag, an accent bar, and the one scale-to-fit rule).
 4. Never let a draw raise: return the frame unchanged. If the view
    composes several layers, compose them with `ui.base.chain`.
 5. Remove the view's path from `EXEMPTIONS` in
@@ -396,12 +472,18 @@ the pre-change tree (red instead of the badge fill at the badge tile).
 
 ## Still owed (with the reason)
 
-- **The last component** (`panel`: a titled region with a body) and the
-  views that want it — `notice`, `row_draw`, `beads`, and the cold-start
-  cards (which are a title plus a body, drawn by hand in both polled views
-  today). `shell`, `stat` and `text` landed this increment with
-  `resources`/`services`; `touch_confidence_draw`'s bar/title/diagnostics
-  is the other obvious pull (its region boxes are already `ui.tile.draw`).
+- **Per-view colour constants** — `ACCENT = "#rrggbb"` still lives in
+  ~12 renderer modules, and `playlist_color.accent_for` reads a renderer's
+  `ACCENT` attribute by name. Folding that into `theme.ACCENT_SLOTS` (the
+  table already exists) is the rest of the token migration, and it is a
+  behaviour change, so it wants its own increment and its own test. It is
+  now the ONLY colour left in the three migrated card views, and the
+  structural test names it as the exception rather than ignoring it.
+- **The card vocabulary could still pull more views**: `feed_health`'s
+  cold-start/error cards and `beads_detail_card` are a title plus a body,
+  and `touch_confidence_draw`'s bar/title/diagnostics is the other obvious
+  pull (`panel` + `stat` now cover it). Left because each is a bigger
+  surface than the three card views and needs its own test story.
 - **The band still has two definitions, one per rendering path**: the shared
   stylesheet's `.frame`/`.head`/`.title`/`.rule`/`.foot` rules for
   templates, and `ui/shell.py`'s constants for the Pillow views. That is one
@@ -411,11 +493,6 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   `theme.rgb("rule")`, `tests/test_shell.py`). Unifying the geometry needs a
   cross-language constant, the way `ui.tile.BORDER` ↔ the stylesheet's
   `border-width` already works in `tests/test_tile.py`.
-- **Per-view colour constants** — `ACCENT = "#rrggbb"` still lives in
-  ~12 renderer modules, and `playlist_color.accent_for` reads a renderer's
-  `ACCENT` attribute by name. Folding that into `theme.ACCENT_SLOTS` (the
-  table already exists) is the rest of the token migration, and it is a
-  behaviour change, so it wants its own increment and its own test.
 - **The control page does not offer the styles yet.** `GET /layout/presets`
   publishes them and `POST /layout {"preset": ...}` applies them, but the
   phone page has no style picker and no per-slot view selects. That is the
@@ -442,8 +519,8 @@ Full objective suite (the stop-condition command), after this increment:
         tests.test_unified tests.test_chat tests.test_html \
         tests.test_html_runtime_install tests.test_control tests.test_options \
         tests.test_layout && python3 tools/check-lines.py
-    component layer ok: 22 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 326 tests in 52.301s
+    component layer ok: 19 shipped module(s) still draw by hand; all exempt, none stale
+    Ran 326 tests in 52.486s
     OK
     line budget ok: all source files within 250 lines
     rc=0
@@ -454,7 +531,17 @@ Full objective suite (the stop-condition command), after this increment:
     (line budget, no tracked generated artifacts, component layer)
 
     $ python3 -m unittest tests.test_components -v      -> Ran 15 tests, OK
+    $ python3 -m unittest tests.test_panel -v           -> Ran 21 tests, OK
     $ python3 -m unittest tests.test_layout_presets -v  -> Ran 25 tests, OK
+
+    Full `discover` this increment (the three known-red modules on this box
+    are never run as a gate: tests.test_mac_zoom,
+    tests.test_deploy_reload_proof, tests.test_talon_apps):
+
+    $ python3 -m unittest discover -s tests
+    Ran 1440 tests in 354.909s
+    FAILED (failures=2, errors=1, skipped=10)
+    -> exactly the three known-red modules, nothing else
 
     Wider sweeps this increment (the three known-red modules on this box are
     never run as a gate: tests.test_mac_zoom, tests.test_deploy_reload_proof,
@@ -569,6 +656,91 @@ system buttons composited over it **through the new component layer**:
 So the badges are drawn by `renderers/ui/system_buttons.py` (the only
 module that may), from `theme`, on top of a litehtml template view, in the
 same frame.
+
+### The panel component, the buttons and every layout style — re-rendered this increment
+
+`DISPLAYD_FAKE_FB=1 python3 /tmp/panel_evidence.py` — real daemon on a
+loopback ephemeral port, temp policy/feedback paths, real HTTP:
+
+    == daemon ==
+    display: {'width': 1920, 'height': 1080, 'bpp': 32, 'stride': 7680, ...}  version: 0.8.0
+
+    == layout styles (system buttons over every style) ==
+      full                   style=full       first_pixel_ms=5.1 badges=(True, True)
+          regions: view=(0, 0, 1920, 1080)
+      split-50-50            style=split-50-50 first_pixel_ms=3.9 badges=(True, True)
+          regions: top=(0, 0, 1920, 540), bottom=(0, 540, 1920, 540)
+      split-50-50-columns    style=split-50-50-columns first_pixel_ms=3.8 badges=(True, True)
+          regions: left=(0, 0, 960, 1080), right=(960, 0, 960, 1080)
+      15-70-15               style=15-70-15   first_pixel_ms=4.6 badges=(True, True)
+          regions: left=(0, 0, 288, 1080), center=(288, 0, 1344, 1080), right=(1632, 0, 288, 1080)
+
+    == system buttons over a template view (html/status) ==
+      home+sleep badge tiles on the frame: (True, True)
+      error card on the frame: False (False = a real template render)
+      template accent px: 1059  panel px: 29406  badge px: 29416
+      first_pixel_ms=5.6
+
+    == migrated card views ==
+      notice critical switch=notice first_pixel_ms=5.6 bar(960,9)=(214, 74, 74) is_old_literal=False badges=(False, False)
+          most common colours: [((7, 8, 12), 2014075), ((214, 74, 74), 35393), ((255, 255, 255), 14140)]
+      notice warn     switch=notice first_pixel_ms=0.9 bar(960,9)=(255, 180, 80) is_old_literal=False badges=(False, False)
+      text            switch=text   first_pixel_ms=5.5 bar(960,9)=(7, 8, 12) is_old_literal=False badges=(True, True)
+      sleep           switch=sleep  first_pixel_ms=5.4 bar(960,9)=(7, 8, 12) is_old_literal=False badges=(False, False)
+
+    == notice severity is the palette role, not a fourth red ==
+      theme.rgb('alert')=(214, 74, 74)  old notice literal=(255, 70, 70)
+      theme.rgb('accent')=(127, 209, 255)  theme.rgb('attention')=(255, 180, 80)
+
+Reading it: every style still paints its first pixel in 3-10ms (budget
+100ms) with both badges present; the html template view really rendered
+(`error card on the frame: False`, accent 1059px, panel 29406px) with the
+badges over it; the critical notice bar is `(214, 74, 74)` — the alert
+ROLE, and provably NOT the old view-local `(255, 70, 70)`; the warn bar is
+`attention`; `text` and `sleep` sit on the `page` role `(7, 8, 12)` with
+the badges suppressed on `sleep` and shown on `text`; and the frame still
+reports 1920x1080 with page as its dominant colour. Frames saved:
+`/tmp/panel-evi-{full,split-50-50,split-50-50-columns,15-70-15}.png`,
+`/tmp/panel-evi-html-buttons.png`, `/tmp/panel-evi-notice-critical.png`,
+`/tmp/panel-evi-notice-warn.png`, `/tmp/panel-evi-text.png`,
+`/tmp/panel-evi-sleep.png`.
+
+### The panel assertions fail before, pass after
+
+No execution needed: the three views themselves were the pre-change state,
+and `git show HEAD:<file>` proves what the new assertions are red on.
+
+    $ git show HEAD:renderers/notice.py | grep -n 'ImageDraw\|def _font\|def _shrink_to_fit\|(255, 70, 70)\|\(10, 10, 14\)'
+    11:from PIL import ImageDraw, ImageFont
+    29:    "info": (90, 200, 255),
+    30:    "warn": (255, 165, 0),
+    31:    "critical": (255, 70, 70),
+    38:def _font(screen, name, size):
+    48:def _shrink_to_fit(draw, text, font, max_width):
+    83:    bg = screen.color(params.get("background"), (10, 10, 14))
+    86:    draw = ImageDraw.Draw(img)
+
+    $ git show HEAD:renderers/text.py | grep -n 'ImageDraw\|def _autofit\|(0, 0, 0)'
+    3:from PIL import ImageDraw, ImageFont
+    25:def _autofit(draw, text, path, width, height, margin=0.88):
+    44:    bg = screen.color(params.get("background"), (0, 0, 0))
+
+    $ git show HEAD:renderers/sleep.py | grep -n 'ImageDraw\|def _font\|(70, 74, 88)'
+    14:from PIL import ImageDraw, ImageFont
+    33:def _font(screen, size):
+    50:    fg = screen.color(params.get("color"), (70, 74, 88))
+
+    $ python3 -c "...; print((255, 70, 70) == theme.rgb('alert'), theme.rgb('alert'))"
+    False (214, 74, 74)
+
+So on the pre-change tree: `tests/test_panel.py`'s structural test (no
+`from PIL`, no `ImageDraw`/`ImageFont`, no `_font`/`_fits`/`_autofit`)
+fails on all three files; the severity-role assertion fails because the old
+literal is not `theme.rgb("alert")`; and the tag/centring/background
+assertions fail because those files had no component to read `page`,
+`ink-strong`, `muted-soft` or `faint`. The gate also fails on the old tree
+with "3 stale exemption(s)" once the three entries are removed from
+`EXEMPTIONS` — which is exactly the two-directional ratchet working.
 
 ### One chrome definition, four surfaces (this increment)
 
