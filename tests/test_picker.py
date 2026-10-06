@@ -391,5 +391,75 @@ class TilePixelsTest(unittest.TestCase):
         self.assertEqual(frame.getpixel((W // 2, 1)), (214, 74, 74))
 
 
+@native_built
+class ApplicationBandTest(unittest.TestCase):
+    """The 15-70-15 side band: one usable application column.
+
+    A fixed three columns is a 69px tile here -- a label no wider than
+    the gutter around it. The column count is read off the region's
+    shape (`ui.grid.columns`), and an explicit `cols` param still wins.
+    """
+
+    class BandScreen(FakeScreen):
+        W, H = 288, H
+
+    def render(self, params):
+        screen = self.BandScreen()
+        views = pk.coerce_views(params)
+        rect = pk.coerce_rect(params, screen.W, screen.H)
+        geometry = pk.grid_geometry(rect, len(views),
+                                    cols=pk.coerce_cols(params))
+        frame = pk.draw(screen, views, geometry, rect, pk.PALETTE,
+                        (8, 10, 16), (255, 255, 255), (140, 160, 190))
+        return frame, rect, geometry
+
+    def test_the_band_is_one_column_of_wide_tiles(self):
+        _frame, _rect, geometry = self.render({"views": VIEWS})
+        self.assertEqual(len(geometry), len(VIEWS))
+        self.assertEqual(len({x for x, _y, _w, _h in geometry}), 1)
+        self.assertEqual(len({y for _x, y, _w, _h in geometry}), len(VIEWS),
+                         "the band stacks down, it does not reflow across")
+        for _x, _y, w, _h in geometry:
+            self.assertGreaterEqual(w, 150, "a label needs room to be read")
+
+    def test_the_drawn_tile_and_its_tap_region_are_the_same_numbers(self):
+        frame, rect, geometry = self.render({"views": VIEWS})
+        regions = pk.picker_regions(288, H, VIEWS, rect)
+        self.assertEqual([e["rect"] for e in regions],
+                         [list(r) for r in geometry])
+        for index, region in enumerate(regions):
+            x, y, _w, _h = region["rect"]
+            with self.subTest(tile=region["id"]):
+                self.assertEqual(frame.getpixel((x + 24, y + 24)),
+                                 pk.PALETTE[index % len(pk.PALETTE)])
+
+    def test_an_explicit_cols_param_overrides_the_shape(self):
+        _frame, _rect, grid = self.render({"views": VIEWS, "cols": 3})
+        self.assertEqual(len({x for x, _y, _w, _h in grid}), 3)
+        self.assertLess(grid[0][2], 100)
+
+    def test_a_garbage_cols_param_falls_back_to_the_shape(self):
+        self.assertIsNone(pk.coerce_cols({"cols": "wide"}))
+        self.assertIsNone(pk.coerce_cols({"cols": 0}))
+        self.assertIsNone(pk.coerce_cols({"cols": True}))
+        self.assertIsNone(pk.coerce_cols(None))
+        self.assertEqual(pk.coerce_cols({"cols": 2}), 2)
+        _frame, _rect, grid = self.render({"views": VIEWS, "cols": "wide"})
+        self.assertEqual(len({x for x, _y, _w, _h in grid}), 1)
+
+    def test_the_cols_param_is_advertised_and_honoured_by_run(self):
+        self.assertIn("cols", pk.PARAMS)
+        screen = self.BandScreen()
+        stop = threading.Event()
+        stop.set()
+        pk.run(screen, {"views": VIEWS, "cols": 1}, stop)
+        frame = screen.frames[-1]
+        rect = pk.coerce_rect({"views": VIEWS}, screen.W, screen.H)
+        grid = pk.grid_geometry(rect, len(VIEWS), cols=1)
+        self.assertEqual(len({x for x, _y, _w, _h in grid}), 1)
+        self.assertEqual(frame.getpixel((grid[0][0] + 24, grid[0][1] + 24)),
+                         pk.PALETTE[0])
+
+
 if __name__ == "__main__":
     unittest.main()

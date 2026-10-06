@@ -34,6 +34,7 @@ import _html_error
 import _html_native
 import _html_templates as templates
 import _picker_tiles
+from ui import grid as ui_grid
 from ui import tile as ui_tile
 
 NAME = "picker"
@@ -48,6 +49,9 @@ PARAMS = {
     "rect": {"type": "array",
              "help": "grid area [x, y, w, h] display px, default the "
                      "screen minus side strips and a bottom button bar"},
+    "cols": {"type": "integer",
+             "help": "grid columns (absent: read off the region's shape "
+                     "-- a narrow band gets one application column)"},
     "title": {"type": "string",
               "help": "header text, default PICK A VIEW"},
     "background": {"type": "string",
@@ -59,6 +63,10 @@ PARAMS = {
 # Fallback six; daemon fills the live set when views is absent. Cap 24.
 DEFAULT_VIEWS = ("clock", "chat", "row", "stream", "activity", "options")
 MAX_VIEWS = 24
+# The picker's own column policy: never more than three. The number of
+# columns actually drawn is the tile component's (`ui.grid.columns`),
+# which reads it off the region's shape -- so a 288px application band is
+# one column of readable tiles rather than three 69px ones.
 DEFAULT_COLS = 3
 
 PALETTE = (
@@ -137,29 +145,38 @@ def coerce_rect(params, w, h):
     return default_rect(w, h)
 
 
-def grid_geometry(rect, count, cols=DEFAULT_COLS, gutter=None):
-    """Tile rects row-major inside `rect` (cols cap at DEFAULT_COLS)."""
-    count = max(1, int(count))
-    cols = max(1, min(DEFAULT_COLS, count))
-    rows = (count + cols - 1) // cols
-    rx, ry, rw, rh = (int(v) for v in rect)
-    g = max(8, min(rw, rh) // 45) if gutter is None else max(0, int(gutter))
-    cw = max(1, (rw - (cols + 1) * g) // cols)
-    ch = max(1, (rh - (rows + 1) * g) // rows)
-    return [(rx + g + (i % cols) * (cw + g),
-             ry + g + (i // cols) * (ch + g), cw, ch)
-            for i in range(count)]
+def coerce_cols(params):
+    """The ``cols`` param, or None when absent or unusable (the
+    component then reads the count off the region's shape). Never raises."""
+    raw = params.get("cols") if isinstance(params, dict) else None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    return int(raw) if int(raw) > 0 else None
 
 
-def picker_regions(w=1920, h=1080, views=None, rect=None, gutter=None):
+def grid_geometry(rect, count, cols=None, gutter=None):
+    """Tile rects row-major inside `rect`.
+
+    The arithmetic is the tile component's (`ui.grid`): the picker keeps
+    only its cap and its name list, so a drawn tile and a tap target are
+    the same four numbers by construction. At most `DEFAULT_COLS`.
+    """
+    columns = ui_grid.columns(rect, count, cap=DEFAULT_COLS, cols=cols)
+    return ui_grid.grid(rect, count, columns, gutter=gutter)
+
+
+def picker_regions(w=1920, h=1080, views=None, rect=None, gutter=None,
+                   cols=None):
     """touch.json entries: one rect per view firing ``select_view``
-    (fixed-shape POST /show). List FIRST: earlier wins overlaps."""
+    (fixed-shape POST /show). List FIRST: earlier wins overlaps. The same
+    geometry the renderer draws (`cols`/`gutter` included)."""
     views = coerce_views({"views": views} if views is not None else {})
     rect = list(rect) if rect is not None else default_rect(w, h)
     return [{"id": "view-%s" % name,
              "rect": list(r),
              "action": {"name": "select_view", "view": name}}
             for name, r in zip(views, grid_geometry(rect, len(views),
+                                                    cols=cols,
                                                     gutter=gutter))]
 
 
@@ -202,7 +219,7 @@ def run(screen, params, stop):
     rect = coerce_rect(params, screen.W, screen.H)
     bg = screen.color(params.get("background"), (8, 10, 16))
     fg = screen.color(params.get("color"), (255, 255, 255))
-    geometry = grid_geometry(rect, len(views))
+    geometry = grid_geometry(rect, len(views), cols=coerce_cols(params))
     screen.present(draw(screen, views, geometry, rect, PALETTE,
                         bg, fg, (140, 160, 190),
                         str(params.get("title")
@@ -223,9 +240,10 @@ if __name__ == "__main__":
     ap.add_argument("--rect", default=None,
                     help="grid area x,y,w,h (default derived from size)")
     ap.add_argument("--gutter", type=int, default=None)
+    ap.add_argument("--cols", type=int, default=None)
     args = ap.parse_args()
     rect = ([int(v) for v in args.rect.split(",")]
             if args.rect else default_rect(args.width, args.height))
     print(json.dumps(picker_regions(args.width, args.height,
                                     args.views.split(","), rect,
-                                    args.gutter), indent=2))
+                                    args.gutter, args.cols), indent=2))

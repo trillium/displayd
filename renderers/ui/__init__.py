@@ -40,6 +40,11 @@ Layout of the package:
   picker and options fill their raw slot with) and a drawing half
   (``draw``, for the Pillow views). Its look is authored once in the
   shared stylesheet, from palette tokens.
+- ``grid`` -- a grid of tiles: how many columns a region takes (read off
+  its shape when the caller does not state one, so a narrow band is ONE
+  application column) and where each box lands. The picker and the options
+  name grid both ask it, so the two can no longer disagree about where a
+  box goes.
 - ``panel`` -- a titled region with a body: the one fit rule (the whole
   block scaled to the region, never truncated), a centred headline and
   body, the corner tag and the accent bar across the top.
