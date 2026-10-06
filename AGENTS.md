@@ -40,7 +40,8 @@ When updating this file, preserve this bar for all agents and keep entries conci
 
 - One module owns it: `policy.py` (activity clock, transient switch/return,
   idle-off decision, persisted config). Daemon actuators live in
-  `displayd.py`; transient view is `renderers/notice.py`.
+  `daemon_power.py` and `daemon_transient.py`; transient view is
+  `renderers/notice.py`.
 - API: `POST /notify`, `POST /feed/<renderer>/<input>`, `GET`/`POST /policy`
   (all on the control page too). Only mutating POSTs count as activity;
   `GET` polling never resets the idle clock.
@@ -57,7 +58,7 @@ When updating this file, preserve this bar for all agents and keep entries conci
 
 ## Control page (phone-first, GET /)
 
-- One template owns it: `CONTROL_PAGE` in `displayd.py` (presentation
+- One template owns it: `CONTROL_PAGE` in `control_page.py` (presentation
   only -- every control drives an existing API endpoint, no page-specific
   routes). Sections top-to-bottom: Views (one-tap grid, big four pinned:
   clock/chat/row/stream, current view highlighted) / Playback / Proof
@@ -74,7 +75,7 @@ When updating this file, preserve this bar for all agents and keep entries conci
   `DISPLAYD_URL` env, no auth to configure); per-view/per-input tools are
   derived live from `GET /renderers`, so a new renderer file is new tools
   with no server change.
-- Feed health states live in `FeedStore` (`displayd.py`): cold/warm/stale/error
+- Feed health states live in `FeedStore` (`feed_store.py`): cold/warm/stale/error
   (`classify_health`; a failed push marks error until a later push succeeds).
   `POST /show {"renderer": "feed_health"}` renders the dashboard
   (`renderers/feed_health.py`, auto-refreshes every 5s).
@@ -92,7 +93,7 @@ When updating this file, preserve this bar for all agents and keep entries conci
   `GET /layout`, `DELETE /layout`; a bare `POST /show` or `/clear`
   exits layout mode. Geometry is stack (`height`/`width`, px or %), grid
   (`rows`/`cols` + `row`/`col`/`row_span`/`col_span`), or explicit `rect`;
-  pure validator is `parse_layout()` in `displayd.py` (atomic reject).
+  pure validator is `parse_layout()` in `layout.py` (atomic reject).
 - Each region runs its renderer in a `RegionScreen` thread; presents
   recomposite from the per-region frame cache, so one region updating
   never disturbs others. Renderer crashes are contained per region
@@ -158,9 +159,10 @@ When updating this file, preserve this bar for all agents and keep entries conci
   `ABS_MT_TRACKING_ID -1` (lift). Synthetic-stream tests live in
   `tests/test_touch.py`; smoke live with `--dry-run` before enabling.
 - Touch allowlist is guard-shaped (parlay `packages/server/src/guard/`
-  mirror): `ACTION_TABLE` in `touch.py` (closed, classified by handler
-  effect) + `endpoint_allowed()` (loopback/tailnet-CGNAT only) + silent
-  denies at dispatch; first table action is tap-to-rate `feedback`.
+  mirror): `ACTION_TABLE` in `touch_actions.py` (closed, classified by handler
+  effect) + `endpoint_allowed()` in `touch_client.py` (loopback/tailnet-CGNAT
+  only) + silent denies at dispatch; first table action is tap-to-rate
+  `feedback`.
   Procedure to add actions: TOUCH.md "how to add a named action".
 - Tap anywhere → options: unconsumed (dead-zone) taps `POST /show
   {"renderer": "options"}` via the `options` table action + `tap_options`
