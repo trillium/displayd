@@ -11,8 +11,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 import displayd
 from PIL import Image
 
-from renderers import beads_common as common
+from renderers import beads_buckets as common
 from renderers import beads_detail as detail
+from renderers import beads_poll
 
 
 class FakeScreen:
@@ -103,25 +104,27 @@ class TestTarget(unittest.TestCase):
 
 class TestCard(unittest.TestCase):
     def setUp(self):
-        with common._POLL["lock"]:
-            common._POLL.update(snapshot=None, updated=0.0, health="cold",
-                                error=None, source=None, focus_cache={},
-                                focus_fetching=set())
+        with beads_poll._POLL["lock"]:
+            beads_poll._POLL.update(snapshot=None, updated=0.0,
+                                     health="cold", error=None,
+                                     source=None, focus_cache={},
+                                     focus_fetching=set())
         detail._LAST_FOCUS["bead_id"] = None
 
     def tearDown(self):
-        with common._POLL["lock"]:
-            common._POLL.update(snapshot=None, updated=0.0, health="cold",
-                                error=None, source=None, focus_cache={},
-                                focus_fetching=set())
+        with beads_poll._POLL["lock"]:
+            beads_poll._POLL.update(snapshot=None, updated=0.0,
+                                     health="cold", error=None,
+                                     source=None, focus_cache={},
+                                     focus_fetching=set())
         detail._LAST_FOCUS["bead_id"] = None
 
     def test_card_renders_real_bead(self):
         snap = snap_of(NH3Y, AC7W)
-        with common._POLL["lock"]:
-            common._POLL.update(snapshot=snap, updated=time.time(),
-                                health="warm", source="test")
-        issue, _ = common.resolve_focus("task-nh3y", snap)
+        with beads_poll._POLL["lock"]:
+            beads_poll._POLL.update(snapshot=snap, updated=time.time(),
+                                     health="warm", source="test")
+        issue, _ = beads_poll.resolve_focus("task-nh3y", snap)
         self.assertIsNotNone(issue)
         bucket, waiters = common.bucket_of(issue, snap)
         self.assertEqual(bucket, "stalled")
@@ -146,9 +149,9 @@ class TestCard(unittest.TestCase):
 
     def test_unknown_bead_draws_not_found(self):
         snap = snap_of(AC7W)
-        with common._POLL["lock"]:
-            common._POLL.update(snapshot=snap, updated=time.time(),
-                                health="warm", source="test")
+        with beads_poll._POLL["lock"]:
+            beads_poll._POLL.update(snapshot=snap, updated=time.time(),
+                                     health="warm", source="test")
         screen = FakeScreen()
         detail._draw_empty(screen, "no such bead: task-nope", "hint",
                            None, (8, 8, 12))

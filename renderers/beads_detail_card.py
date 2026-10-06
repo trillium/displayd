@@ -13,17 +13,16 @@ from PIL import ImageDraw
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from beads_age import _age, age_of
 from beads_common import (
     BUCKET_BY_KEY,
     C_DIM,
     C_LINE,
     C_STALLED,
     C_TEXT,
-    _age,
     _fit,
     _font,
     _wrap,
-    age_of,
 )
 
 PAD = 60

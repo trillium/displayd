@@ -18,8 +18,9 @@ Data: file mirrors first (a deployed snapshot the daemon host cannot build
 itself), live `<store> export` as a fallback where the CLIs exist. Both paths
 run in the poll thread with timeouts, off the draw path.
 
-Bucket derivation, loading, and the poll cache live in beads_common so the
-detail view (beads-detail) cannot drift from this overview.
+Bucket derivation lives in beads_buckets, loading in beads_source, and the
+poll cache in beads_poll, so the detail view (beads-detail) cannot drift
+from this overview. Shared colours and text fitting live in beads_common.
 
 Store colours and icons live in beads_style plus a JSON config the captain
 can edit without touching code. Lookup order (highest first): the
@@ -44,8 +45,9 @@ from PIL import ImageDraw
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import beads_attention as _attention_mod
-import beads_common as common
 import beads_layout as layout
+from beads_age import _age
+from beads_buckets import _attention, _classify
 from beads_common import (
     BUCKETS,
     C_BG,
@@ -56,15 +58,12 @@ from beads_common import (
     C_TEXT,
     DRAW_REFRESH,
     POLL_FALLBACK_INTERVAL,
-    _POLL,
-    _age,
-    _attention,
-    _classify,
     _fit,
     _font,
-    _load_mirror_file,
     _wrap,
 )
+from beads_poll import _POLL, ensure_poll, get_state
+from beads_source import _load_mirror_file
 
 # Re-exported from beads_attention.py (moved there to keep this file
 # within the project's line budget); existing importers keep working.
@@ -73,7 +72,7 @@ draw_lower = _attention_mod.draw_lower
 
 
 def _ensure_poll(cfg):
-    common.ensure_poll(cfg)
+    ensure_poll(cfg)
 
 
 NAME = "beads"
@@ -100,7 +99,7 @@ FOOT_SIZE = 30
 
 
 def _draw(screen, title, bg):
-    cfg, snap, updated, health, error, source = common.get_state()
+    cfg, snap, updated, health, error, source = get_state()
     img = screen.new_image(bg)
     draw = ImageDraw.Draw(img)
     head_font = _font(screen, "DejaVuSans-Bold", HEADER_SIZE)
@@ -197,7 +196,7 @@ def _draw(screen, title, bg):
 
 
 def _snapshot_key():
-    _, snap, updated, health, _, _ = common.get_state()
+    _, snap, updated, health, _, _ = get_state()
     if snap is None:
         return ("cold", health)
     return (updated, len(snap["rolling"]), len(snap["linedup"]),

@@ -26,12 +26,13 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import beads_common as common
+import beads_buckets as buckets
+import beads_poll as poll
+from beads_age import _age
 from beads_common import (
     C_BG,
     DRAW_REFRESH,
     POLL_FALLBACK_INTERVAL,
-    _age,
 )
 
 import beads_detail_card as _card
@@ -119,9 +120,9 @@ def empty_state(target, snap, updated):
 
 
 def _snapshot_key(target):
-    _, snap, updated, health, _, _ = common.get_state()
-    with common._POLL["lock"]:
-        focus_cached = tuple(sorted(common._POLL["focus_cache"]))
+    _, snap, updated, health, _, _ = poll.get_state()
+    with poll._POLL["lock"]:
+        focus_cached = tuple(sorted(poll._POLL["focus_cache"]))
     if snap is None:
         return ("cold", target, health)
     return (target, updated, len(snap["rolling"]), len(snap["linedup"]),
@@ -141,29 +142,29 @@ def run(screen, params, stop):
     if stores is None:
         stores = "task,brain,robots,review,ideas"
     store_list = [s.strip() for s in str(stores).split(",") if s.strip()]
-    common.ensure_poll({"mirror": params.get("mirror") or "",
+    poll.ensure_poll({"mirror": params.get("mirror") or "",
                         "stores": stores, "interval": interval,
                         "focus": params_focus or ""})
 
     def frame():
         target = current_target(screen, params_focus)
-        cfg, snap, updated, health, error, source = common.get_state()
+        cfg, snap, updated, health, error, source = poll.get_state()
         if target and (snap is None or
-                       common.find_in_snapshot(snap, target) is None):
+                       buckets.find_in_snapshot(snap, target) is None):
             # Not in the mirror (or no mirror yet): fetch live in a worker.
             # The draw below still goes up immediately from cache.
-            common.request_focus(target, store_list)
+            poll.request_focus(target, store_list)
         if snap is None or not target:
             msg, hint = empty_state(target, snap, updated)
             _draw_empty(screen, msg, hint, error, bg)
             return
-        issue, _ = common.resolve_focus(target, snap)
+        issue, _ = poll.resolve_focus(target, snap)
         if issue is None:
             msg, hint = empty_state(target, snap, updated)
             _draw_empty(screen, msg, hint, error, bg)
             return
-        bucket, waiters = common.bucket_of(issue, snap)
-        dependents = common.dependents_of(issue, snap)
+        bucket, waiters = buckets.bucket_of(issue, snap)
+        dependents = buckets.dependents_of(issue, snap)
         _draw_card(screen, issue, bucket, waiters, dependents, snap,
                    health, updated, source, bg)
 
