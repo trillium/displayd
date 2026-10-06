@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
 from PIL import Image
 
 import theme
+from ui import paragraph as ui_paragraph
 from ui import shell, stat
 from ui import text as ui_text
 
@@ -36,7 +37,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 MIGRATED = ("renderers/resources_draw.py", "renderers/services_draw.py",
             "renderers/feed_health.py", "renderers/activity.py",
-            "renderers/qr.py")
+            "renderers/qr.py", "renderers/reload.py")
 
 # Views that now draw through the layer but still need a Pillow *image*
 # operation of their own (stream resizes a decoded frame), so they cannot
@@ -146,6 +147,92 @@ class TextTest(unittest.TestCase):
                                           rows=3)), 3)
         self.assertEqual(ui_text.wrap(self.screen, "a\nb", 34, 0),
                          ["a", "b"])
+
+
+class ParagraphTest(unittest.TestCase):
+    """A fitted multi-line block inside a rect (the highlights rule)."""
+
+    def setUp(self):
+        self.screen = FakeScreen()
+        self.rect = (1000, 300, 1880, 800)
+
+    def ink(self, img, box):
+        page_colour = theme.rgb("page")
+        return sum(n for n, c in img.crop(box).getcolors(1 << 24)
+                   if c != page_colour)
+
+    def test_the_block_never_leaves_its_rect(self):
+        for text in ("subject line\nbody words here",
+                     "subject\n" + "body words " * 40):
+            with self.subTest(text=text[:20]):
+                img = page()
+                self.assertGreater(
+                    ui_paragraph.paragraph(img, self.screen, self.rect, text), 0)
+                x0, y0, x1, y1 = self.rect
+                self.assertEqual(self.ink(img, (0, 0, 1920, y0)), 0)
+                self.assertEqual(self.ink(img, (0, y1, 1920, 1080)), 0)
+                self.assertEqual(self.ink(img, (0, 0, x0, 1080)), 0)
+                self.assertEqual(self.ink(img, (x1, 0, 1920, 1080)), 0)
+                self.assertGreater(self.ink(img, self.rect), 0)
+
+    def test_the_first_line_is_emphasised_and_the_rest_support_it(self):
+        img = page()
+        ui_paragraph.paragraph(img, self.screen, self.rect,
+                               "the subject\nthe first body line")
+        strong, soft = theme.rgb("ink-strong"), theme.rgb("muted-soft")
+        self.assertGreater(count(img, strong), 0)
+        self.assertGreater(count(img, soft), 0)
+        strong_y = min(y for y in range(1080)
+                       if any(img.getpixel((x, y)) == strong
+                              for x in range(0, 1920, 7)))
+        soft_y = min(y for y in range(1080)
+                     if any(img.getpixel((x, y)) == soft
+                            for x in range(0, 1920, 7)))
+        self.assertLess(strong_y, soft_y,
+                        "the subject must read above the body")
+
+    def test_a_caller_ink_and_family_are_honoured(self):
+        img = page()
+        ui_paragraph.paragraph(img, self.screen, self.rect, "subject\nbody",
+                               ink=(1, 2, 3), first_ink=(4, 5, 6))
+        self.assertGreater(count(img, (1, 2, 3)), 0)
+        self.assertGreater(count(img, (4, 5, 6)), 0)
+        self.assertEqual(count(img, theme.rgb("muted-soft")), 0)
+
+    def test_a_block_too_big_for_the_box_draws_nothing(self):
+        img = page()
+        # A 30px-tall box cannot hold even the floor size's one line.
+        self.assertEqual(ui_paragraph.paragraph(img, self.screen,
+                                                (0, 0, 60, 6), "words here"), 0)
+        self.assertEqual(
+            count(img, theme.rgb("page")), 1920 * 1080,
+            "a block that cannot fit must leave the frame untouched")
+
+    def test_rows_bound_the_block(self):
+        img = page()
+        tall = ui_paragraph.paragraph(img, self.screen, (0, 0, 900, 1000),
+                                      "\n".join("line %d" % i
+                                                for i in range(12)), rows=2)
+        self.assertEqual(tall, 2)
+
+    def test_it_is_total_on_garbage(self):
+        img = page()
+        self.assertEqual(ui_paragraph.paragraph(img, self.screen,
+                                                "junk", "text"), 0)
+        self.assertEqual(ui_paragraph.paragraph(img, self.screen,
+                                                self.rect, None), 0)
+        self.assertEqual(ui_paragraph.paragraph(img, self.screen,
+                                                self.rect, "   "), 0)
+        self.assertEqual(ui_paragraph.paragraph(img, self.screen, None, "x"), 0)
+        self.assertEqual(ui_paragraph.paragraph(None, self.screen,
+                                                self.rect, "x"), 0)
+
+    def test_every_colour_is_a_palette_role(self):
+        with open(os.path.join(ROOT, "renderers", "ui",
+                               "paragraph.py"), encoding="utf-8") as handle:
+            src = handle.read()
+        self.assertEqual(HEX_RE.findall(src), [])
+        self.assertIn("theme.rgb", src)
 
 
 class ShellTest(unittest.TestCase):

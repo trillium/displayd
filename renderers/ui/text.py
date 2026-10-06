@@ -1,35 +1,32 @@
 """The text component: one font, one measurement, one fitting rule.
 
-Every Pillow view needs the same three things -- a face at a size, the
-width of a string in that face, and a string cut to a width -- and every
-Pillow view wrote them again: ``_font``, ``_font_or_default``, ``_fit``
-and a truncation loop appear in ``resources_draw``, ``services_draw``,
-``row_draw``, ``stream`` and ``text``. They were the same three rules with
-four copies of the code between them, because nothing owned "a line of
-type".
+Every Pillow view needs the same few things -- a face at a size, the width
+of a string in that face, a string cut to a width, the largest size at
+which a line still fits, and a paragraph broken to a column -- and each
+view wrote them again before this module owned "a line of type".
 
-Two guarantees, both load-bearing for the panel:
+Three guarantees, all load-bearing for the panel. ``face`` is never None:
 
-- **``face`` is never None.** A host without ``/usr/share/fonts`` still
-  puts words on the panel -- Pillow's default bitmap face, small but
-  readable -- because a missing font must not become a missing line.
-- **nothing here raises.** A component that cannot draw returns the frame
-  unchanged, which is how one broken piece never blanks the panel; that
-  has to survive a measure on a font object Pillow cannot introspect.
+- a host without ``/usr/share/fonts`` still prints a line, in Pillow's
+  default bitmap face; a missing font must not become a missing line.
+- nothing here raises: a component that cannot draw returns the frame
+  unchanged, so one broken piece never blanks the panel -- including a
+  measure on a font object Pillow cannot introspect.
+- ``fit_size`` shrinks rather than cuts, never below its own floor.
+
 Sizes are the caller's: a component names its own scale (``shell.HEAD_SIZE``,
-``stat.LABEL_SIZE``) so the type scale of the panel is legible as data
-rather than scattered as magic numbers through the drawing code.
-
-The fourth rule is ``fit_size``: a line that does not fit its column is
-made smaller rather than cut, and never below its floor. Two views still
-carry their own version of it (``reload.fit_font``,
-``retro_grid_draw._fit_font``); they fold in when those views migrate.
+``stat.LABEL_SIZE``) so the panel's type scale is legible as data rather
+than magic numbers scattered through drawing code. The multi-line
+composition of these primitives is ``ui.paragraph`` (a fitted block in a
+rect), and ``retro_grid_draw`` still carries its own shrink-to-fit copy;
+it folds in when that view moves.
 """
 
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 FAMILY = "DejaVuSans"        # the regular face
 BOLD_FAMILY = "DejaVuSans-Bold"
@@ -205,11 +202,11 @@ def wrap(screen, text, size, room, rows=2, bold=False, family=None,
 
 
 def line(img, ink, xy, xy2, width_px=2):
-    """A horizontal/vertical hairline between two points. Never raises.
+    """A hairline between two points, horizontal or vertical. Never raises.
 
     Here rather than in each view because a divider is part of the same
-    vocabulary as the type sitting on it, and because the rule under a
-    band and the rule between two rows must be the same colour.
+    vocabulary as the type sitting on it, and the rule under a band and the
+    rule between two rows must be one colour.
     """
     try:
         from PIL import ImageDraw

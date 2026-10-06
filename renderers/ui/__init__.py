@@ -35,6 +35,11 @@ Layout of the package:
   one line-that-shrinks-to-its-column rule (``fit_size``), so a line of
   type is asked for rather than re-implemented per view -- and ``wrap``,
   the one way a paragraph is broken to a width.
+- ``paragraph`` -- a fitted multi-line block inside a rect: wrap, shrink
+  until the whole block fits (never past its floor), centre it vertically,
+  read left to right with the first line emphasised. ``reload``'s
+  highlights summary is a paragraph; the rule used to live in that view's
+  own module with its own wrap and colours.
 - ``shell`` -- the band a full-panel view wears: title, detail, health dot
   and its honest age, the rule under it, the footer line, ``short_age``/
   ``age`` (the one age-bucket rule) -- and ``band_pad``, the inset that

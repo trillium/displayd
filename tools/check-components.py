@@ -59,7 +59,6 @@ EXEMPTIONS = (
     "renderers/macbook_draw.py",
     "renderers/macbook_strip.py",
     "renderers/qr_common.py",
-    "renderers/reload.py",
     "renderers/retro_grid_draw.py",
 )
 

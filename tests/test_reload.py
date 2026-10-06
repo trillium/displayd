@@ -15,6 +15,7 @@ import http.client
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -28,6 +29,7 @@ from http.server import ThreadingHTTPServer
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 
 import displayd
+import theme
 
 from renderers import reload as reload_view
 from renderers import qr_common
@@ -1197,6 +1199,70 @@ class TestReloadHighlightsHttp(HttpReloadTestCase):
             self.assertEqual(code, 200, "body %r" % (body,))
             self.assertEqual(result["params"], {"sha": DEPLOYED_SHA},
                              "body %r" % (body,))
+
+
+def colour_count(img, colour):
+    return sum(n for n, c in img.getcolors(1 << 24) if c == colour)
+
+
+class TestReloadComponentMigration(unittest.TestCase):
+    """The reload view composes the layer; the highlights rule is text-only."""
+
+    def source(self, name):
+        root = os.path.join(os.path.dirname(__file__), os.pardir)
+        with open(os.path.join(root, "renderers", name),
+                  encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_the_view_holds_no_drawing_primitive_or_colour_literal(self):
+        src = self.source("reload.py")
+        for gone in ("from PIL", "ImageDraw", "ImageFont", "load_font",
+                     "fit_font", "def _fit"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, src)
+        self.assertEqual(re.findall(r"#[0-9a-fA-F]{3,8}\b", src), [])
+        for comp in ("from ui import panel", "from ui import paragraph",
+                     "from ui import text", "theme.rgb"):
+            with self.subTest(component=comp):
+                self.assertIn(comp, src)
+
+    def test_the_highlights_module_no_longer_owns_pixels(self):
+        src = self.source("reload_highlights.py")
+        for gone in ("PIL", "ImageDraw", "ImageFont", "def draw",
+                     "def wrap", "def load_font", "def fit_font"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, src)
+
+    def test_the_page_the_bar_and_both_lines_are_palette_roles(self):
+        img = run_reload({"sha": DEPLOYED_SHA})
+        self.assertEqual(img.getpixel((5, 40)), theme.rgb("page"))
+        self.assertEqual(img.getpixel((960, 5)), theme.accent_rgb("reload"))
+        self.assertGreater(colour_count(img, theme.rgb("ink-strong")), 0)
+        self.assertGreater(colour_count(img, theme.rgb("muted-soft")), 0)
+        # The three literals this view used to carry are gone from the frame.
+        for old in ((10, 10, 14), (200, 200, 205), (140, 140, 150)):
+            with self.subTest(old=old):
+                self.assertEqual(colour_count(img, old), 0)
+
+    def test_the_highlights_block_is_a_paragraph_in_its_own_column(self):
+        img = run_reload({"sha": DEPLOYED_SHA,
+                          "highlights": "the subject\nthe first body line"})
+        strong, soft = theme.rgb("ink-strong"), theme.rgb("muted-soft")
+        qr_top, qr_bottom = int(1080 * 0.24), int(1080 * 0.82)
+        column = img.crop((960, qr_top, 1920, qr_bottom))
+        self.assertGreater(colour_count(column, strong), 0)
+        self.assertGreater(colour_count(column, soft), 0)
+        # Nothing of the block lives in the gutter before its left edge.
+        gutter = img.crop((960, qr_top, 1000, qr_bottom))
+        self.assertEqual(colour_count(gutter, soft), 0)
+
+    def test_the_highlights_cannot_shrink_the_code(self):
+        classic = run_reload({"sha": DEPLOYED_SHA})
+        with_text = run_reload({"sha": DEPLOYED_SHA,
+                                "highlights": "Ship the thing\nfirst thing"})
+        self.assertEqual(classic.size, with_text.size)
+        # The symbol keeps its size on the left; the SHA stays prominent.
+        self.assertGreater(colour_count(with_text, theme.rgb("muted-soft")), 0)
 
 
 if __name__ == "__main__":

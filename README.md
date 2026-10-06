@@ -333,10 +333,13 @@ after the gesture strips so the home badge cannot cover its dot, and its
 idle frame is the panel component's block). Both draw through
 `renderers/ui/text.py` — the layer's one font, measurement, trim-to-room rule,
 `fit_size` for a line that shrinks to its column, and `wrap` for a paragraph
-broken to a width. The five views that used to carry that band and those rows
-by hand (`resources`, `services`, `row`, `feed_health`, `activity`) are now
-composers over them, and carry no colour, font, truncation, wrap or age rule of
-their own.
+broken to a width — and a fitted paragraph *block* inside a rect (wrap,
+shrink until the whole block fits, first line emphasised) is one component
+too, `renderers/ui/paragraph.py`, which is what the reload view's commit
+highlights summary is drawn with. The five views that used to carry that
+band and those rows by hand (`resources`, `services`, `row`, `feed_health`,
+`activity`) are now composers over them, and carry no colour, font,
+truncation, wrap or age rule of their own.
 
 A **panel** — a titled region with a body — is `renderers/ui/panel.py`: one
 scale-to-fit rule (the whole block is scaled to the region and never cut), a
@@ -370,6 +373,14 @@ the layer's one line-of-type rule. Both views no longer hold a font loader, an
 image-drawing primitive or a colour literal; the ink a caller-coloured page
 needs is `theme.ink_on`, the token layer's one rule for "what reads on this
 surface".
+
+The reload confirmation view is a pure composer as well: its placeholder and
+headline are `ui.panel` (the block, and the accent bar the view's own palette
+slot fills), its SHA and hint lines are `ui.text` fitted and written at their
+anchors, and its highlights summary is `ui.paragraph`. `renderers/reload.py`
+holds no drawing primitive and no colour; `renderers/reload_highlights.py` is
+the sanitising rule alone — text only, no pixels — so the same file can be
+run as `deploy.sh`'s extraction script on a host with no Pillow installed.
 
 The apps dock under the merged home screen is a template too
 (`html-templates/dock.html`), composited into the picker frame inside the rect

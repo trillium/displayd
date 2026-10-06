@@ -906,16 +906,17 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   20px) instead of three 69px ones (12px floor), `cols` is a real param,
   and `picker_regions` generates the matching tap rects. A dedicated
   narrow-band renderer is no longer needed.
-- **The remaining hand-drawing views** (the gate's 9 exemptions) are the
+- **The remaining hand-drawing views** (the gate's 8 exemptions) are the
   bigger migration: `beads*`, `macbook_draw`/`macbook_strip`,
-  `qr_common`, `reload`, `retro_grid_draw`,
+  `qr_common`, `retro_grid_draw`,
   `life` and `_html_native` (the engine itself,
   which draws through the C ABI rather than by hand). The vocabulary they
-  need all exists now (`tile` + `grid`, `text` + `wrap` + `fit_size`,
-  `shell`, `stat` + `list_row` + `pill`, `panel` + `strip`, `progress`), so
-  each is a straight migration with its own test story, not new design.
-  `clock`, `touch_confidence_draw`, `_html_error`, `playlist`,
-  `playlist_bar`, `qr` and `stream` left the list in sections 2i-2m.
+  need all exists now (`tile` + `grid`, `text` + `wrap` + `fit_size`, the
+  new `paragraph`, `shell`, `stat` + `list_row` + `pill`, `panel` + `strip`,
+  `progress`), so each is a straight migration with its own test story, not
+  new design. `clock`, `touch_confidence_draw`, `_html_error`, `playlist`,
+  `playlist_bar`, `qr`, `stream` and `reload` left the list in sections
+  2i-2n.
 - **Layout-mode taps.** While a layout owns the panel the touch service
   evaluates global regions only (view-scoped regions are skipped), so a
   band's tiles need global `touch.json` entries at the band geometry
@@ -930,10 +931,16 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   final push, not with each increment.
 - **Two copies of “broken to a width” survive** in exempt views:
   `beads_common._wrap` and `macbook_strip._wrap` (`activity`'s went in
-  section 2g, `_html_error`'s in section 2j). They take a PIL `draw` +
-  `font` rather than a screen + size, so folding them onto
-  `ui.text.wrap` means changing their call sites and their own tests:
-  its own increment.
+  section 2g, `_html_error`'s in section 2j, `reload_highlights`' in
+  section 2n). They take a PIL `draw` + `font` rather than a screen +
+  size, so folding them onto `ui.text.wrap` means changing their call
+  sites and their own tests: its own increment.
+- **A fitted paragraph block now has one owner, but only one consumer.**
+  `renderers/ui/paragraph.py` is the general rule (wrap, shrink until the
+  whole block fits, centre vertically, first line emphasised) and
+  `reload`'s highlights summary is the first caller. `beads_common` and
+  `macbook_strip` are natural next consumers once their wrap copies are
+  folded in.
 - **Two copies of the band's age line survive** in `beads_age._age`
   (`row_draw._age` and `feed_health.format_age` were deleted in sections
   2g/2h, the shared bucket rule is `ui.shell.short_age`). They are inside
@@ -941,7 +948,7 @@ the pre-change tree (red instead of the badge fill at the badge tile).
 - **Hand-drawn views still sit under the badges.** `ui.shell` now keeps
   the band clear of the home/sleep badges (§2h) and `stream`'s live tag
   takes the same inset (`shell.band_pad`, §2m), but a view that draws at
-  its own `PAD` (beads, macbook, reload, retro_grid,
+  its own `PAD` (beads, macbook, retro_grid,
   life) is still covered by the home badge in the top
   160px of the panel. Fixing each one is part of its own migration, which
   is exactly why the band's version went into the component.
@@ -2280,6 +2287,139 @@ which is exactly the three known-red modules (`test_deploy_reload_proof`,
 pressure-dependent live-socket test recorded in §2k; run alone it passes
 (`Ran 18 tests, OK`). No module touched by this increment regressed.
 
+### 2n. The reload view and the paragraph component (this increment)
+
+`renderers/reload.py` was the last view in the reload/deploy path that
+drew its own pixels, and it carried three fit searches, a font loader, a
+placeholder card and six colour literals. It is now a pure composer:
+
+- the page is `theme.rgb("page")`, the accent bar is `ui_panel.bar`
+  filled with the view's own palette slot (`theme.accent_rgb("reload")`,
+  and `panel.BAR` happens to be exactly the 18px band it drew before);
+- the RELOADED headline is `ui_panel.headline` (the same bold face at the
+  same 130px, since the word fits the region's margin at the ceiling);
+- the placeholder is `ui_panel.block` twice (title, body), so a bad SHA
+  still messages instead of blanking;
+- the SHA and the confirm hint are `ui_text.fit_size` + `ui_text.write`,
+  so they shrink to the room rather than clip -- the same rule the three
+  private `fit_font` calls implemented;
+- the highlights summary is `ui_paragraph.paragraph`.
+
+`renderers/ui/paragraph.py` is new: the layer's fitted multi-line block
+(wrap to the column, shrink until the whole block fits across *and* down,
+centre vertically, read left to right with the first line emphasised,
+`rows` bounded). It is the sixth copy of "break a paragraph to a width"
+folded into one owner, and the second half of "make the text fit the
+box" that `ui.text.fit_size` does for a single line. It lives beside
+`ui/text.py` rather than inside it because that module is at the 250-line
+budget and because the two are different jobs (measure/draw a line vs
+compose lines into a block).
+
+`renderers/reload_highlights.py` lost `load_font`, `fit_font`, `wrap` and
+draw entirely (194 -> 110 lines): it is now the sanitising/extraction
+rule only, **no pixels at all**. That is a real gain beyond the
+duplication -- `deploy.sh` runs the file as a script on the Mac
+(`... | python3 reload_highlights.py`), and the extraction path now needs
+no Pillow.
+
+#### Deliberate pixel changes (one colour, one owner)
+
+| What | Before | After |
+| --- | --- | --- |
+| page background (both the view and the placeholder) | `(10, 10, 14)` | `theme.rgb("page")` = `(7, 8, 12)` |
+| SHA line and highlights body | `(200, 200, 205)` | `theme.rgb("muted-soft")` = `(185, 194, 214)` |
+| confirm hint | `(140, 140, 150)` | `theme.rgb("muted")` = `(139, 147, 167)` |
+| highlights subject | `(255, 255, 255)` | `theme.rgb("ink-strong")` -- byte-identical |
+| placeholder title | `(255, 255, 255)` at bold 110 | `panel.block(ink=ink-strong, size=110, bold=True)` -- same face, same size |
+| accent bar | `draw.rectangle([0, 0, W, 18])` | `panel.bar` -- byte-identical (`panel.BAR == 18`) |
+
+The measured frame confirms all of it (evidence below): the three old
+literals have **0 pixels** each, the page and accent probes read the
+tokens exactly, and the highlights column shows 1670 ink-strong (the
+subject) over 6006 muted-soft (the body) px with 0 in the 40px gutter
+before the block's left edge.
+
+#### The new assertions fail before, pass after
+
+From HEAD (deterministic, no execution):
+
+    $ git show HEAD:renderers/reload.py | grep -c 'ImageDraw\|load_font\|fit_font'
+    10
+    $ git show HEAD:renderers/reload.py | grep -c '(10, 10, 14)'
+    2
+    $ git show HEAD:renderers/reload_highlights.py | grep -c 'def draw\|def wrap\|def load_font\|def fit_font'
+    4
+    $ python3 -c 'import theme; print(theme.rgb("page") == (10,10,14), theme.rgb("muted-soft") == (200,200,205))'
+    False False
+
+So `TestReloadComponentMigration` (5 tests in `tests/test_reload.py`) and
+the gate's stale-exemption direction were all red on the old tree:
+leaving `renderers/reload.py` in `EXEMPTIONS` now makes the gate itself
+report `stale exemption ... renderers/reload.py`.
+
+#### Contact points changed outside the migration
+
+- `tools/check-components.py`: `EXEMPTIONS` 9 -> 8.
+- `renderers/ui/paragraph.py` (new, 92 lines); `renderers/ui/text.py`
+  220 -> 217 lines (its module docstring was condensed and its stale
+  "two views still carry `fit_font`" note now names only
+  `retro_grid_draw`); `renderers/ui/__init__.py` lists the new component.
+- `README.md` (the text-component paragraph and a reload-as-composer
+  paragraph), `docs/HTML_RENDERER.md` (the component table row),
+  `renderers/reload.py`'s and `renderers/reload_highlights.py`'s own
+  docstrings.
+- Tests: `tests/test_shell.py` gained `ParagraphTest` (7 tests: the block
+  never leaves its rect, the subject inks above the body, caller
+  inks/family honoured, silent when the box cannot hold the floor, the
+  `rows` bound, totality on garbage incl. `img=None`, and that the
+  component holds no hex literal) and `renderers/reload.py` joined its
+  `MIGRATED` anti-drift list; `tests/test_reload.py` gained the 5
+  migration tests above.
+
+#### The whole suite after this increment
+
+    $ python3 -m unittest discover -s tests
+    ...
+    Ran 1558 tests in 357.479s
+    FAILED (failures=2, errors=1, skipped=10)
+
+which is exactly the three known-red modules
+(`test_deploy_reload_proof` and `test_mac_zoom` as failures,
+`test_talon_apps` as a loader error). The component/migrated-view prefix
+(`tests.test_shell tests.test_reload tests.test_theme tests.test_components
+tests.test_panel tests.test_progress tests.test_stream tests.test_qr`) is
+285 tests, OK (8 skipped).
+
+#### The reload view, the placeholder and every layout style, rendered headless
+
+    $ DISPLAYD_FAKE_FB=1 python3 /tmp/paragraph_evidence.py
+    == the reload view, highlights beside the commit QR ==
+      page at (5,40): (7, 8, 12) (page=(7, 8, 12))
+      accent bar at (960,5): (80, 220, 120) (accent=(80, 220, 120))
+      ink-strong px: 239923  muted-soft px: 14097
+      highlights column ink: first-line 1670 / body 6006 (gutter 0)
+      old literal (10, 10, 14) px: 0
+      old literal (200, 200, 205) px: 0
+      old literal (140, 140, 150) px: 0
+    == the tap-only classic view (no highlights) ==
+      page 1646693 px, accent 34560 px, muted-soft (sha+hint) 14097 px, old reds 0
+    == the bad-SHA placeholder is the panel block ==
+      page 2043948 px, ink-strong 12298 px, muted-soft 9496 px, old literals 0
+    == the four layout styles, with the system buttons ==
+      full                   regions=1 renderers=['clock'] badge px=29416 first_pixel_ms=2.7
+      split-50-50            regions=2 renderers=['clock', 'picker'] badge px=29416 first_pixel_ms=3.9
+      split-50-50-columns    regions=2 renderers=['clock', 'options'] badge px=29416 first_pixel_ms=5.9
+      15-70-15               regions=3 renderers=['picker', 'clock', 'picker'] badge px=29416 first_pixel_ms=6.6
+    == system buttons over a template view (html/status) ==
+      alert-page px: 0  panel px: 36628  accent px: 1653  badge px: 29416
+
+(frames under `/tmp/paragraph-evi-*.png`; the second and third rows are
+`ink-strong` and `muted-soft` where the first row splits them into the
+highlights column and its gutter. A first attempt read `accent 0` for the
+template because the predicate `alert-page < 10000` was also true of the
+previous layout frame -- the wait now requires the template's `panel`
+colour too.)
+
 ## 8. The branch and the pull request — opened in an earlier increment
 
 Iterations 1-12 never pushed anything: the remote had no
@@ -2346,11 +2486,11 @@ touched.
 ## Note on the stop condition
 
 The command above exits zero as of this increment. Its exact output (the
-9-exemption ratchet, from section 2m):
+8-exemption ratchet, from section 2n):
 
     $ python3 tools/check-components.py && python3 -m unittest tests.test_picker tests.test_unified tests.test_chat tests.test_html tests.test_html_runtime_install tests.test_control tests.test_options tests.test_layout && python3 tools/check-lines.py
-    component layer ok: 9 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 336 tests in 52.809s
+    component layer ok: 8 shipped module(s) still draw by hand; all exempt, none stale
+    Ran 336 tests in 52.793s
     OK
     line budget ok: all source files within 250 lines
     $ echo $?
@@ -2361,14 +2501,13 @@ budget line plus `ok: no generated native artifacts tracked` and the
 component line.)
 
 That is a **floor, not the finish line**:
-the gate is a ratchet with 9 exemptions, most views still hand-draw, and
+the gate is a ratchet with 8 exemptions, most views still hand-draw, and
 the component vocabulary exists (`system_buttons`, `ui.tile` + `ui.grid`,
-`ui.shell` + `ui.stat` + `ui.text`, `ui.panel`, `ui.progress`, and the
-`ui.base.chain` primitive) but the larger views (`beads*`, `macbook_*`,
-`qr_common`, `reload`, `retro_grid`, `life`)
+`ui.shell` + `ui.stat` + `ui.text` + `ui.paragraph`, `ui.panel`,
+`ui.progress`, and the `ui.base.chain` primitive) but the larger views
+(`beads*`, `macbook_*`, `qr_common`, `retro_grid`, `life`)
 have not been migrated onto it. What is left is those migrations, the
-control page's style picker, the layout-mode tap entries, and the layout
-composite seam recorded in "Still owed". The stop condition became
-reachable because the gate exists and the health gate stays green while
-the migration is in flight — which is exactly what it was designed to
-allow.
+layout-mode tap entries, and the layout composite seam recorded in "Still
+owed". The stop condition became reachable because the gate exists and
+the health gate stays green while the migration is in flight — which is
+exactly what it was designed to allow.
