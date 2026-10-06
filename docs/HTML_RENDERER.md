@@ -261,6 +261,37 @@ Failure here is the shared full-screen card, not a strip: options is a whole
 panel view, so a deleted template leaves the red rule and a message that names
 the missing key.
 
+## chat.html: the two-pane chat panel
+
+`html-templates/chat.html` is the chat view (`renderers/chat.py`): the shared
+chrome, minus the side gesture strips (the chat panel has no tap regions), plus
+one two-pane layer. Left is the roster of viewers in the channel now, fed by
+`POST /feed/chat/roster`; right is the chat, fed by `POST /feed/chat/message`
+with messages and join events on the same ordered stream. With nothing pushed
+there is no pane layer at all and the notice says the panel is waiting -- the
+healthy idle state (project-a4t.8.1) -- rather than framing an empty roster
+column and silence.
+
+An empty value collapses a chrome slot, as everywhere else. The layer itself is
+one raw slot, `{{panes|raw}}`, and it holds both pane divs: a document gets one
+raw slot, so the panes' boxes and rows are generated together by
+`renderers/chat_panes.py`, which measures each line with the same face the
+document draws with (`renderers/chat_fit.py`) and places it at panel pixels,
+the way `_picker_tiles.py` places tiles. Every display name and every message
+body is escaped before it reaches that markup, and the only colours in it are
+`#rrggbb` strings built from palette tuples the screen already parsed, so a
+pushed chat payload can never add markup or a style.
+
+Presence is never fetched by this view. The bridge polls Firebot once per cycle
+and pushes the roster and the joins off that single read
+(`bridges/firebot_roster.py`), so the daemon stays output-only and the join
+diff and the pane cannot disagree; when the pushes stop, the panel says
+`ROSTER STALE` with the age instead of showing last-known presence as live.
+
+Like `picker`, `options` and the home screen, this view needs the built engine:
+without it the panel shows the red "build it: tools/build_litehtml.sh" card
+instead of the chat.
+
 
 ## The trust boundary
 
@@ -360,6 +391,10 @@ that only survives polite input is not a budget.
 | `html-templates/options.html` | the selection screen: chrome plus one name layer |
 | `renderers/options.py` | the options view: params, the pinned picks, the card |
 | `renderers/_options_grid.py` | geometry -> name markup + the chrome variables |
+| `html-templates/chat.html` | the two-pane chat panel: roster left, chat right |
+| `renderers/chat.py` | the chat view: params, the ordered event timeline, the loop |
+| `renderers/chat_panes.py` | geometry -> pane/row/line markup + the chrome variables |
+| `renderers/chat_fit.py` | measurement and wrapping: text -> measured rows |
 | `renderers/_html_templates.py` | the trust boundary: name, root, escaping, raw slots |
 | `renderers/_html_error.py` | the red rule and its message, shared by both views |
 | `renderers/_html_native.py` | ctypes + Pillow; fonts, images, clipping, tiling |
