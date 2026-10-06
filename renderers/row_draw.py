@@ -1,179 +1,138 @@
 """Frame rendering for the rowing-streak view. Single concept: draw.
 
-Palette, type sizes, font helpers, the waiting/error message frame, the
-main streak frame, and the snapshot cache key. Pure presentation: no I/O,
-no polling. Imported and re-exported by row.py so existing references
-(row_view._draw, row_view.C_BG, ...) keep working.
+Presentation only, and every pixel comes from the component layer: the
+band (title, health dot, honest age line, rule) and the footer are
+``ui.shell``, the type steps are ``ui.stat``, and the face, measurement,
+fit and hero-shrink rules are ``ui.text``. This module owns which number
+goes where and nothing else.
+
+That is the whole point of the migration this file just went through. It
+used to carry its own font loader (``_font``), its own never-None wrapper
+(``_font_or_default``), its own truncation rule (``_fit``), its own age
+buckets (``_age``), its own health-word colour map and its own band --
+the same forty lines ``resources_draw`` and ``services_draw`` drew, and
+the same five rules ``ui.text``/``ui.shell``/``ui.stat`` now own. A view
+that draws its own band is a defect the component layer exists to delete.
+
+Four deliberate pixel changes fall out of that, all of them the same
+one-owner move:
+
+- the page/rule/text greys are the palette's roles (``page``, ``rule``,
+  ``ink``, ``muted``) rather than this view's near-identical literals;
+- the live hero wears the view's palette slot accent
+  (``theme.accent_rgb("row")``), the colour its progress bar and picker
+  tile already use, instead of a view-local orange;
+- the health dot and the status line are ``ui.shell.HEALTH_ROLE``, so the
+  four poll words map to ``muted``/``ok``/``attention``/``alert`` here
+  exactly as they do on every other polled view;
+- an age past a day reads in days (``shell.age``), not in ever-growing
+  hours.
+
+The caller (``row.py``) passes only the frame, the subject words and the
+palette role an error wears; nothing here raises, and a draw that fails
+leaves the last good frame on the panel.
 """
 
-import time
+import os
+import sys
 
-from PIL import ImageDraw, ImageFont
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-C_BG = (8, 8, 12)
-C_TEXT = (235, 235, 240)
-C_DIM = (140, 140, 150)
-C_LINE = (60, 60, 70)
-C_FIRE = (255, 150, 50)
-C_UP = (80, 220, 120)
-C_FAILED = (255, 90, 90)
-C_WARN = (255, 180, 60)
+import theme
+from ui import shell, stat
+from ui import text as ui_text
 
-PAD = 60
-HEADER_SIZE = 72
-BIG_SIZE = 300
-LABEL_SIZE = 44
-ROW_SIZE = 48
-SUB_SIZE = 36
-FOOT_SIZE = 30
+BIG_SIZE = 300        # the hero number's ceiling
+HERO_ROOM = 0.55      # fraction of the column the hero may use before shrinking
+HERO_FLOOR = 60       # ... and the smallest size it shrinks to
+HERO_STEP = 20        # how coarsely it shrinks
+ROW_SIZE = 48         # the "last row" and "year pace" lines
 
-
-def _font(screen, name, size):
-    try:
-        path = screen.font_path(name)
-    except Exception:
-        return None
-    if path is None:
-        return None
-    try:
-        return ImageFont.truetype(path, size)
-    except Exception:
-        return None
-
-
-def _font_or_default(screen, name, size):
-    return _font(screen, name, size) or ImageFont.load_default()
-
-
-def _fit(draw, text, font, max_w, max_chars=90):
-    text = str(text or "")
-    if font is not None:
-        try:
-            while len(text) > 4 and draw.textlength(text, font=font) > max_w:
-                text = text[:-2]
-            return text
-        except Exception:
-            pass
-    return text[:max_chars] if len(text) > max_chars else text
-
-
-def _age(updated):
-    if not updated:
-        return "no data yet"
-    secs = max(0, time.time() - updated)
-    if secs < 60:
-        return "updated %ds ago" % int(secs)
-    if secs < 3600:
-        return "updated %dm ago" % int(secs // 60)
-    return "updated %dh ago" % int(secs // 3600)
+# The type scale is declared by the components, not restated here.
+HEADER_SIZE = shell.HEAD_SIZE
+LABEL_SIZE = stat.LABEL_SIZE
+FOOT_SIZE = shell.FOOT_SIZE
+PAD = shell.PAD
+HERO_Y = 150          # the hero's box top
+LABEL_Y = 200         # "DAY STREAK" beside it
+BANK_Y = 280          # rows/bank under the label
+DIVIDER_Y = 560       # between the hero and the glanceable lines
+LAST_Y = 586          # "last row <date>"
+PACE_Y = 656          # the year-pace line
+STATUS_Y = 726        # the streak status line
+MESSAGE_Y = 220       # the waiting/error card's big word
+NOTE_Y = 300          # ... and its note under it
 
 
 def _draw_message(screen, title, bg, big, sub, foot, color):
+    """The waiting/error card: band, one big coloured word, a note."""
     img = screen.new_image(bg)
-    draw = ImageDraw.Draw(img)
-    head_font = _font_or_default(screen, "DejaVuSans-Bold", HEADER_SIZE)
-    label_font = _font_or_default(screen, "DejaVuSans-Bold", LABEL_SIZE)
-    row_font = _font_or_default(screen, "DejaVuSans", ROW_SIZE)
-    sub_font = _font_or_default(screen, "DejaVuSans", SUB_SIZE)
-    small_font = _font_or_default(screen, "DejaVuSans", FOOT_SIZE)
-    draw.text((PAD, 24), _fit(draw, title, head_font, screen.W - 2 * PAD),
-              font=head_font, fill=C_TEXT)
-    draw.line([(PAD, 128), (screen.W - PAD, 128)], fill=C_LINE, width=2)
-    draw.text((PAD, 220), _fit(draw, big, label_font, screen.W - 2 * PAD),
-              font=label_font, fill=color)
+    col_w = screen.W - 2 * PAD
+    shell.head(img, screen, title)
+    ui_text.write(img, screen, (PAD, MESSAGE_Y), big, color, LABEL_SIZE,
+                  bold=True, room=col_w)
     if sub:
-        draw.text((PAD, 300), _fit(draw, sub, row_font, screen.W - 2 * PAD),
-                  font=row_font, fill=C_DIM)
+        ui_text.write(img, screen, (PAD, NOTE_Y), sub, theme.rgb("muted"),
+                      ROW_SIZE, room=col_w)
     if foot:
-        draw.text((PAD, screen.H - 56),
-                  _fit(draw, foot, small_font, screen.W - 2 * PAD),
-                  font=small_font, fill=C_DIM)
+        shell.foot(img, screen, foot)
     screen.present(img)
 
 
 def _draw(screen, title, bg, snap, label, health, error, updated):
+    """The streak frame: the hero number, its label, and the glance lines."""
     img = screen.new_image(bg)
-    draw = ImageDraw.Draw(img)
-    head_font = _font_or_default(screen, "DejaVuSans-Bold", HEADER_SIZE)
-    big_font = _font_or_default(screen, "DejaVuSans-Bold", BIG_SIZE)
-    label_font = _font_or_default(screen, "DejaVuSans-Bold", LABEL_SIZE)
-    row_font = _font_or_default(screen, "DejaVuSans", ROW_SIZE)
-    sub_font = _font_or_default(screen, "DejaVuSans", SUB_SIZE)
-    small_font = _font_or_default(screen, "DejaVuSans", FOOT_SIZE)
-
-    dot = {"cold": (120, 120, 130), "warm": C_UP,
-           "stale": C_WARN, "error": C_FAILED}[health]
-    status = "%s · %s" % (health, _age(updated))
-    try:
-        w = draw.textlength(status, font=small_font)
-    except Exception:
-        w = 0
-    draw.text((PAD, 24), _fit(draw, title, head_font, screen.W - 2 * PAD - w - 80),
-              font=head_font, fill=C_TEXT)
-    draw.ellipse([screen.W - PAD - 22, 52, screen.W - PAD - 2, 72], fill=dot)
-    draw.text((screen.W - PAD - w - 36, 34), status, font=small_font, fill=C_DIM)
-    draw.line([(PAD, 128), (screen.W - PAD, 128)], fill=C_LINE, width=2)
-
     col_w = screen.W - 2 * PAD
+    shell.head(img, screen, title, health=health, updated=updated)
+
     ds, rs, bank = snap["day_streak"], snap["row_streak"], snap["bank"]
 
-    # Hero: the day streak, with a fire marker while alive.
+    # Hero: the day streak, wearing the view's accent while it is alive.
     hero = "%d" % ds
-    try:
-        while len(hero) > 1 and draw.textlength(hero, font=big_font) > col_w * 0.55:
-            hero_size = big_font.size - 20
-            big_font = _font_or_default(screen, "DejaVuSans-Bold", max(60, hero_size))
-            if big_font.size <= 60:
-                break
-    except Exception:
-        pass
-    hero_color = C_FIRE if ds > 0 else C_DIM
-    draw.text((PAD, 150), hero, font=big_font, fill=hero_color)
-    try:
-        hw = draw.textlength(hero, font=big_font)
-    except Exception:
-        hw = 0
-    draw.text((PAD + hw + 40, 200),
-              _fit(draw, "DAY STREAK" if ds != 1 else "DAY STREAK",
-                   label_font, col_w - hw - 40),
-              font=label_font, fill=C_TEXT)
-    draw.text((PAD + hw + 40, 280),
-              _fit(draw, "%d rows · bank %d" % (rs, bank), row_font, col_w - hw - 40),
-              font=row_font, fill=C_DIM)
-    y = 560
-    draw.line([(PAD, y), (screen.W - PAD, y)], fill=C_LINE, width=2)
-    y += 26
+    hero_size = ui_text.fit_size(screen, hero, BIG_SIZE, col_w * HERO_ROOM,
+                                 floor=HERO_FLOOR, step=HERO_STEP, bold=True)
+    hero_ink = theme.accent_rgb("row") if ds > 0 else theme.rgb("muted")
+    ui_text.write(img, screen, (PAD, HERO_Y), hero, hero_ink, hero_size,
+                  bold=True)
+    hero_w = ui_text.width(screen, hero, hero_size, bold=True)
+    beside = PAD + hero_w + 40
+    stat.label(img, screen, (beside, LABEL_Y), "DAY STREAK",
+               ink=theme.rgb("ink"), room=col_w - hero_w - 40)
+    stat.body(img, screen, (beside, BANK_Y),
+              "%d rows \u00b7 bank %d" % (rs, bank), size=ROW_SIZE,
+              room=col_w - hero_w - 40)
+
+    shell.rule(img, screen, DIVIDER_Y)
 
     # Last row + year pace: the glanceable second line.
-    last = snap["last_day"] or "—"
-    draw.text((PAD, y), _fit(draw, "last row  %s" % last, row_font, col_w),
-              font=row_font, fill=C_TEXT)
-    y += 70
+    last = snap["last_day"] or "\u2014"
+    stat.body(img, screen, (PAD, LAST_Y), "last row  %s" % last,
+              ink=theme.rgb("ink"), size=ROW_SIZE, room=col_w)
+
     pace = snap["pace"]
     if pace > 0:
-        pace_text = "year %d/%d · %d ahead of pace" % (
+        pace_text = "year %d/%d \u00b7 %d ahead of pace" % (
             snap["rows_year"], snap["days_in_year"], pace)
-        pace_color = C_UP
+        pace_ink = theme.rgb("ok")
     elif pace < 0:
-        pace_text = "year %d/%d · %d behind pace" % (
+        pace_text = "year %d/%d \u00b7 %d behind pace" % (
             snap["rows_year"], snap["days_in_year"], -pace)
-        pace_color = C_WARN
+        pace_ink = theme.rgb("attention")
     else:
-        pace_text = "year %d/%d · on pace" % (snap["rows_year"], snap["days_in_year"])
-        pace_color = C_TEXT
-    draw.text((PAD, y), _fit(draw, pace_text, row_font, col_w),
-              font=row_font, fill=pace_color)
-    y += 70
-    draw.text((PAD, y), _fit(draw, snap["status"], sub_font, col_w),
-              font=sub_font, fill=C_DIM)
+        pace_text = "year %d/%d \u00b7 on pace" % (snap["rows_year"],
+                                                   snap["days_in_year"])
+        pace_ink = theme.rgb("ink")
+    stat.body(img, screen, (PAD, PACE_Y), pace_text, ink=pace_ink,
+              size=ROW_SIZE, room=col_w)
+    stat.body(img, screen, (PAD, STATUS_Y), snap["status"],
+              size=stat.BODY_SIZE, room=col_w)
 
     foot = label or "no log configured"
     if health == "stale":
         foot += "   [STALE \u2014 last-known streak]"
     if health in ("stale", "error") and error:
         foot += "   [read failed: %s]" % error
-    draw.text((PAD, screen.H - 56), _fit(draw, foot, small_font, col_w),
-              font=small_font, fill=C_DIM)
+    shell.foot(img, screen, foot)
     screen.present(img)
 
 

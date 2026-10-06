@@ -77,14 +77,16 @@ picker and the options name grid both ask it, so the two can no longer
 disagree about where a box goes; a narrow 288px band is ONE application
 column. See §2f.
 - `renderers/ui/text.py` — one font resolution, one measurement, one
-  fitting rule (`font`/`face`/`width`/`fit`/`write`/`line`) and one wrap
-  (`wrap`). `_font`, `_font_or_default`, `_fit`, a truncation loop and a
-  `textwrap` column count used to exist in five views.
+  fitting rule (`font`/`face`/`width`/`fit`/`fit_size`/`write`/`line`) and
+  one wrap (`wrap`). `_font`, `_font_or_default`, `_fit`, a truncation
+  loop, a "shrink this line until it fits" loop and a `textwrap` column
+  count used to exist in five views.
 - `renderers/ui/shell.py` — the band a full-panel view wears: `head`
   (title, detail, health dot, its honest age, the rule under it, an
-  optional coloured status), `foot`, `rule`, `health_ink` (the poll-health
-  vocabulary → palette role), `age` and `short_age` (the one bucket rule,
-  5 copies before it).
+  optional coloured status), `band_pad` (the inset that keeps the band
+  clear of the badges painted over the panel's top corners), `foot`,
+  `rule`, `health_ink` (the poll-health vocabulary → palette role), `age`
+  and `short_age` (the one bucket rule, 5 copies before it).
 - `renderers/ui/stat.py` — a label plus a value line: `label`/`value`/
   `body`, `row` (the component itself), `list_row` (one horizontal entry:
   dot, name, right-aligned value), `meter` (a clamped fraction bar) and
@@ -187,18 +189,20 @@ Migrated so far, in order: the persistent overlay chrome (both system
 buttons); the panel's two tile layers (the picker grid, the options name
 grid), now one component with two halves; the two polled list views
 `resources_draw` and `services_draw`, now composers over `ui.shell` +
-`ui.stat` (`ui.text` underneath both); and this increment's three card
-views, `notice`, `text` and `sleep`, now composers over `ui.panel`.
+`ui.stat` (`ui.text` underneath both); the three card views, `notice`,
+`text` and `sleep`, now composers over `ui.panel`; the two list
+dashboards `feed_health` and `activity`; and this increment's
+`row_draw`, the third copy of the band.
 
-Deliberately left (still Pillow, still drawing by hand): the other 19
+Deliberately left (still Pillow, still drawing by hand): the other 16
 modules in the gate's exemption list — `beads` with its `beads_detail`/
-`beads_detail_card`/`services`-style draw helpers, `row_draw`, `macbook_draw`/
-`macbook_strip`, `qr`/`qr_common`, `reload`, `stream`, `activity`, `clock`,
-`retro_grid_draw`, `touch_confidence_draw`, `feed_health`, `life`,
+`beads_detail_card`/`services`-style draw helpers, `macbook_draw`/
+`macbook_strip`, `qr`/`qr_common`, `reload`, `stream`, `clock`,
+`retro_grid_draw`, `touch_confidence_draw`, `life`,
 `playlist`/`playlist_bar` (the daemon-side progress bar), and
 `_html_error`/`_html_native`. Reason: the vocabulary they need is now built
 (`tile`, `text`, `shell`, `stat`, `panel`) but each of them is a real
-migration — `beads` and `row_draw` are several surfaces each, `reload` owns
+migration — `beads` is several surfaces, `reload` owns
 the QR proof and its scan relay, `stream` is a live frame at a capped fps,
 and `_html_native` is the engine shim rather than a view.
 `touch_confidence_draw` is partly migrated (its region boxes are
@@ -415,6 +419,64 @@ the summary line right-aligned as the band's status instead of a second
 left column) and the age line gained a day bucket, so a three-day-old
 sample reads `updated 3d ago` rather than `updated 72h ago`.
 
+### 2h. The streak row on the layer, and the band that clears the badges (this increment)
+
+`row_draw` was the third copy of the band. It carried its own font loader
+(`_font`), its never-None wrapper (`_font_or_default`), its truncation rule
+(`_fit`, the same `max_chars=90` rule `beads_common` still has), its age
+buckets (`_age`), its own health-word colour map (`{"cold": (120,120,130),
+"warm": C_UP, "stale": C_WARN, "error": C_FAILED}`) and eight colour
+literals (`C_BG`, `C_TEXT`, `C_DIM`, `C_LINE`, `C_FIRE`, `C_UP`,
+`C_FAILED`, `C_WARN`). It is now a composer — `ui.shell` for the band
+(title, health dot, honest age line, rule, footer), `ui.stat` for the type
+steps, `ui.text` for the face/measure/fit rule — so the module owns which
+number goes where and nothing else. `row.py`'s import list shrank from
+twenty names to the three it uses, plus `theme` for the two inks it
+passes in (the waiting card's amber, the error card's `alert`).
+
+One new component rule came out of it: `ui.text.fit_size(screen, text,
+`size, room, floor, step)` — the largest size up to a ceiling at which a
+line still fits its column, so the hero number shrinks rather than being
+truncated and never goes below `HERO_FLOOR`. `reload`'s `fit_font`,
+`retro_grid_draw._fit_font` and `qr.py`'s caption loop are the same rule
+taking a PIL draw handle; they fold in when those views migrate.
+
+Deliberate pixel changes, all the same one-owner move:
+
+| what | before | after |
+|---|---|---|
+| page | `C_BG (8,8,12)` | `theme.rgb("page") (7,8,12)` |
+| band rule | `C_LINE (60,60,70)` | `theme.rgb("rule") (36,64,92)` |
+| type | `C_TEXT`/`C_DIM` | `ink`/`muted` |
+| live hero | `C_FIRE (255,150,50)` | `theme.accent_rgb("row") (92,255,157)` — the slot its progress bar and picker tile already wear |
+| health dot + status | the view's own map | `ui.shell.HEALTH_ROLE` (cold/warm/stale/error → muted/ok/attention/alert) |
+| error card ink | `C_FAILED (255,90,90)` | `theme.rgb("alert") (214,74,74)` |
+| an age past a day | "27h ago" | "2d ago" (`shell.age` buckets) |
+
+**A defect the layer could then fix in one place.** Rendering the view
+headless at 1920x1080 and compositing the badges exposed something no test
+covered: the home badge occupies the top-left 160x160, the sleep badge the
+top-right, and every Pillow band -- hand-drawn or migrated -- drew at
+`PAD = 60` from those same edges. (The template chrome is already clear:
+measured on a full-panel `layout.html` render, its title's ink starts at
+x=231.) Measured on the row view: the title rendered as "WING"
+(its `RO` under the home badge) and the health dot plus the tail of the
+status line sat exactly under the sleep badge. `system_buttons`' own
+comment claims the badges "never cover view content (the picker grid
+starts at x=160)" — true of the picker, false of the band.
+
+`ui.shell` now owns that space: `BAND_PAD = system_buttons.STRIP +
+STRIP_GAP` (160 + 24, the strip read from the badge component so the two
+cannot drift), `head` and its dot take their inset from `band_pad(screen)`,
+and `band_pad` falls back to plain `PAD` in a region narrower than
+`2*BAND_PAD + TITLE_GAP` so a layout's band column never shrinks its own
+title to make room for badges that are not over it. `foot` and the
+standalone `rule` keep `PAD`: no badge sits at the bottom-left, and
+`row_draw`'s divider at y=560 must line up with the body text below it.
+Before/after on the real panel: `/tmp/row-evi-corner-left.png` reads "WING"
+on HEAD and "ROWING" now; a warm frame's `ok` pixels went 0 → 349 (the dot
+was painted and then covered).
+
 ### 3. The shared chrome, composed at load time — `html-templates/_chrome.html`
 
 **litehtml has no `@import` and a template cannot inherit from another**, so
@@ -509,7 +571,8 @@ paste in after a migration; `--root PATH` inspects another tree, which is
 what `tests/test_components.py` uses to exercise both failure directions.
 Wired into `tools/check-repo-health.py` as step 3.
 
-17 exemptions remain (the list is in the tool, sorted).
+17 exemptions remain when this section was written; 16 after this
+increment (the list is in the tool, sorted).
 
 ## Adding a new view from the layer
 
@@ -538,12 +601,14 @@ Wired into `tools/check-repo-health.py` as step 3.
      a grid of them is `ui.tile.layer` (markup) with the look from the
      shared stylesheet, and where the boxes go is `ui.grid` (the column
      count and the rects); the band a full-panel view wears is `ui.shell`
-     (`head`/`foot`/`rule` + the health dot + `short_age`/`age`); a label
+     (`head`/`foot`/`rule` + the health dot + `short_age`/`age`), and it is
+     already inset clear of the home/sleep badges (`band_pad`); a label
      with its value is `ui.stat.row`, one list entry is
      `ui.stat.list_row`, a fraction is `ui.stat.meter`; centred words are
      `ui.text.write`/`ui.panel.card` (a title, an optional body, a corner
-     tag, an accent bar, and the one scale-to-fit rule), and a paragraph
-     broken to a width is `ui.text.wrap`.
+     tag, an accent bar, and the one scale-to-fit rule), a paragraph
+     broken to a width is `ui.text.wrap`, and a line that must shrink to
+     its column is `ui.text.fit_size`.
 4. Never let a draw raise: return the frame unchanged. If the view
    composes several layers, compose them with `ui.base.chain`.
 5. Remove the view's path from `EXEMPTIONS` in
@@ -665,13 +730,14 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   20px) instead of three 69px ones (12px floor), `cols` is a real param,
   and `picker_regions` generates the matching tap rects. A dedicated
   narrow-band renderer is no longer needed.
-- **The remaining hand-drawing views** (the gate's 17 exemptions) are the
-  bigger migration: `beads*`, `row_draw`, `macbook_draw`/`macbook_strip`,
+- **The remaining hand-drawing views** (the gate's 16 exemptions) are the
+  bigger migration: `beads*`, `macbook_draw`/`macbook_strip`,
   `qr`/`qr_common`, `reload`, `stream`, `clock`, `retro_grid_draw`,
   `touch_confidence_draw`, `life`, `playlist`/`playlist_bar` and the two
   `_html_*` non-views. The vocabulary they need all exists now (`tile` +
-  `grid`, `text` + `wrap`, `shell`, `stat` + `list_row`, `panel`), so
-  each is a straight migration with its own test story, not new design.
+  `grid`, `text` + `wrap` + `fit_size`, `shell`, `stat` + `list_row`,
+  `panel`), so each is a straight migration with its own test story, not
+  new design.
 - **Layout-mode taps.** While a layout owns the panel the touch service
   evaluates global regions only (view-scoped regions are skipped), so a
   band's tiles need global `touch.json` entries at the band geometry
@@ -683,10 +749,16 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   `draw` + `font` rather than a screen + size, so folding them onto
   `ui.text.wrap` means changing their call sites and their own tests:
   its own increment.
-- **Two copies of the band's age line survive** in `row_draw._age` and
-  `beads_age._age` (both `"updated 3m ago"`, section 2g moved the shared
-  bucket rule into `ui.shell.short_age`). They are inside exempt views, so
-  they go with those views' migrations.
+- **Two copies of the band's age line survive** in `beads_age._age`
+  (`row_draw._age` and `feed_health.format_age` were deleted in sections
+  2g/2h, the shared bucket rule is `ui.shell.short_age`). They are inside
+  an exempt view, so they go with that view's migration.
+- **Hand-drawn views still sit under the badges.** `ui.shell` now keeps
+  the band clear of the home/sleep badges (§2h), but a view that draws at
+  its own `PAD` (beads, macbook, qr, reload, stream, clock, retro_grid,
+  touch_confidence, life) is still covered by the home badge in the top
+  160px of the panel. Fixing each one is part of its own migration, which
+  is exactly why the band's version went into the component.
 - **A layout switch still shows the panel fill in region by region.**
   `daemon_layout._composite_now()` presents a black composite immediately
   (so the first pixel is not delayed by any renderer) and every region's
@@ -1413,12 +1485,80 @@ template is a real render (no error card) with the buttons over it. The
 recorded there, so the honest layout statement is the one section 7's
 evidence made (3–11ms) plus this run's region-by-region renders above.
 
+### The streak row on the layer, and the band clear of the badges (this increment)
+
+A real daemon with `DISPLAYD_FAKE_FB=1` on an ephemeral port
+(`ThreadingHTTPServer(("127.0.0.1", 0), displayd.Handler)`), the row view
+fed a hermetic temp `rows.txt` (today's date, two rows), and then the four
+presets applied over HTTP:
+
+    $ DISPLAYD_FAKE_FB=1 python3 /tmp/row_evidence.py
+    == row view, full panel (hermetic file source, a live streak) ==
+    POST /show -> 200 view: row first_pixel_ms: None
+    band rule token at y=128: True (36, 64, 92) (36, 64, 92)
+    hero slot accent px: 6877 old C_FIRE px: 0 old C_LINE px: 0
+    health dot pixel under the right strip: (13, 17, 28) == badge fill (13, 17, 28)
+      | palette ok px in frame: 349
+    == every layout style, with the system buttons ==
+      full code 200 badge px 29416 rule px 6708 ok px 349
+        regions [('view', 'row', None)]
+      split-50-50 code 200 badge px 29416 rule px 6212 ok px 349
+        regions [('top', 'row', None), ('bottom', 'activity', None)]
+      split-50-50-columns code 200 badge px 29416 rule px 4054 ok px 349
+        regions [('left', 'row', None), ('right', 'activity', None)]
+      15-70-15 code 200 badge px 29416 rule px 4404 ok px 45247
+        regions [('left', 'picker', None), ('center', 'row', None),
+                 ('right', 'picker', None)]
+    == system buttons over an html template render ==
+    html code 200 view: html failure card px (must be 0): 0
+    badge px: 29416
+
+Frames: `/tmp/row-evi-full.png`, `…-15-70-15.png`,
+`…-html-buttons.png` and the two corner crops;
+`/tmp/row-evi-corner-left.png` shows the title fully legible beside the
+home badge and `/tmp/row-evi-corner-right.png` shows "warm · updated 0s
+ago" plus the green dot fully legible beside the sleep badge.
+`first_pixel_ms` reads `None` in this in-process harness (that field is
+filled by the daemon's own switch path, not by `POST /show`), so the
+load-bearing numbers here are the pixel counts, not the latency one.
+
+### The row, the band and `fit_size` fail before, pass after
+
+    $ git show HEAD:renderers/row_draw.py | grep -n 'ImageDraw\|^C_\|def _font\|def _fit\|def _age'
+    11:from PIL import ImageDraw, ImageFont
+    13:C_BG = (8, 8, 12)
+    14:C_TEXT = (235, 235, 240)
+    ... eight C_ literals and four helpers (_font, _font_or_default, _fit, _age)
+    $ python3 -c "import sys; sys.path.insert(0,'renderers'); import theme; \
+        print((255,150,50) == theme.accent_rgb('row'), (60,60,70) == theme.rgb('rule'), \
+              (8,8,12) == theme.rgb('page'), (255,90,90) == theme.rgb('alert'))"
+    False False False False
+    $ git show HEAD:renderers/ui/shell.py | grep -n 'BAND_PAD\|band_pad'
+    (no output: the band had no notion of the badges at all)
+
+So on the pre-change tree `tests/test_shell.py::MigratedViewsTest` fails on
+`renderers/row_draw.py` (it mentions `ImageDraw`, has no `from ui import`
+and holds eight colour literals), the new `RowViewTest` pixel assertions
+fail (the band rule is `(60,60,70)`, the hero is `(255,150,50)` with no
+slot accent anywhere, and a warm frame composites to 0 `ok` pixels
+because the dot is covered), `ui_text.fit_size` does not exist
+(`AttributeError` on the two new `TextTest` cases), and
+`BandClearsTheBadgesTest`'s `colours - {page} == set()` assertion for each
+badge rect fails on the title's own ink.
+
 ### The whole suite after this increment, and the one flake it exposed
 
     $ python3 -m unittest discover -s tests
-    Ran 1477 tests in 364.323s
-    FAILED (failures=3, errors=1, skipped=10)
+    Ran 1488 tests in 356.450s
+    FAILED (failures=2, errors=1, skipped=10)
+    stream headless ceiling: 29 presents in 5.9s = 4.77 fps (cap 5 fps, 1920x1080)
 
+That is exactly the three known-red modules this box always carries --
+`test_mac_zoom` (2 failures: the ffmpeg fallback flags track a Nix path
+this box does not have), `test_deploy_reload_proof` (its guard fixture)
+and `test_talon_apps` (a loader error, its checkout is absent) -- and
+nothing else: the same set iteration 1 through 11 recorded, now over 1488
+tests. The objective's own suites are in the stop-condition run above.
 That is the three known-red modules this box always carries
 (`test_mac_zoom`'s ffmpeg path, `test_deploy_reload_proof`,
 `test_talon_apps`) plus TWO others that this increment ran into and both
@@ -1489,11 +1629,23 @@ reason that the two views are declared `full` there, so
 
 ## Note on the stop condition
 
-The command above exits zero, but that is a **floor, not the finish line**:
-the gate is a ratchet with 17 exemptions, most views still hand-draw, and
+The command above exits zero as of this increment. Its exact output:
+
+    $ python3 tools/check-components.py && python3 -m unittest tests.test_picker tests.test_unified tests.test_chat tests.test_html tests.test_html_runtime_install tests.test_control tests.test_options tests.test_layout && python3 tools/check-lines.py
+    component layer ok: 16 shipped module(s) still draw by hand; all exempt, none stale
+    Ran 331 tests in 52.421s
+    OK
+    line budget ok: all source files within 250 lines
+
+(`python3 tools/check-repo-health.py` also exits 0, printing the same line
+budget line plus `ok: no generated native artifacts tracked` and the
+component line.)
+
+That is a **floor, not the finish line**:
+the gate is a ratchet with 16 exemptions, most views still hand-draw, and
 the component vocabulary exists (`system_buttons`, `ui.tile` + `ui.grid`,
 `ui.shell` + `ui.stat` + `ui.text`, `ui.panel`, and the `ui.base.chain`
-primitive) but the larger views (`beads*`, `row_draw`, `macbook_*`, `qr`,
+primitive) but the larger views (`beads*`, `macbook_*`, `qr`,
 `reload`, `stream`, `clock`, `retro_grid`, `touch_confidence`, `life`)
 have not been migrated onto it. What is left is those migrations, the
 control page's style picker, the layout-mode tap entries, and the layout

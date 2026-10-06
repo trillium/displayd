@@ -16,10 +16,15 @@ Two guarantees, both load-bearing for the panel:
 - **nothing here raises.** A component that cannot draw returns the frame
   unchanged, which is how one broken piece never blanks the panel; that
   has to survive a measure on a font object Pillow cannot introspect.
-
 Sizes are the caller's: a component names its own scale (``shell.HEAD_SIZE``,
 ``stat.LABEL_SIZE``) so the type scale of the panel is legible as data
 rather than scattered as magic numbers through the drawing code.
+
+The fourth rule is ``fit_size``: a line that does not fit its column is
+made smaller rather than cut, and never below its floor. Three views still
+carry their own version of it (``reload.fit_font``,
+``retro_grid_draw._fit_font``, ``qr``'s caption loop) because they take a
+PIL ``draw`` handle; they fold in when those views migrate.
 """
 
 import os
@@ -111,6 +116,37 @@ def fit(screen, text, size, bold=False, room=0, family=None):
         return out
     except Exception:
         return str(text if text is not None else "")
+
+
+def fit_size(screen, text, size, room, floor=FLOOR, step=2, bold=False,
+             family=None):
+    """The largest size <= ``size`` at which ``text`` still fits ``room`` px.
+
+    The one rule behind "make this line fit its column" -- a hero number
+    too wide for the space beside it shrinks rather than being cut, and it
+    never shrinks below ``floor``. ``room`` of 0 or less, or an
+    unmeasurable string, keeps the declared size (``width`` reads 0 as
+    unknown, exactly as it does everywhere else). Never raises.
+    """
+    out = str(text if text is not None else "")
+    try:
+        want = max(FLOOR, int(size))
+        room = int(room)
+        step = max(1, int(step))
+    except (TypeError, ValueError):
+        return FLOOR
+    floor = max(FLOOR, min(int(floor or FLOOR), want))
+    if room <= 0 or not out:
+        return want
+    try:
+        drawn = want
+        while drawn > floor:
+            if width(screen, out, drawn, bold=bold, family=family) <= room:
+                return drawn
+            drawn = max(floor, drawn - step)
+        return drawn
+    except Exception:
+        return want
 
 
 def write(img, screen, xy, text, ink, size, bold=False, room=None,
