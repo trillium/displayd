@@ -19,6 +19,10 @@ endpoint and why), and that single read answers both questions the panel asks
 join events. Joins are announced; departures are not (the roster pane drops
 them, and the request named joins).
 
+By default the roster GET goes to the same host and port as the overlay socket
+(``--firebot-host``/``--firebot-port``, so ``FIREBOT_HOST`` moves both: one web
+server serves Firebot's REST API and its socket). ``--roster-url`` overrides it.
+
 Protocol notes (from the Firebot scout report -- do not re-derive):
   * hello is ``overlay-connected`` with ``{"instanceName": "Stream 1080p"}``;
   * the server broadcasts ALL overlay traffic to every subscriber, so filter

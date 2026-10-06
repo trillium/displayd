@@ -53,9 +53,8 @@ LOG = logging.getLogger("firebot-chat-bridge")
 VIEWERS_PATH = "/api/v1/viewers/export"
 DEFAULT_TIMEOUT = 6.0
 
-# How often the viewer list is read. Firebot's own presence TTL is 7.5 minutes
-# (a 5-minute Helix chatter poll, plus chat activity), so a tighter cadence
-# buys nothing but load, and a slower one delays a join showing up.
+# How often the viewer list is read. Firebot's own presence TTL is 7.5 minutes,
+# so a tighter cadence buys nothing and a slower one delays a join showing up.
 ROSTER_INTERVAL = 10.0
 
 
@@ -75,8 +74,9 @@ def add_arguments(parser):
     """The presence flags, owned by the module that owns the poller: the
     loop and the way to point it somewhere else travel together."""
     parser.add_argument("--roster-url", default=os.environ.get("ROSTER_URL"),
-                        help="viewer-list URL for presence (default: the "
-                             "Firebot host + %s)" % VIEWERS_PATH)
+                        help="viewer-list URL for presence (default: "
+                             "--firebot-host/--firebot-port above + %s)"
+                             % VIEWERS_PATH)
     parser.add_argument("--roster-interval", type=float,
                         default=float(os.environ.get("ROSTER_INTERVAL",
                                                      ROSTER_INTERVAL)),
@@ -228,6 +228,8 @@ class Presence:
         return len(joined)
 
     def forever(self, stop=None):
+        LOG.info("presence: polling %s every %.1fs", self.roster.url,
+                 self.interval)
         while stop is None or not stop():
             try:
                 self.poll_once()
