@@ -54,7 +54,6 @@ DRAW_RE = re.compile(r"\bImageDraw\b")
 EXEMPTIONS = (
     "playlist.py",
     "playlist_bar.py",
-    "renderers/_html_error.py",
     "renderers/_html_native.py",
     "renderers/beads.py",
     "renderers/beads_detail_card.py",

@@ -36,6 +36,8 @@ import displayd
 import _html_native
 import _html_templates as templates
 import _options_grid as grid
+import theme
+from ui import panel
 from ui import tile as ui_tile
 
 OPT_PATH = os.path.join(displayd.RENDERER_DIR, "options.py")
@@ -473,13 +475,14 @@ class OptionsPixelsTest(unittest.TestCase):
             OPT.TEMPLATE = saved
         frame = screen.fb.frames[-1]
         self.assertEqual(frame.size, (self.W, self.H))
-        # The shared failure card: a red rule across the top, red title
-        # text under it, and no name cells anywhere.
-        rule = frame.crop((0, 0, self.W, 40)).convert("RGB")
-        self.assertGreater(
-            sum(1 for pixel in rule.getdata() if pixel == (214, 74, 74)),
-            self.W * 20)
-        self.assertEqual(frame.getpixel((300, 700)), (28, 10, 14))
+        # The shared failure card: the card component's alert rule across
+        # the top (exactly its declared height), red title text under it,
+        # and no name cells anywhere.
+        rule = frame.crop((0, 0, self.W, panel.BAR)).convert("RGB")
+        self.assertEqual(
+            sum(1 for pixel in rule.getdata() if pixel == theme.rgb("alert")),
+            self.W * panel.BAR)
+        self.assertEqual(frame.getpixel((300, 700)), theme.rgb("alert-page"))
 
 
 if __name__ == "__main__":

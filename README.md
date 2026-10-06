@@ -311,10 +311,14 @@ centred headline and body, the corner tag and the accent bar. `notice`, `text`,
 colour of their own; the notice's severity is a palette role lookup
 (`accent`/`attention`/`alert`) rather than a fourth copy of red, and the clock's
 digits are the component's headline instead of the view's own binary-search
-fitter. `touch_confidence` is a composer too: every line of its frame is the
-panel's `block` and its region boxes are the tile component's `draw`, with the
-palette's `attention`/`alert`/`accent` roles where it used to hold six RGB
-literals and a private font loader.
+fitter. The same module's `strip` is the card confined to a rect of a bigger
+frame, which is how the failure card is drawn now: `renderers/_html_error.py`
+is a thin adapter over `ui.panel.card`/`strip` in the alert family, so "what
+went wrong" is the same card as everything else instead of its own private
+wrap, column count and font loader. `touch_confidence` is a composer too:
+every line of its frame is the panel's `block` and its region boxes are the
+tile component's `draw`, with the palette's `attention`/`alert`/`accent` roles
+where it used to hold six RGB literals and a private font loader.
 
 The apps dock under the merged home screen is a template too
 (`html-templates/dock.html`), composited into the picker frame inside the rect

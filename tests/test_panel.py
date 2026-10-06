@@ -352,5 +352,77 @@ class ClockCardTest(unittest.TestCase):
         self.assertEqual(frame.getpixel((0, 0)), (16, 16, 16))
 
 
+class FailureCardTest(unittest.TestCase):
+    """The failure card: the panel component in the alert family.
+
+    It used to be its own drawing module (a private wrap, a column
+    estimate and a font loader). It is now ``ui.panel`` twice -- a
+    centred ``card`` for the whole panel and a rect-confined ``strip``
+    for a view composited into a bigger frame -- so "what went wrong"
+    cannot drift away from how every other card is drawn.
+    """
+
+    def setUp(self):
+        self.screen = FakeScreen()
+        import _html_error
+        self.error = _html_error
+
+    def source(self, rel):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_the_card_holds_no_drawing_primitive_of_its_own(self):
+        src = self.source("renderers/_html_error.py")
+        self.assertNotIn("from PIL", src)
+        self.assertNotIn("ImageDraw", src)
+        self.assertNotIn("ImageFont", src)
+        self.assertNotIn("textwrap", src)
+        self.assertNotIn("_html_native", src)
+        self.assertIn("from ui import panel", src)
+        self.assertIn("ui_panel.card(", src)
+        self.assertIn("ui_panel.strip(", src)
+
+    def test_the_frame_is_the_card_wearing_the_alert_family(self):
+        frame = self.error.error_frame(self.screen, "html: boom", "fix it")
+        # The alert rule across the top is what tells a card from a render.
+        self.assertEqual(frame.getpixel((960, 1)), theme.rgb("alert"))
+        self.assertGreater(count(frame, theme.rgb("alert-page")), 0)
+        self.assertGreater(count(frame, theme.rgb("alert-ink")), 0)
+        self.assertGreater(count(frame, theme.rgb("alert-body")), 0)
+        # The page here is the alert page, never the ordinary one.
+        self.assertNotEqual(theme.rgb("alert-page"), theme.rgb("page"))
+
+    def test_the_strip_touches_only_its_own_rect(self):
+        rect = (80, 770, 1840, 230)
+        frame = self.error.error_strip(self.screen, rect, "dock: boom",
+                                       "build it")
+        x, y, w, h = rect
+        self.assertEqual(frame.getpixel((x + 5, y + 2)), theme.rgb("alert"))
+        # Above the rect the frame is exactly the alert page: a sub-view
+        # must never repaint the tiles around it.
+        outside = frame.crop((0, 0, self.screen.W, y))
+        self.assertEqual(count(outside, theme.rgb("alert")), 0)
+        self.assertEqual(count(outside, theme.rgb("alert-ink")), 0)
+        self.assertGreater(count(frame.crop((x, y, x + w, y + h)),
+                                 theme.rgb("alert-ink")), 0)
+
+    def test_the_strip_reads_left_to_right(self):
+        rect = (80, 770, 1840, 230)
+        frame = self.error.error_strip(self.screen, rect, "boom", "fix it")
+        x, y, w, h = rect
+        right = frame.crop((x + int(w * 0.75), y, x + w, y + h))
+        self.assertEqual(count(right, theme.rgb("alert-ink")), 0)
+        self.assertEqual(count(right, theme.rgb("alert-body")), 0)
+
+    def test_a_garbage_rect_is_a_missing_card_not_a_crash(self):
+        img = page(self.screen)
+        for bad in ((), (1, 2), None, ("x", "y", "w", "h"), (0, 0, 0, 0)):
+            with self.subTest(rect=bad):
+                self.assertIs(panel.strip(img, self.screen, bad, "hi", "yo"),
+                              img)
+                card = self.error.error_strip(self.screen, bad, "a", "b")
+                self.assertEqual(card.size, (self.screen.W, self.screen.H))
+
+
 if __name__ == "__main__":
     unittest.main()

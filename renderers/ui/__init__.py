@@ -56,7 +56,8 @@ Layout of the package:
   box goes.
 - ``panel`` -- a titled region with a body: the one fit rule (the whole
   block scaled to the region, never truncated), a centred headline and
-  body, the corner tag and the accent bar across the top.
+  body, the corner tag, the accent bar across the top, and ``strip``, the
+  same card confined to a rect of a bigger frame (the failure card).
 
 Adding a component: give it its own module here, take every colour from
 ``theme``, return the frame unchanged on any failure, and add it to the

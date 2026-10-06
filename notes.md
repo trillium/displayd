@@ -531,6 +531,42 @@ same for the other four), so every "the old literal is gone" assertion was
 red on HEAD, and the gate reported "2 stale exemption(s)" until the two
 entries left `EXEMPTIONS`.
 
+### 2j. The failure card is the panel component (this increment)
+
+The gate's ratchet went **14 → 13**: `renderers/_html_error.py` was the
+last hand-drawing module on the "the panel must never be blank" path, and
+it is now a thin adapter over the card component.
+
+| File | Before | After | Change |
+| --- | --- | --- | --- |
+| `renderers/_html_error.py` | 107 | 56 | deleted `from PIL import ImageDraw`, `_html_native.ui_font` (a fifth font loader), `_columns`, `_line_height` and `_wrap` (the third copy of "break a paragraph to a width"; `ui.text.wrap`'s docstring named it) |
+| `renderers/ui/panel.py` | 214 | 250 | gained `strip()` (the card confined to a rect), `body_ink` on `card()`, and an optional `rect` on `bar()` |
+
+`error_frame` is now `ui_panel.card(img, screen, title, wrapped_detail,
+ink=alert-ink, body_ink=alert-body, accent=alert)`; `error_strip` is
+`ui_panel.strip(img, screen, rect, title, detail)`, whose defaults are the
+same alert family. `_html_error.py` imports no PIL at all: it makes the
+alert page through `screen.new_image(theme.rgb("alert-page"))` and then
+asks the layer, so what a failed render looks like cannot drift away from
+how every other card is drawn.
+
+Deliberate pixel change, measured: the failure card's rule was
+`max(8, H//48)` = 22px at 1080p and is now the card component's
+`panel.BAR` = 18px (the bar every other card wears); the title and body
+are the component's scaled, centred block instead of the old left-aligned
+lines at `W//26`. `tests/test_options.py`'s
+`test_a_broken_template_is_a_card_not_a_blank` pinned the old rule as
+`assertGreater(red_pixels, W * 20)`; it now asserts exactly `W * panel.BAR`
+pixels of `theme.rgb("alert")` in the rule crop, which is a stronger claim
+read from the component instead of a second literal.
+
+`tests/test_panel.py` gained `FailureCardTest` (5 tests): the adapter
+holds no drawing primitive and delegates to `ui_panel.card`/`ui_panel.strip`,
+the frame's rule/inks are the alert family, the strip touches only its own
+rect (zero alert or alert-ink pixels above it, zero ink in its right
+quarter) and reads left to right, and a garbage rect is a missing card
+rather than a crash.
+
 ### 3. The shared chrome, composed at load time — `html-templates/_chrome.html`
 
 **litehtml has no `@import` and a template cannot inherit from another**, so
@@ -625,8 +661,8 @@ paste in after a migration; `--root PATH` inspects another tree, which is
 what `tests/test_components.py` uses to exercise both failure directions.
 Wired into `tools/check-repo-health.py` as step 3.
 
-17 exemptions remain when this section was written; 16 after this
-increment (the list is in the tool, sorted).
+13 exemptions remain as of this increment (the list is in the tool,
+sorted).
 
 ## Adding a new view from the layer
 
@@ -660,7 +696,9 @@ increment (the list is in the tool, sorted).
      with its value is `ui.stat.row`, one list entry is
      `ui.stat.list_row`, a fraction is `ui.stat.meter`; centred words are
      `ui.text.write`/`ui.panel.card` (a title, an optional body, a corner
-     tag, an accent bar, and the one scale-to-fit rule), a paragraph
+     tag, an accent bar, and the one scale-to-fit rule; `ui.panel.strip`
+     is the same card confined to a rect of a bigger frame, which is what
+     a failure inside a composited view wants), a paragraph
      broken to a width is `ui.text.wrap`, and a line that must shrink to
      its column is `ui.text.fit_size`.
 4. Never let a draw raise: return the frame unchanged. If the view
@@ -785,24 +823,25 @@ the pre-change tree (red instead of the badge fill at the badge tile).
   20px) instead of three 69px ones (12px floor), `cols` is a real param,
   and `picker_regions` generates the matching tap rects. A dedicated
   narrow-band renderer is no longer needed.
-- **The remaining hand-drawing views** (the gate's 14 exemptions) are the
+- **The remaining hand-drawing views** (the gate's 13 exemptions) are the
   bigger migration: `beads*`, `macbook_draw`/`macbook_strip`,
   `qr`/`qr_common`, `reload`, `stream`, `retro_grid_draw`,
-  `life`, `playlist`/`playlist_bar` and the two
-  `_html_*` non-views. The vocabulary they need all exists now (`tile` +
-  `grid`, `text` + `wrap` + `fit_size`, `shell`, `stat` + `list_row`,
-  `panel`), so each is a straight migration with its own test story, not
-  new design. `clock` and `touch_confidence_draw` left the list this
-  increment (section 2i).
+  `life`, `playlist`/`playlist_bar` and `_html_native` (the engine itself,
+  which draws through the C ABI rather than by hand). The vocabulary they
+  need all exists now (`tile` + `grid`, `text` + `wrap` + `fit_size`,
+  `shell`, `stat` + `list_row`, `panel` + `strip`), so each is a straight
+  migration with its own test story, not new design. `clock`,
+  `touch_confidence_draw` and `_html_error` left the list in sections 2i
+  and 2j.
 - **Layout-mode taps.** While a layout owns the panel the touch service
   evaluates global regions only (view-scoped regions are skipped), so a
   band's tiles need global `touch.json` entries at the band geometry
   (`picker.picker_regions(w, h, views, rect=<absolute band rect>)`
   produces them). Not wired into a shipped config yet.
-- **Three copies of “broken to a width” survive** in exempt views:
-  `beads_common._wrap`, `macbook_strip._wrap` and `_html_error._wrap`
-  (activity's was deleted this increment, section 2g). They take a PIL
-  `draw` + `font` rather than a screen + size, so folding them onto
+- **Two copies of “broken to a width” survive** in exempt views:
+  `beads_common._wrap` and `macbook_strip._wrap` (`activity`'s went in
+  section 2g, `_html_error`'s in section 2j). They take a PIL `draw` +
+  `font` rather than a screen + size, so folding them onto
   `ui.text.wrap` means changing their call sites and their own tests:
   its own increment.
 - **Two copies of the band's age line survive** in `beads_age._age`
@@ -1728,6 +1767,74 @@ of the panel; the touch frame's accent bar is the view's palette slot
 count zero pixels while their roles count thousands; every layout style
 and the html/status template keep both badges (29416 `badge` pixels).
 
+### The failure card, rendered headless (this increment)
+
+    $ DISPLAYD_FAKE_FB=1 python3 /tmp/failure_evidence.py
+    daemon: DISPLAYD_FAKE_FB=1 http://127.0.0.1:59110
+    display: {'width': 1920, 'height': 1080, 'bpp': 32, 'stride': 7680, 'fb_blank': 0, 'backlight': {'available': False}}
+
+    == the failure card, through the html view at 1920x1080 ==
+      alert rule at (960,1): (214, 74, 74) (alert=(214, 74, 74))
+      alert-page pixels: 1978780  alert-ink pixels: 4454  alert-body: 6623
+      card is the component (ink centred on both halves): True
+
+    == the dock's strip form, confined to the dock rect ==
+      rule inside the rect at (85,772): (214, 74, 74) (alert=(214, 74, 74))
+      alert pixels above the rect: 0  alert-ink above: 0
+      alert-ink inside the rect: 764 (no ink in the right quarter: 0)
+
+    == the four layout styles, with the system buttons ==
+      full                   regions=1 renderers=['clock'] badge px=29416 first_pixel_ms=5.7
+      split-50-50            regions=2 renderers=['clock', 'picker'] badge px=29416 first_pixel_ms=4.5
+      split-50-50-columns    regions=2 renderers=['clock', 'options'] badge px=29416 first_pixel_ms=4.2
+      15-70-15               regions=3 renderers=['picker', 'clock', 'picker'] badge px=29416 first_pixel_ms=7.3
+
+    == system buttons over a template view (html/status) ==
+      error card absent (alert-page pixels: 0)
+      accent pixels: 2070  panel pixels: 26394  badge px: 29416
+
+    frames saved under /tmp/fail-evi-*.png
+
+The failure card is requested the real way -- `POST /show {"renderer":
+"html", "params": {"template": "no-such-template.html"}}` -- and its frame
+carries the alert rule at the top centre, 4454 pixels of `alert-ink` in a
+scaled centred headline and 6623 of `alert-body` under it. The dock's strip
+form is rendered at the dock rect `(80, 770, 1840, 230)`: the rule is
+inside it, **zero** alert or alert-ink pixels appear above it, and no ink
+lands in its right quarter. All four layout styles and the html/status
+template still render with both system buttons (29416 `badge` pixels,
+first pixel 4.2-7.3ms against the 100ms budget).
+
+One trap this evidence run exposed: a view switch pre-presents the last
+frame cached for that renderer, so the *first changed* snapshot after
+`POST /show` can still be the previous (here: error) frame for that view.
+The html/status check therefore waits for a frame that is not an error card
+(`alert-page` pixels < 10000) before judging it, which is what the earlier
+increments' "first changed frame" waits got away with only because the
+cached frame happened to be the one they wanted.
+
+Two flakes worth recording, neither from this change. The full sweep is
+`Ran 1503 tests in 357.6s -- FAILED (failures=2, errors=1, skipped=10)`,
+and the three are exactly the known-red modules (the `test_talon_apps`
+import error, `test_deploy_reload_proof`, `test_mac_zoom`). An earlier
+sweep of the same tree also reddened
+`tests/test_panel.py::ClockCardTest.test_the_digits_are_drawn_centred_and_fitted`
+(ink midpoint 914 against its `> 920` floor): that test renders the
+*current* time, so its ink midpoint moves with the minute's digits and
+the auto-fitted size. It is pre-existing and time-dependent, proved by
+loading HEAD's `panel.py` from `git show` and comparing images: the clock
+path (`headline`) and `card` are **byte-identical** to HEAD for several
+strings, because this increment touched only `bar`'s optional `rect`,
+`card`'s optional `body_ink` and the new `strip`.
+
+Deterministic fail-before probes (`git show HEAD:<file> | grep -n`):
+`renderers/_html_error.py` HEAD line 24 `from PIL import ImageDraw`, line 26
+`import _html_native`, line 41 `def _wrap`, lines 71-72 and 94-95 the four
+`ui_font` loads, lines 67 and 92 `ImageDraw.Draw`; and
+`git show HEAD:renderers/ui/panel.py | grep -c "def strip"` -> 0, so the new
+structural test and every `strip` test were red on HEAD (and the gate
+reported "1 stale exemption(s)" until the entry left `EXEMPTIONS`).
+
 ## 8. The branch and the pull request — opened this increment
 
 Iterations 1-12 never pushed anything: the remote had no
@@ -1778,8 +1885,8 @@ touched.
 The command above exits zero as of this increment. Its exact output:
 
     $ python3 tools/check-components.py && python3 -m unittest tests.test_picker tests.test_unified tests.test_chat tests.test_html tests.test_html_runtime_install tests.test_control tests.test_options tests.test_layout && python3 tools/check-lines.py
-    component layer ok: 14 shipped module(s) still draw by hand; all exempt, none stale
-    Ran 331 tests in 52.560s
+    component layer ok: 13 shipped module(s) still draw by hand; all exempt, none stale
+    Ran 331 tests in 52.443s
     OK
     line budget ok: all source files within 250 lines
 
@@ -1788,7 +1895,7 @@ budget line plus `ok: no generated native artifacts tracked` and the
 component line.)
 
 That is a **floor, not the finish line**:
-the gate is a ratchet with 14 exemptions, most views still hand-draw, and
+the gate is a ratchet with 13 exemptions, most views still hand-draw, and
 the component vocabulary exists (`system_buttons`, `ui.tile` + `ui.grid`,
 `ui.shell` + `ui.stat` + `ui.text`, `ui.panel`, and the `ui.base.chain`
 primitive) but the larger views (`beads*`, `macbook_*`, `qr`,
