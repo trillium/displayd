@@ -200,6 +200,12 @@ class FramesTest(unittest.TestCase):
                 healthy.crop(grid_zone), other.crop(grid_zone))
             self.assertIsNone(diff.getbbox())
 
+    # The dock is a litehtml document now, so telling an empty feed from
+    # a stale one is a pixel claim about a rendered strip: without the
+    # engine both states fall back to the same error card and there is
+    # nothing to compare. Same gate, same reason, as DockPixelsTest --
+    # the intent is unchanged, it just needs a dock that can draw.
+    @native_built
     def test_empty_and_stale_differ_in_dock_only(self):
         empty = self._frame(None, False)
         stale = self._frame(live_state(ts=time.time() - 99), True)
