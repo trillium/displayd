@@ -23,7 +23,7 @@ from PIL import Image, ImageChops
 
 import _html_native
 import touch_audit
-from renderers import home_chrome
+from renderers.ui import system_buttons as buttons
 from renderers import unified as un
 from renderers import unified_dock as dock
 
@@ -402,9 +402,9 @@ class RunLoopTest(unittest.TestCase):
 
 class HomeWiringTest(unittest.TestCase):
     def test_unified_is_home(self):
-        self.assertEqual(home_chrome.HOME_VIEW, "unified")
-        self.assertIn("unified", home_chrome.SUPPRESSED_VIEWS)
-        self.assertIn("picker", home_chrome.SUPPRESSED_VIEWS)
+        self.assertEqual(buttons.HOME_VIEW, "unified")
+        self.assertIn("unified", buttons.HOME_SUPPRESSED)
+        self.assertIn("picker", buttons.HOME_SUPPRESSED)
         self.assertNotIn("unified", ("sleep", "reload", "notice"))
 
     def test_audit_expects_tiles_plus_dock(self):

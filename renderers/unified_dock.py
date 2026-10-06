@@ -1,6 +1,6 @@
 """Apps-dock content for the merged home screen. NOT a renderer: no
 run(), so the daemon's loader skips this file (same convention as
-home_chrome.py / row_draw.py).
+row_draw.py).
 
 One module owns the dock strip so renderers/unified.py stays a thin
 composition (grid via picker + dock here + chrome via overlay): the

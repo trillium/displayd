@@ -39,10 +39,10 @@ HEAD_BAND = 170
 FOOT_BAND = 62
 PAD = 176         # panel margin: clears the persistent home/sleep badges,
 #                   which own the top-left and top-right 160px squares of
-#                   every presented frame (home_chrome.HOME_STRIP,
-#                   sleep_chrome.SLEEP_STRIP). A title under a badge is a
-#                   title nobody can read -- this is the lesson the first
-#                   live render taught, and the test below pins it.
+#                   every presented frame (ui/system_buttons.STRIP).
+#                   A title under a badge is a title nobody can read --
+#                   this is the lesson the first live render taught, and
+#                   the test below pins it.
 GUTTER = 28       # between the two panes
 BOARD_W = 520     # the roster pane's width
 BORDER = 2        # each pane's frame, outside its declared width

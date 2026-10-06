@@ -168,7 +168,7 @@ Two consequences worth stating plainly:
   is part of what a test sees. `_html_compose.strip_tokens()` takes it
   back off, and `tests/test_html.py` asserts the substitution contract on
 the text around it -- exactly, not loosely.
-- `renderers/home_chrome.py`, `renderers/sleep_chrome.py` and
+- `renderers/ui/system_buttons.py` (the component layer) and
 `renderers/_html_error.py` already read roles from the palette (the badge
 tile, the glyph, the alert family) instead of carrying their own
 literals: that is the shape the remaining Pillow views migrate towards,

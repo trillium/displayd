@@ -243,11 +243,10 @@ class PillowConsumerTest(unittest.TestCase):
     BADGE = Image.new("RGB", (1920, 1080), (0, 0, 0))
 
     def test_both_system_buttons_draw_the_badge_token(self):
-        import home_chrome
-        import sleep_chrome
-        for name, draw, box in (("home", home_chrome.draw_home_button,
+        from ui import system_buttons as buttons
+        for name, draw, box in (("home", buttons.draw_home_button,
                                  (0, 0, 160, 160)),
-                                ("sleep", sleep_chrome.draw_sleep_button,
+                                ("sleep", buttons.draw_sleep_button,
                                  (1760, 0, 1920, 160))):
             with self.subTest(button=name):
                 img = draw(self.BADGE.copy())

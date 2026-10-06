@@ -274,7 +274,8 @@ keeps running the old tick until the installer runs (`install-mac.sh
 - `renderers/unified.py` is `HOME_VIEW` (picker tiles at real geometry +
   live apps dock; dock drawing split into `renderers/unified_dock.py` per
   the 250-line budget). Home badge/region target it
-  (`home_chrome.HOME_VIEW`, suppressed there); `picker` stays selectable.
+  (`system_buttons.HOME_VIEW` in `renderers/ui/`, suppressed there);
+  `picker` stays selectable.
 - The dock is a litehtml strip (`html-templates/dock.html`, shared chrome
   slot names + dim/accent/alert/line + an empty-when-live `marker`), drawn
   by `unified_dock.draw_dock(img, ...)`, which pastes ONLY the dock rect and
@@ -374,8 +375,9 @@ keeps running the old tick until the installer runs (`install-mac.sh
   like a browser, so `label_box()` measures the box from the real face.
   `options_regions()` stays `[]` on purpose: options NAMES, the picker
   SELECTS, so a per-name hit rect would be a behaviour change disguised as
-  migration. Only the persistent overlay chrome (`renderers/home_chrome.py`)
-  still draws in Pillow, and it is deliberately left for its own increment.
+  migration. Only the persistent overlay chrome (the system buttons in
+  `renderers/ui/`) still draws in Pillow, and it now lives in the
+  component layer as one module.
 - Three litehtml gotchas, all verified live, each of which silently renders
   WRONG rather than failing: `document::render()` returns natural WIDTH, not
   height (read `doc->height()`, and note this revision declares but never

@@ -641,11 +641,10 @@ class TestPanelRenders(unittest.TestCase):
         # clear of them -- the first live render taught this, and here it is
         # pinned. (The layer's margin and the template's padding are the same
         # number, which is what makes the head band part of the same rule.)
-        import home_chrome
-        import sleep_chrome
+        from ui import system_buttons as buttons
 
-        badges = [home_chrome.home_rect(1920, 1080),
-                  sleep_chrome.sleep_rect(1920, 1080)]
+        badges = [buttons.home_rect(1920, 1080),
+                  buttons.sleep_rect(1920, 1080)]
         lay = panes.layout(1920, 1080)
         self.assertIn("padding: 30px %dpx 0 %dpx;" % (panes.PAD, panes.PAD),
                       source("html-templates/chat.html"))
@@ -657,7 +656,7 @@ class TestPanelRenders(unittest.TestCase):
                                      and py < by + bh and by < py + ph,
                                      "%s pane overlaps the badge at %d,%d"
                                      % (name, bx, by))
-        self.assertGreaterEqual(lay["board"][0], home_chrome.HOME_STRIP)
+        self.assertGreaterEqual(lay["board"][0], buttons.STRIP)
 
     def test_the_two_panes_are_where_the_layer_says_they_are(self):
         screen = make_screen(1920, 1080)

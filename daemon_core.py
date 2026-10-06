@@ -17,9 +17,8 @@ import playlist as playlist_module
 import policy as policy_module
 from daemon_power import POLICY_FILE
 from feed_store import FeedStore
-from renderer_registry import (RENDERER_DIR, home_chrome_module,
-                               load_renderers, sleep_chrome_module,
-                               talon_apps_module)
+from renderer_registry import (RENDERER_DIR, load_renderers,
+                               system_buttons_module, talon_apps_module)
 from screen import Screen
 
 
@@ -102,26 +101,18 @@ class DisplayCoreMixin:
         # Playlist rotation: scheduler on top of _start_view, overlay hook
         # for the progress bar. Starts enabled only from persisted config.
         self.playlist = playlist_module.Playlist(self)
-        # Shared screen chrome, composed not replaced: the playlist bar,
-        # the home button, and the sleep badge draw through one chained
-        # overlay so all stay visible at once (a second plain assignment
-        # here would silently disable the earlier layers). Each badge
-        # reads screen.current_view live and suppresses itself where it
-        # is meaningless; see renderers/home_chrome.py and
-        # renderers/sleep_chrome.py.
+        # Shared screen chrome, composed not replaced: the playlist bar
+        # and the system buttons draw through one chained overlay so all
+        # stay visible at once (a second plain assignment here would
+        # silently disable the earlier layers). The component layer owns
+        # the chain, so a failing layer is skipped instead of blanking
+        # the panel; each badge reads screen.current_view live and
+        # suppresses itself where it is meaningless. See
+        # renderers/ui/system_buttons.py.
         self.screen.overlay = self.playlist.overlay_image
-        if home_chrome_module is not None:
-            self.screen.overlay = home_chrome_module.chain_overlays(
-                self.screen.overlay,
-                home_chrome_module.home_overlay(self.screen))
-        if (sleep_chrome_module is not None
-                and home_chrome_module is not None):
-            # One chain primitive (home's): both badge helpers ship
-            # together, and a missing badge must never take the daemon
-            # down, so the sleep badge rides only when the chain does.
-            self.screen.overlay = home_chrome_module.chain_overlays(
-                self.screen.overlay,
-                sleep_chrome_module.sleep_overlay(self.screen))
+        if system_buttons_module is not None:
+            self.screen.overlay = system_buttons_module.system_overlay(
+                self.screen, self.screen.overlay)
         self.watchdog_stop = threading.Event()
         self.watchdog_thread = None
         self.stop_event = None

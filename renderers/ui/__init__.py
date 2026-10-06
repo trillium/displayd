@@ -1,0 +1,37 @@
+"""The component layer: the one place the panel's pixels are drawn.
+
+Every surface on this panel is assembled from a small, deliberate set of
+components. This package owns them, and it is the *only* place a Pillow
+drawing primitive (``PIL.ImageDraw``) is allowed to appear -- enforced by
+``tools/check-components.py``. A view that draws its own pixels is a
+defect this package exists to delete, exactly like a colour literal is a
+defect ``renderers/theme.py`` exists to delete.
+
+Why a layer at all:
+
+- **One definition per component.** ``system_buttons`` is the home and
+  sleep badges. Before this package they were two 200-line modules that
+  each carried their own tile fill, glyph, strip width, rect, region,
+  draw function and suppression list -- a duplicate by construction,
+  because nothing in the codebase owned "a badge".
+- **Fault isolation is structural.** ``base.chain`` composes components
+  and skips a failing one, so a broken component can never blank the
+  panel. That guarantee used to live inside the home-chrome module, i.e.
+  inside one component; it belongs to the layer that composes them.
+- **Both rendering paths can ask for the same component.** A component
+  is a definition (geometry + colour roles + semantics), not a drawing
+  technique: the Pillow half of a component draws a frame, and a
+  template half can express the same component as markup. The tokens for
+  it come from ``renderers/theme.py`` either way.
+
+Layout of the package:
+
+- ``base`` -- the composition primitive (``chain``), no pixels.
+- ``system_buttons`` -- the home and sleep badges: one module, one
+  definition, composable by every view regardless of which path it uses.
+
+Adding a component: give it its own module here, take every colour from
+``theme``, return the frame unchanged on any failure, and add it to the
+check-components exemption boundary (the layer is exempt by location, so
+nothing else is needed).
+"""

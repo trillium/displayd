@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
                                 "renderers"))
 
 import displayd
-import sleep_chrome
+from ui import system_buttons as buttons
 import touch
 from touch import TouchService, TouchEvent, default_config
 
@@ -94,33 +94,33 @@ def top_right_differs(img, side=160):
 
 class ChromeTest(unittest.TestCase):
     def test_badge_draws_top_right(self):
-        img = sleep_chrome.draw_sleep_button(black())
+        img = buttons.draw_sleep_button(black())
         self.assertTrue(top_right_differs(img))
 
     def test_badge_reads_on_light_background(self):
-        img = sleep_chrome.draw_sleep_button(
+        img = buttons.draw_sleep_button(
             Image.new("RGB", (1920, 1080), (255, 255, 255)))
         self.assertTrue(top_right_differs(img))
 
     def test_badge_never_raises(self):
-        img = sleep_chrome.draw_sleep_button(None, rect="bogus")
+        img = buttons.draw_sleep_button(None, rect="bogus")
         self.assertIsNone(img)
 
     def test_rect_inside_right_strip(self):
-        self.assertEqual(sleep_chrome.sleep_rect(1920, 1080),
+        self.assertEqual(buttons.sleep_rect(1920, 1080),
                          [1760, 0, 160, 160])
-        small = sleep_chrome.sleep_rect(160, 90)
+        small = buttons.sleep_rect(160, 90)
         self.assertTrue(small[0] + small[2] <= 160)
         self.assertTrue(small[2] <= 160 and small[3] <= 160)
 
     def test_region_reuses_screen_off(self):
-        region = sleep_chrome.sleep_region()
+        region = buttons.sleep_region()
         self.assertEqual(region["id"], "screen-off")
         self.assertEqual(region["rect"], [1760, 0, 160, 160])
         self.assertEqual(region["action"], {"name": "screen_off"})
 
     def test_region_wins_overlap_by_order(self):
-        regions = [sleep_chrome.sleep_region(),
+        regions = [buttons.sleep_region(),
                    {"id": "playlist-next",
                     "rect": [1760, 0, 160, 1080]}]
         self.assertEqual(touch.hit_test(1800, 10, regions), "screen-off")
@@ -129,7 +129,7 @@ class ChromeTest(unittest.TestCase):
 
     def test_overlay_draws_on_content_views(self):
         screen = types.SimpleNamespace(current_view="clock")
-        overlay = sleep_chrome.sleep_overlay(screen)
+        overlay = buttons.system_overlay(screen, None, which=("sleep",))
         self.assertTrue(top_right_differs(overlay(black())))
         screen.current_view = "picker"
         self.assertTrue(top_right_differs(overlay(black())), "picker")
@@ -138,18 +138,18 @@ class ChromeTest(unittest.TestCase):
 
     def test_overlay_suppressed_where_meaningless(self):
         screen = types.SimpleNamespace(current_view="clock")
-        overlay = sleep_chrome.sleep_overlay(screen)
+        overlay = buttons.system_overlay(screen, None, which=("sleep",))
         for view in ("sleep", "reload", "notice"):
             screen.current_view = view
             self.assertFalse(top_right_differs(overlay(black())), view)
 
     def test_audit_exact_matches_drawn(self):
-        entry = sleep_chrome.audit_exact("clock", 1920, 1080)
+        entry = buttons.audit_exact("clock", 1920, 1080, which=("sleep",))
         self.assertEqual(len(entry), 1)
         self.assertEqual(entry[0]["id"], "screen-off")
         self.assertEqual(entry[0]["rect"], [1760, 0, 160, 160])
         for view in ("sleep", "reload", "notice"):
-            self.assertEqual(sleep_chrome.audit_exact(view), [])
+            self.assertEqual(buttons.audit_exact(view, which=("sleep",)), [])
 
 
 class SleepViewTest(unittest.TestCase):
