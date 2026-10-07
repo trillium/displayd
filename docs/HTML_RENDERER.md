@@ -347,10 +347,13 @@ Two things differ from the other templates, both deliberate:
   simply has no apps.
 
 litehtml parses `border-radius` and passes the per-corner radii through to the
-container, but displayd's own `renderers/native/pil_container.cpp` does not
-implement them -- a displayd gap rather than an engine limitation, with local
-support landing separately -- so for now the strip's corners are square rather
-than rounded, and the head "dot" is a 20px square. Everything else -- three
+container, which displayd's `renderers/native/pil_container.cpp` carries across
+the C ABI to the PIL painter -- so the strip's outline and the head "dot" are
+rounded (`border-radius` in `dock.html`: 28px on the outline, 50% on the dot).
+The radii stay eight independent values: the painter builds an anti-aliased
+coverage mask per box in `renderers/ui/radius.py`, cached on
+`(width, height, radii)` because that tuple is the mask's only input.
+Everything else -- three
 states
 (no payload yet / live / quiet past `STALE_AFTER`), the count, the focused app,
 the overflow, the split, the mode line -- is the behaviour the Pillow version

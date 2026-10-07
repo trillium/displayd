@@ -373,7 +373,35 @@ class TestNativeBasics(unittest.TestCase):
     def test_version_carries_the_pinned_revision(self):
         version = _html_native.version()
         self.assertIn("5624e795be50f02c21c89985c374dcd659dbd74b", version)
-        self.assertIn("c-abi 1", version)
+        # c-abi 2 added lhtml_radii to draw_fill and draw_borders. The
+        # string is the only place a Python half and a stale .so can be
+        # told apart, so it has to move when the struct layout does.
+        self.assertIn("c-abi 2", version)
+
+    def test_the_loaded_library_is_the_abi_this_half_speaks(self):
+        # A stale liblitehtmlpil built before the radii fields would take
+        # the old callbacks and misread every stack frame after the third
+        # argument. ctypes cannot detect that; the version string can.
+        self.assertTrue(_html_native.version().endswith("c-abi 2)"))
+        self.assertEqual(len(_html_native._Radii._fields_), 8)
+
+    def test_the_radii_struct_matches_the_c_header_it_mirrors(self):
+        # _html_native derives its ctypes prototypes from _Callbacks, so a
+        # field renamed on one side and not the other would compile here and
+        # only misread memory at render time. The header is the contract, so
+        # read it rather than trusting the two halves to agree by memory.
+        header = os.path.join(_html_native.NATIVE_DIR, "displayd_html.h")
+        with open(header) as handle:
+            text = handle.read()
+        struct = text.split("lhtml_radii\n{")[1].split("} lhtml_radii")[0]
+        names = []
+        for line in struct.split(";"):
+            names += re.findall(r"[a-z_]+", re.sub(r"\bdouble\b", "", line))
+        # ORDER matters as much as the names: ctypes lays the struct out in
+        # declaration order, so a swapped pair would silently transpose two
+        # radii on the panel.
+        self.assertEqual(names, [n for n, _ in _html_native._Radii._fields_],
+                         "the C header and the ctypes struct disagree")
 
     def test_render_returns_image_and_content_height(self):
         image, height = _html_native.render(

@@ -47,7 +47,7 @@ void set_err(char *err, int errlen, const char *what, const char *detail)
 
 extern "C" const char *lhtml_version(void)
 {
-    return "litehtml " LITEHTML_PINNED_REV " (displayd pil container, c-abi 1)";
+    return "litehtml " LITEHTML_PINNED_REV " (displayd pil container, c-abi 2)";
 }
 
 extern "C" int lhtml_render(const lhtml_callbacks *cb, const char *html, int width, int height,
