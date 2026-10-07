@@ -346,8 +346,12 @@ Two things differ from the other templates, both deliberate:
   silently missing strip would be indistinguishable from a home screen that
   simply has no apps.
 
-litehtml has no `border-radius`, so the strip's corners are square rather than
-rounded, and the head "dot" is a 20px square. Everything else -- three states
+litehtml parses `border-radius` and passes the per-corner radii through to the
+container, but displayd's own `renderers/native/pil_container.cpp` does not
+implement them -- a displayd gap rather than an engine limitation, with local
+support landing separately -- so for now the strip's corners are square rather
+than rounded, and the head "dot" is a 20px square. Everything else -- three
+states
 (no payload yet / live / quiet past `STALE_AFTER`), the count, the focused app,
 the overflow, the split, the mode line -- is the behaviour the Pillow version
 had, and `tests/test_unified.py` pins it against rendered pixels, including
