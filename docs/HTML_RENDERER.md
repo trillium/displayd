@@ -479,8 +479,11 @@ solid and `rgba()` colours, borders, text, common list markers, and local
 PIL-decodable images (with `background-size`, `background-position` and all
 four `background-repeat` modes).
 
-Not supported: grid, gradients, rounded clipping, video, canvas, forms,
-JavaScript, webfonts, remote resources. Unsupported CSS is ignored, not
+Not supported: grid, gradients, video, canvas, forms, JavaScript, webfonts,
+remote resources. Rounded clipping is a displayd-pipeline gap, not an engine
+gap: litehtml parses `border-radius` and hands the per-corner radii to the
+container, but `renderers/native/pil_container.cpp` does not implement them,
+and local support is landing. Unsupported CSS is ignored, not
 misrendered -- the panel shows the layout it does understand.
 
 ### Four litehtml behaviours worth knowing before you write a template
