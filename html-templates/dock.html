@@ -42,11 +42,9 @@
   picker.html follows.
 
   litehtml notes: no grid, no gradients, and `gap` is dropped on a flex row
-  whose children grow -- spacing here is padding and margins. litehtml does
-  parse `border-radius` and hands the per-corner radii to the container, but
-  `renderers/native/pil_container.cpp` ignores them -- a displayd gap, not an
-  engine limitation, with local support landing separately -- so the strip's
-  corners are square, not rounded, until that lands.
+  whose children grow -- spacing here is padding and margins. litehtml parses
+  `border-radius` and the per-corner radii reach the painter through
+  `pil_container.cpp`, so the two declarations below really do round.
 -->
 <html>
 <head>
@@ -55,12 +53,23 @@
   * { margin: 0; padding: 0; }
   html, body { background: {{background}}; color: {{color}};
                font-family: sans-serif; }
-  body { border: 2px solid {{line}}; padding: 14px 22px 0 22px; }
+  /* Two rounded corners, both chosen against the strip's own geometry at
+     DESIGN: the outline is 2px over a 1760x230 box.
+       - the outline takes 28px, half again the 24px tile radius in
+         _chrome.html, so the shell around the tiles reads softer than the
+         boxes inside it. It is ~12% of the 230px height, far enough from
+         half that this stays a strip rather than a lozenge.
+       - the head dot takes 50%, which is the only radius here that is not a
+         softened corner but the intended shape: a 20px dot at 50% is a
+         circle. Percentages rather than px so the circle stays a circle
+         when a custom dock rect scales this authored strip. */
+  body { border: 2px solid {{line}}; border-radius: 28px;
+         padding: 14px 22px 0 22px; }
   .head { display: flex; justify-content: space-between;
           align-items: baseline; }
   .brand { font-size: 36px; font-weight: bold; color: {{color}}; }
   .dot { display: inline-block; width: 20px; height: 20px;
-         background: {{accent}}; margin-right: 16px; }
+         background: {{accent}}; border-radius: 50%; margin-right: 16px; }
   .status { font-size: 30px; color: {{dim}}; }
   .subtitle { font-size: 30px; color: {{dim}}; padding-top: 8px; }
   .main { font-size: 54px; font-weight: bold; color: {{color}};

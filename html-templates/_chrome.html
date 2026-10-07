@@ -54,11 +54,10 @@
   litehtml notes: block and flex layout, padding/margins, absolute
   positioning, borders and solid colours only -- no grid, no gradients, no
   @import. It drops `gap` on a flex row whose children
-  grow, so spacing here is padding and margins. It does parse
-  `border-radius` and hands the per-corner radii to the container, but
-  `renderers/native/pil_container.cpp` ignores them -- a displayd gap, not an
-  engine limitation, with local support landing separately -- so a rounded
-  declaration here still paints square.
+  grow, so spacing here is padding and margins. It parses
+  `border-radius` and the per-corner radii reach the painter through
+  `pil_container.cpp`, so a rounded declaration here really is rounded;
+  see the `.tile` rule below for the radius this panel uses and why.
 
   A LANDMINE, verified live: litehtml drops a whole SHORTHAND declaration
   whose value contains a var() -- `padding: 44px var(--inset) 0
@@ -117,10 +116,17 @@
      box, the label fit, the centring) is owned by renderers/ui/tile.py,
      which is why the frame width here is pinned to tile.BORDER by a test.
      `border-width`/`border-style`/`border-color` are longhands on purpose:
-     litehtml drops a multi-value shorthand containing a var(). */
+     litehtml drops a multi-value shorthand containing a var().
+     RADIUS is authored here, not in tile.py, because it is a template
+     concern -- the shape of the chrome -- while the frame WIDTH is a
+     geometry contract the component and its regions must agree on. 24px is
+     four times the 6px frame and about an eighth of the shortest tile box
+     (560x200 at ten tiles), so the corners soften without turning a tile
+     into a lozenge; it is the same value dock.html uses for the strip
+     outline, which is what makes the two read as one family. */
   .layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
   .tile { position: absolute; border-width: 6px; border-style: solid;
-          border-color: var(--on-accent); }
+          border-color: var(--on-accent); border-radius: 24px; }
   .tile .lab { position: absolute; font-weight: bold;
                color: var(--on-accent); }
   .tile .shade { position: absolute; font-weight: bold;

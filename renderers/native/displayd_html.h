@@ -49,6 +49,23 @@ typedef struct lhtml_border_side
     int       style; /* lhtml_border_style */
 } lhtml_border_side;
 
+/* Per-corner border radii, resolved by litehtml to border-box pixels.
+ *
+ * CSS radii are eight independent values, not one number: each corner has
+ * its own horizontal and vertical radius (the `60px 10px / 20px 40px` slash
+ * form, and the `border-top-left-radius` longhands, both land here). A
+ * single collapsed radius silently rounds the wrong corners, so all eight
+ * travel together. Zero means "square at this corner"; an all-zero struct
+ * and a NULL pointer both mean the element declared no radius at all, and
+ * the embedder must draw the plain square rectangle for either. */
+typedef struct lhtml_radii
+{
+    double top_left_x,     top_left_y;
+    double top_right_x,    top_right_y;
+    double bottom_right_x, bottom_right_y;
+    double bottom_left_x,  bottom_left_y;
+} lhtml_radii;
+
 /* Sides are ordered left, top, right, bottom (matches litehtml). */
 #define LHTML_SIDE_LEFT   0
 #define LHTML_SIDE_TOP    1
@@ -109,11 +126,17 @@ typedef struct lhtml_callbacks
     double (*text_width)(void *ctx, uintptr_t font_id, const char *utf8);
 
     /* Painting. box is in canvas pixels; clip is the current clip stack top
-     * (w<=0 or h<=0 means unclipped). */
+     * (w<=0 or h<=0 means unclipped).
+     *
+     * radii may be NULL, and is then the same as all-zero: draw the square
+     * rectangle, exactly as an embedder written before this field existed
+     * would. It is a pointer rather than a trailing value so the two
+     * callbacks keep their old shape at the source level. */
     void (*draw_fill)(void *ctx, lhtml_rect box, lhtml_rect clip,
-                      lhtml_color color);
+                      lhtml_color color, const lhtml_radii *radii);
     void (*draw_borders)(void *ctx, lhtml_rect box, lhtml_rect clip,
-                         const lhtml_border_side sides[4]);
+                         const lhtml_border_side sides[4],
+                         const lhtml_radii *radii);
     void (*draw_text)(void *ctx, uintptr_t font_id, const char *utf8,
                       lhtml_color color, lhtml_rect box, lhtml_rect clip);
     /* Backgrounds. Three distinct rectangles, and conflating any two of them

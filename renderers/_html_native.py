@@ -17,10 +17,16 @@ error -- never a silent no-op frame.
 """
 
 import ctypes
+import math
 import os
+import sys
 import threading
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from ui import radius as ui_radius
 
 NATIVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "native")
 LIB_NAMES = ("liblitehtmlpil.dylib", "liblitehtmlpil.so")
@@ -77,6 +83,19 @@ class _BorderSide(ctypes.Structure):
                 ("style", ctypes.c_int)]
 
 
+class _Radii(ctypes.Structure):
+    # Field order and names mirror lhtml_radii in displayd_html.h. ctypes
+    # gives C layout, so this is the same eight doubles the container wrote.
+    _fields_ = [("top_left_x", ctypes.c_double),
+                ("top_left_y", ctypes.c_double),
+                ("top_right_x", ctypes.c_double),
+                ("top_right_y", ctypes.c_double),
+                ("bottom_right_x", ctypes.c_double),
+                ("bottom_right_y", ctypes.c_double),
+                ("bottom_left_x", ctypes.c_double),
+                ("bottom_left_y", ctypes.c_double)]
+
+
 class _FontDesc(ctypes.Structure):
     _fields_ = [("family", ctypes.c_char_p), ("size", ctypes.c_double),
                 ("style", ctypes.c_int), ("weight", ctypes.c_int),
@@ -94,6 +113,7 @@ class _FontMetrics(ctypes.Structure):
 CTX = ctypes.c_void_p
 DOUBLE = ctypes.POINTER(ctypes.c_double)
 SIDES = ctypes.POINTER(_BorderSide)
+RADII = ctypes.POINTER(_Radii)
 # Mirrors the LHTML_SIDE_* macros in renderers/native/displayd_html.h.
 SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM = 0, 1, 2, 3
 
@@ -111,8 +131,8 @@ class _Callbacks(ctypes.Structure):
                              ctypes.POINTER(_FontMetrics))),
         ("delete_font", _cbf(None, CTX, ctypes.c_size_t)),
         ("text_width", _cbf(ctypes.c_double, CTX, ctypes.c_size_t, ctypes.c_char_p)),
-        ("draw_fill", _cbf(None, CTX, _Rect, _Rect, _Color)),
-        ("draw_borders", _cbf(None, CTX, _Rect, _Rect, SIDES)),
+        ("draw_fill", _cbf(None, CTX, _Rect, _Rect, _Color, RADII)),
+        ("draw_borders", _cbf(None, CTX, _Rect, _Rect, SIDES, RADII)),
         ("draw_text", _cbf(None, CTX, ctypes.c_size_t, ctypes.c_char_p, _Color,
                            _Rect, _Rect)),
         ("draw_image", _cbf(None, CTX, ctypes.c_char_p, ctypes.c_char_p, _Rect,
@@ -208,6 +228,90 @@ def _rgba(color, size):
     if color.a >= 255:
         return (color.r, color.g, color.b, 255)
     return (color.r, color.g, color.b, color.a)
+
+
+def _radii(raw):
+    """A ctypes lhtml_radii into a rounding key, or None for "square".
+
+    None is the answer for every degenerate case, and is the reason an
+    absent or malformed radius is safe: a NULL pointer from the container,
+    an all-zero struct, a negative value, and a NaN litehtml failed to
+    resolve all collapse to the same square path this renderer took before
+    radii existed. It never raises and never draws half a shape.
+    """
+    if raw is None or not raw:
+        return None
+    # ctypes hands a NULL lhtml_radii* over as None and a real one as an
+    # LP__Radii, so the struct is one dereference in.
+    values = [float(getattr(raw.contents, name)) for name, _ in _Radii._fields_]
+    if not all(math.isfinite(v) and v >= 0 for v in values):
+        return None
+    return tuple(values) if any(values) else None
+
+
+def _border_ring(box, sides, radii):
+    """The border ring of `box` as a coverage mask, and the origin it sits at.
+
+    CSS draws a border as the outer rounded edge minus the inner one, and
+    the inner edge is the outer box deflated by each side's own width with
+    the radii deflated by the adjacent side widths (a left/top pair for the
+    top-left corner, and so on), clamped at zero. Intersecting each side
+    rectangle with this ring is what puts the corner pixels on the sides
+    that reach them.
+
+    The origin is returned because the mask is cut up per side, and a crop
+    has to know which pixel the mask's own (0, 0) is.
+    """
+    x0, y0, x1, y1 = (int(v) for v in box)
+    w, h = x1 - x0, y1 - y0
+    if w <= 0 or h <= 0:
+        return None, (0, 0)
+    outer = ui_radius.shape(w, h, radii)
+    left = sides[SIDE_LEFT].width
+    top = sides[SIDE_TOP].width
+    right = sides[SIDE_RIGHT].width
+    bottom = sides[SIDE_BOTTOM].width
+    ix0, iy0 = int(x0 + left), int(y0 + top)
+    ix1, iy1 = int(x1 - right), int(y1 - bottom)
+    if ix1 <= ix0 or iy1 <= iy0:
+        return outer, (x0, y0)  # borders meet: the whole box is border
+    inner = ui_radius.shape(ix1 - ix0, iy1 - iy0, (
+        max(0.0, radii[0] - left), max(0.0, radii[1] - top),
+        max(0.0, radii[2] - right), max(0.0, radii[3] - top),
+        max(0.0, radii[4] - right), max(0.0, radii[5] - bottom),
+        max(0.0, radii[6] - left), max(0.0, radii[7] - bottom)))
+    hole = Image.new("L", (w, h), 0)
+    hole.paste(inner, (ix0 - x0, iy0 - y0))
+    return ImageChops.subtract(outer, hole), (x0, y0)
+
+
+def _cut(mask, area, origin):
+    """`mask` cropped to `area`, in area-local coordinates.
+
+    Both are already clipped to the same region, which is what makes the
+    crop exact: the mask and the pixels it covers are the same size, so a
+    paste can never be handed a shape it does not line up with.
+    """
+    return mask.crop((area[0] - origin[0], area[1] - origin[1],
+                      area[2] - origin[0], area[3] - origin[1]))
+
+
+def _shape_for(box, clip, radii):
+    """The coverage mask for one fill, or None to take the square path.
+
+    Resolved here, once, from what the container actually sent -- so the
+    painter only ever sees "a whole mask" or "no mask", never a half-built
+    one. The key includes the visible (clipped) size, because the mask is
+    drawn at that size; a radius is only ever honoured where there are
+    pixels for it.
+    """
+    key = _radii(radii)
+    if key is None:
+        return None
+    area = _visible(box, clip)
+    if not area:
+        return None
+    return ui_radius.shape(area[2] - area[0], area[3] - area[1], key)
 
 
 def _font_file(weight, style):
@@ -602,37 +706,74 @@ class _Painter:
         return self.fonts.width(handle, text.decode("utf-8", "replace"))
 
     # -- shapes ---------------------------------------------------------
-    def fill(self, box, clip, color):
+    def fill(self, box, clip, color, shape=None):
+        """Paint `box` in `color`.
+
+        `shape` is an "L" coverage mask the size of the visible box, or None
+        for the square path. None keeps the original code exactly: one
+        ImageDraw.rectangle for opaque ink, one alpha paste for translucent.
+        With a mask the colour is put down through that mask instead, so a
+        partial corner pixel is a blend rather than a hole or a hard step.
+        The mask is resolved by the caller, before this runs, which is what
+        keeps the no-partial-frame promise: either we hold a whole mask or
+        we take the untouched square path, and nothing is ever drawn twice.
+        """
         area = _visible(box, clip)
         if not area or color.a == 0:
             return
         x0, y0, x1, y1 = area
-        if color.a >= 255:
-            self.draw.rectangle([x0, y0, x1 - 1, y1 - 1],
-                                fill=(color.r, color.g, color.b))
-            return
         w, h = x1 - x0, y1 - y0
+        if shape is not None and shape.size != (w, h):
+            # A mask that does not line up with the pixels it would cover
+            # is not usable, and resizing it would smear the curve. Take the
+            # square path: a shape with square corners is a lesser wrong
+            # than a shape pasted at the wrong offset.
+            shape = None
+        if shape is None:
+            if color.a >= 255:
+                self.draw.rectangle([x0, y0, x1 - 1, y1 - 1],
+                                    fill=(color.r, color.g, color.b))
+                return
+            shape = Image.new("L", (w, h), color.a)
+        elif color.a < 255:
+            shape = shape.point(lambda v: v * color.a // 255)
         self.img.paste(Image.new("RGB", (w, h), (color.r, color.g, color.b)),
-                       (x0, y0), Image.new("L", (w, h), color.a))
+                       (x0, y0), shape)
 
-    def borders(self, box, clip, sides):
+    def borders(self, box, clip, sides, radii=None):
         """Trapezoid-accurate borders are out of scope: solid sides only.
 
         litehtml hands over the resolved box, so each visible solid side is
         one rectangle. Dashed, double, and 3D styles fall back to solid --
         visible, never wrong-shaped. The side order is the C ABI's, see the
         LHTML_SIDE_* macros in displayd_html.h.
+
+        With radii the sides stop being rectangles and become pieces of the
+        border RING (see _border_ring): each side rectangle intersected with
+        outer-minus-inner. That is what gives the corners to the sides that
+        reach them, and it still puts a per-side colour on its own edge,
+        which a rounded rectangle drawn per side could not do.
         """
         x0, y0, x1, y1 = box
-        sides = ((sides[SIDE_LEFT], x0, y0, x0 + sides[SIDE_LEFT].width, y1),
+        edges = ((sides[SIDE_LEFT], x0, y0, x0 + sides[SIDE_LEFT].width, y1),
                  (sides[SIDE_TOP], x0, y0, x1, y0 + sides[SIDE_TOP].width),
                  (sides[SIDE_RIGHT], x1 - sides[SIDE_RIGHT].width, y0, x1, y1),
                  (sides[SIDE_BOTTOM], x0, y1 - sides[SIDE_BOTTOM].width,
                   x1, y1))
-        for side, sx0, sy0, sx1, sy1 in sides:
+        ring = None
+        if radii is not None:
+            ring, origin = _border_ring(box, sides, radii)
+        for side, sx0, sy0, sx1, sy1 in edges:
             if side.width <= 0 or side.color.a == 0:
                 continue
-            self.fill((int(sx0), int(sy0), int(sx1), int(sy1)), clip, side.color)
+            area = _visible((sx0, sy0, sx1, sy1), clip)
+            if not area:
+                continue
+            # Clip FIRST, then cut the mask to the same region, so the two
+            # are always the same size: a partly clipped border ring still
+            # lands on exactly the pixels it covers.
+            self.fill(area, clip, side.color,
+                      None if ring is None else _cut(ring, area, origin))
 
     # -- text -----------------------------------------------------------
     def text(self, handle, raw, color, box, clip):
@@ -720,18 +861,21 @@ def _py_text_width(ctx, handle, text):
     return 0.0 if painter is None else painter.text_width(handle, text)
 
 
-def _py_fill(ctx, box, clip, color):
+def _py_fill(ctx, box, clip, color, radii):
     painter = _painter(ctx)
-    if painter is not None:
-        painter.fill((box.x, box.y, box.x + box.w, box.y + box.h), clip, color)
+    if painter is None:
+        return
+    rect = (box.x, box.y, box.x + box.w, box.y + box.h)
+    painter.fill(rect, clip, color, _shape_for(rect, clip, radii))
 
 
-def _py_borders(ctx, box, clip, sides):
+def _py_borders(ctx, box, clip, sides, radii):
     painter = _painter(ctx)
     if painter is None:
         return
     flat = [sides[0], sides[1], sides[2], sides[3]]
-    painter.borders((box.x, box.y, box.x + box.w, box.y + box.h), clip, flat)
+    painter.borders((box.x, box.y, box.x + box.w, box.y + box.h), clip,
+                    flat, _radii(radii))
 
 
 def _py_text(ctx, handle, text, color, box, clip):

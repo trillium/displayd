@@ -42,6 +42,31 @@ lhtml_rect to_c(const position &p)
     return r;
 }
 
+/* A radius only ever means "curve this corner inward". A negative, NaN or
+ * infinite value litehtml could not resolve is therefore zero rather than a
+ * number the embedder would have to defend against -- an all-zero struct is
+ * the documented square path, so a bad radius degrades to today's pixels
+ * instead of to a corrupt frame. */
+double radius_at(pixel_t v)
+{
+    const double d = static_cast<double>(v.value());
+    return (std::isfinite(d) && d > 0.0) ? d : 0.0;
+}
+
+lhtml_radii to_c(const border_radiuses &r)
+{
+    lhtml_radii out;
+    out.top_left_x     = radius_at(r.top_left_x);
+    out.top_left_y     = radius_at(r.top_left_y);
+    out.top_right_x    = radius_at(r.top_right_x);
+    out.top_right_y    = radius_at(r.top_right_y);
+    out.bottom_right_x = radius_at(r.bottom_right_x);
+    out.bottom_right_y = radius_at(r.bottom_right_y);
+    out.bottom_left_x  = radius_at(r.bottom_left_x);
+    out.bottom_left_y  = radius_at(r.bottom_left_y);
+    return out;
+}
+
 int repeat_code(background_repeat r)
 {
     switch(r)
@@ -263,7 +288,17 @@ void pil_container::draw_solid_fill(uint_ptr, const background_layer &layer, con
     {
         return;
     }
-    m_cb->draw_fill(m_cb->ctx, to_c(layer.border_box), clip_intersect(layer.clip_box), to_c(color));
+    /* litehtml has already resolved `border-radius` for this element --
+     * percentages against the border box and CSS's overlap clamping -- and
+     * parks the eight per-corner radii on the layer. They are the shape of
+     * this fill, not an optional extra, so they cross to the embedder.
+     * Traced chain: style.cpp parse_border_radius() ->
+     * border_radiuses::calc_percents() (borders.h) -> layer.border_radius
+     * (background.cpp, and html_tag.cpp for an inline background) ->
+     * container->draw_solid_fill() -> here. */
+    const lhtml_radii radii = to_c(layer.border_radius);
+    m_cb->draw_fill(m_cb->ctx, to_c(layer.border_box), clip_intersect(layer.clip_box),
+                    to_c(color), &radii);
 }
 
 void pil_container::draw_borders(uint_ptr, const borders &bs, const position &draw_pos, bool)
@@ -273,13 +308,16 @@ void pil_container::draw_borders(uint_ptr, const borders &bs, const position &dr
         return;
     }
     /* litehtml has already resolved the border geometry; we only flatten it
-     * for the embedder. Radii are ignored (documented limitation). */
+     * for the embedder. The resolved per-corner radii ride along too (they
+     * are on `bs.radius`, set at html_tag.cpp just before this call), so a
+     * rounded border ring reaches the painter instead of a square one. */
     lhtml_border_side sides[4];
     sides[LHTML_SIDE_LEFT]   = {bs.left.width.value(),   to_c(bs.left.color),   static_cast<int>(bs.left.style)};
     sides[LHTML_SIDE_TOP]    = {bs.top.width.value(),    to_c(bs.top.color),    static_cast<int>(bs.top.style)};
     sides[LHTML_SIDE_RIGHT]  = {bs.right.width.value(),  to_c(bs.right.color),  static_cast<int>(bs.right.style)};
     sides[LHTML_SIDE_BOTTOM] = {bs.bottom.width.value(), to_c(bs.bottom.color), static_cast<int>(bs.bottom.style)};
-    m_cb->draw_borders(m_cb->ctx, to_c(draw_pos), clip_now(), sides);
+    const lhtml_radii radii = to_c(bs.radius);
+    m_cb->draw_borders(m_cb->ctx, to_c(draw_pos), clip_now(), sides, &radii);
 }
 
 void pil_container::draw_list_marker(uint_ptr, const list_marker &marker)
@@ -306,8 +344,10 @@ void pil_container::draw_list_marker(uint_ptr, const list_marker &marker)
             {
                 /* litehtml passes no clip for markers, and the engine draws
                  * them outside the li box -- to the left of it. Inheriting the
-                 * last clip of an earlier element would drop the marker. */
-                m_cb->draw_fill(m_cb->ctx, box, clip_no(), color);
+                 * last clip of an earlier element would drop the marker. A
+                 * marker has no box of its own to round, so no radii. */
+                const lhtml_radii none = {};
+                m_cb->draw_fill(m_cb->ctx, box, clip_no(), color, &none);
             }
             return;
         default:
@@ -453,6 +493,14 @@ void pil_container::transform_text(std::string &text, text_transform tt)
     }
 }
 
+/* litehtml only calls this for `overflow` above visible (render_item.cpp,
+ * html_tag.cpp), and hands over the parent's radii so children can be
+ * clipped to its rounded corners. We keep a rect-only clip stack: the
+ * painter would have to intersect EVERY op -- text included, since PIL has
+ * no rounded text clip -- with a rounded shape, and no shipped template uses
+ * overflow at all. The name is here so the gap is declared rather than
+ * silently swallowed; the radii that matter for painting reach the embedder
+ * through draw_solid_fill and draw_borders instead. */
 void pil_container::set_clip(const position &pos, const border_radiuses &)
 {
     m_clips.push_back(pos);

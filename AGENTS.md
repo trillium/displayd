@@ -292,10 +292,10 @@ keeps running the old tick until the installer runs (`install-mac.sh
   composes the picker document and the dock document and draws nothing
   itself. A dock failure
   is a strip card from `_html_error.error_strip`, never a full-screen card
-  and never a silent gap (litehtml parses `border-radius` and hands the
-  per-corner radii to the container, but `renderers/native/pil_container.cpp`
-  ignores them, so the strip's corners are square; that is a displayd gap, not
-  an engine limitation, and local support is landing).
+  and never a silent gap. Its outline and head dot are rounded through
+  `border-radius` in `dock.html`: litehtml parses the property, and
+  `renderers/native/pil_container.cpp` carries the per-corner radii through
+  the C ABI to a cached anti-aliased mask in the PIL painter.
 - The dock reads the `talon_apps` feed in place (no second feed path);
   empty/stale render dock-only, tiles never move. Tile list defaults to
   the live set minus `unified` (daemon fills it, like picker).
