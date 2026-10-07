@@ -53,8 +53,12 @@
 
   litehtml notes: block and flex layout, padding/margins, absolute
   positioning, borders and solid colours only -- no grid, no gradients, no
-  border-radius, no @import. It drops `gap` on a flex row whose children
-  grow, so spacing here is padding and margins.
+  @import. It drops `gap` on a flex row whose children
+  grow, so spacing here is padding and margins. It does parse
+  `border-radius` and hands the per-corner radii to the container, but
+  `renderers/native/pil_container.cpp` ignores them -- a displayd gap, not an
+  engine limitation, with local support landing separately -- so a rounded
+  declaration here still paints square.
 
   A LANDMINE, verified live: litehtml drops a whole SHORTHAND declaration
   whose value contains a var() -- `padding: 44px var(--inset) 0

@@ -41,9 +41,12 @@
   so taking them in a style attribute cannot inject CSS -- the same rule
   picker.html follows.
 
-  litehtml notes: no grid, no gradients, no border-radius (so the strip's
-  corners are square, not rounded), and `gap` is dropped on a flex row
-  whose children grow -- spacing here is padding and margins.
+  litehtml notes: no grid, no gradients, and `gap` is dropped on a flex row
+  whose children grow -- spacing here is padding and margins. litehtml does
+  parse `border-radius` and hands the per-corner radii to the container, but
+  `renderers/native/pil_container.cpp` ignores them -- a displayd gap, not an
+  engine limitation, with local support landing separately -- so the strip's
+  corners are square, not rounded, until that lands.
 -->
 <html>
 <head>
