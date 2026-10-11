@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import beads_attention as _attention_mod
 import beads_layout as layout
+from ui import shell as ui_shell
 from beads_age import _age
 from beads_buckets import _attention, _classify
 from beads_common import (
@@ -110,8 +111,9 @@ def _draw(screen, title, bg):
     small_font = _font(screen, "DejaVuSans", FOOT_SIZE)
     plain = head_font or row_font
 
-    # Header.
-    draw.text((PAD, 24), title, font=plain, fill=C_TEXT)
+    # Header: inset past the badges painted over the top corners.
+    hpad = ui_shell.band_pad(screen)
+    draw.text((hpad, 24), title, font=plain, fill=C_TEXT)
     health_dot = {"cold": (120, 120, 130), "warm": C_ROLLING,
                   "stale": C_STALLED, "error": (255, 90, 90)}[health]
     status = "%s \u00b7 %s" % (health, _age(updated))
@@ -121,11 +123,11 @@ def _draw(screen, title, bg):
             w = draw.textlength(status, font=small_font)
         except Exception:
             pass
-    draw.ellipse([screen.W - PAD - 22, 52, screen.W - PAD - 2, 72],
+    draw.ellipse([screen.W - hpad - 22, 52, screen.W - hpad - 2, 72],
                  fill=health_dot)
-    draw.text((screen.W - PAD - w - 36, 34), status,
+    draw.text((screen.W - hpad - w - 36, 34), status,
               font=small_font or plain, fill=C_DIM)
-    draw.line([(PAD, 128), (screen.W - PAD, 128)], fill=C_LINE, width=2)
+    draw.line([(hpad, 128), (screen.W - hpad, 128)], fill=C_LINE, width=2)
 
     if snap is None:
         # Cold start: a sensible waiting frame, never blank.
