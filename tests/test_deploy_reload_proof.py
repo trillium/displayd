@@ -75,14 +75,13 @@ elif "cat >" in cmd:
               else os.path.join(os.path.dirname(STAMP), name), "wb") as fh:
         fh.write(data)
 elif "install_html_runtime" in cmd:
-    # The fixture host has no deployed tree, so answer the html-runtime step
-    # by really running the shipped installer in check mode against the repo.
-    # Check mode builds nothing: it answers the question deploy.sh asks --
-    # "is the set complete here" -- which for a bare checkout it is not,
-    # because no engine has been built. That is a truthful warning, and
-    # deploy.sh is expected to continue with it.
-    subprocess.run(["sh", os.path.join(REPO, "tools", "install_html_runtime.sh"),
-                    "--prefix", REPO, "--check"], check=False)
+    # This fixture is scoped to the reload proof, so the html-runtime gate
+    # (a hard deploy failure since 0.6.0) is answered "complete" instead of
+    # depending on whether the checkout happens to have a built engine --
+    # without that, a clean worktree failed at step 2b and never reached the
+    # proof it is here to exercise. The gate itself is pinned, including its
+    # failing branch, in tests/test_deploy_html_step.py.
+    print("complete: " + os.environ["STUB_REPO"])
 elif "restart displayd" in cmd:
     try:
         pid = int(open(PIDF).read().strip())
