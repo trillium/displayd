@@ -1,0 +1,5 @@
+#!/bin/sh
+# Blocking gate: no non-test file over 250 lines. No bypass switch here;
+# CI runs the same check (.github/workflows/line-limit.yml).
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" && exec python3 tools/check-lines.py
