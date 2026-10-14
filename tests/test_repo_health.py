@@ -30,7 +30,7 @@ class TestLineBudget(unittest.TestCase):
         self.assertEqual(res.returncode, 0)
         out = res.stdout
         self.assertIn('line budget ok', out)
-        self.assertNotIn('over the 250-line budget', out)
+        self.assertNotIn('limit 250', out)
         self.assertFalse(any(n in out for n in ('displayd.py', 'touch.py')))
 
 
@@ -60,7 +60,7 @@ class TestRepoHealthCheckWrapper(unittest.TestCase):
         self.assertEqual(res.returncode, 0)
         out = res.stdout
         self.assertIn('line budget ok', out)
-        self.assertNotIn('over the 250-line budget', out)
+        self.assertNotIn('limit 250', out)
         self.assertIn('no generated native artifacts tracked', out)
 
 
@@ -81,7 +81,7 @@ class TestNegativeFixtures(unittest.TestCase):
             )
             self.assertEqual(res.returncode, 1)
             self.assertIn('big.py', res.stdout)
-            self.assertIn('over the 250-line budget', res.stdout)
+            self.assertIn('limit 250', res.stdout)
 
     def test_tests_dir_excluded_from_budget(self):
         with tempfile.TemporaryDirectory() as td:
@@ -100,22 +100,55 @@ class TestNegativeFixtures(unittest.TestCase):
             self.assertEqual(res.returncode, 0)
             self.assertIn('line budget ok', res.stdout)
 
-    def test_renderers_underscore_excluded(self):
+    def _run_lines(self, td):
+        return subprocess.run(
+            [sys.executable, os.path.join(REPO, 'tools', 'check-lines.py')],
+            cwd=td, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    def test_underscore_renderer_is_not_exempt(self):
         with tempfile.TemporaryDirectory() as td:
             os.makedirs(os.path.join(td, 'renderers'))
-            py = os.path.join(td, 'renderers', '_vendored.py')
-            with open(py, 'w') as fh:
-                for i in range(400):
-                    fh.write(f'# line {i}\n')
-            res = subprocess.run(
-                [sys.executable, os.path.join(REPO, 'tools', 'check-lines.py')],
-                cwd=td,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            self.assertEqual(res.returncode, 0)
-            self.assertIn('line budget ok', res.stdout)
+            with open(os.path.join(td, 'renderers', '_big.py'), 'w') as fh:
+                fh.write('# line\n' * 400)
+            res = self._run_lines(td)
+            self.assertEqual(res.returncode, 1)
+            self.assertIn('single-concept', res.stdout)
+
+    def test_non_python_code_is_gated(self):
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, 'big.sh'), 'w') as fh:
+                fh.write('# line\n' * 300)
+            self.assertEqual(self._run_lines(td).returncode, 1)
+
+    def test_baseline_is_a_ratchet(self):
+        with tempfile.TemporaryDirectory() as td:
+            os.makedirs(os.path.join(td, 'tools'))
+            base = os.path.join(td, 'tools', 'line-limit-baseline.txt')
+            big = os.path.join(td, 'big.py')
+            for lines, cap, ok in ((300, 300, True), (301, 300, False),
+                                   (260, 300, False), (200, 300, False)):
+                with open(big, 'w') as fh:
+                    fh.write('# line\n' * lines)
+                with open(base, 'w') as fh:
+                    fh.write('%d big.py\n' % cap)
+                self.assertEqual(self._run_lines(td).returncode, 0 if ok else 1,
+                                 (lines, cap))
+
+    def test_no_limit_override_flag(self):
+        res = subprocess.run(
+            [sys.executable, os.path.join(REPO, 'tools', 'check-lines.py'), '--limit', '9999'],
+            cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn('(3 pinned)', res.stdout)
+
+    def test_gate_is_wired_into_hook_and_ci(self):
+        hook = open(os.path.join(REPO, '.githooks', 'pre-commit')).read()
+        self.assertIn('tools/check-lines.py', hook)
+        self.assertTrue(os.access(os.path.join(REPO, '.githooks', 'pre-commit'), os.X_OK))
+        ci = open(os.path.join(REPO, '.github', 'workflows', 'line-limit.yml')).read()
+        self.assertIn('tools/check-lines.py', ci)
+        for text in (hook, ci):
+            self.assertNotIn('--no-verify', text)
 
     def test_generated_artifact_tracked_fails_check(self):
         with tempfile.TemporaryDirectory() as td:

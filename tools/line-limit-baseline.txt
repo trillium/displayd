@@ -1,0 +1,5 @@
+# Pre-existing offenders, pinned as "<cap> <path>". Ratchet only; see tools/check-lines.py.
+# Follow-up: split each by concept, then delete its line.
+956 renderers/_html_native.py
+559 renderers/native/pil_container.cpp
+415 deploy.sh
