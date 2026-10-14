@@ -24,8 +24,10 @@ def ws_connect(host, port, timeout=10):
            "Sec-WebSocket-Version: 13\r\n\r\n" % (host, port, key))
     sock.sendall(req.encode())
     head = b""
-    while b"\r\n\r\n" not in head:
-        chunk = sock.recv(4096)
+    # One byte at a time: OBS sends Hello right behind the 101, and a
+    # bulk recv would swallow those frame bytes along with the header.
+    while not head.endswith(b"\r\n\r\n"):
+        chunk = sock.recv(1)
         if not chunk:
             raise ConnectionError("handshake: connection closed")
         head += chunk

@@ -428,6 +428,43 @@ class FakeObsServer(threading.Thread):
                 pass
 
 
+class TestHelloCoalesced(unittest.TestCase):
+    def test_hello_in_same_segment_as_101_survives(self):
+        """OBS sends Hello right behind the 101; both can land in one read."""
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+
+        def serve():
+            conn, _ = srv.accept()
+            head = b""
+            while b"\r\n\r\n" not in head:
+                head += conn.recv(4096)
+            key = [l for l in head.decode("latin1").split("\r\n")
+                   if l.lower().startswith("sec-websocket-key")][0] \
+                .split(":", 1)[1].strip()
+            accept = base64.b64encode(hashlib.sha1(
+                (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()
+            ).digest()).decode()
+            hello = json.dumps({"op": 0, "d": {"rpcVersion": 1}}).encode()
+            conn.sendall(("HTTP/1.1 101 Switching Protocols\r\n"
+                          "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                          "Sec-WebSocket-Accept: %s\r\n\r\n" % accept
+                          ).encode() + bytes([0x81, len(hello)]) + hello)
+            time.sleep(1)
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        sock = obs_poll.ws_connect("127.0.0.1", srv.getsockname()[1],
+                                   timeout=3)
+        try:
+            hello = json.loads(obs_poll.ws_recv_text(sock))
+        finally:
+            sock.close()
+            srv.close()
+        self.assertEqual(hello["op"], 0)
+
+
 class TestLiveWire(unittest.TestCase):
     def test_against_real_tcp_obs_server(self):
         server = FakeObsServer()
