@@ -5,6 +5,22 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.8.1
+
+**The reload-proof warning on consecutive deploys is already fixed on `main`;
+this release repairs the test that pins it** (task-34pp2). The warn-and-skip
+was the empty `/reload` body fixed in 0.6.0 (#38). Reproduced against the
+fixture: two back-to-back `deploy.sh` runs on current `main` both show
+"reload confirmation showing on panel" and "reload confirmed" once the fixture
+reaches the proof. It did not reach it in a worktree with no built litehtml
+engine: the html-runtime gate (a hard failure since #42) aborted the deploy
+at step 2b, and the fixture's old comment still expected a warning there. The
+fixture now answers that gate "complete" (the gate keeps its own tests in
+`test_deploy_html_step.py`), so the consecutive-deploy regression test runs
+anywhere. No `deploy.sh` or daemon change; a genuinely failing proof still
+warns, and a real runtime gap still fails the deploy. Automated fixture proof
+only; no live deploy was run.
+
 ## 0.8.0
 
 The chat panel is the two-pane panel the captain asked for: the viewers in the
