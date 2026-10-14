@@ -14,6 +14,7 @@ from PIL import ImageDraw
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from beads_age import _age, age_of
+from ui import shell as ui_shell
 from beads_common import (
     BUCKET_BY_KEY,
     C_DIM,
@@ -62,7 +63,7 @@ def _draw_card(screen, issue, bucket, waiters, dependents, snap,
     y = 24
     # Header: identity left, bucket pill + health right.
     ident = "[%s %s]" % (issue["store"], issue["id"])
-    draw.text((PAD, y + 8), ident, font=meta_font or plain, fill=C_DIM)
+    draw.text((ui_shell.band_pad(screen), y + 8), ident, font=meta_font or plain, fill=C_DIM)
     pill = "%s %s" % (glyph, label.upper())
     pill_w = 0
     if sec_font is not None:
