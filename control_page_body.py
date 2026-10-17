@@ -165,6 +165,9 @@ never offered in a band.</div>
     <li><code>talon_focus</code> <span class="eff">&mdash; focus the tapped header app chip (POST /talon/focus)</span></li>
     <li><code>macbook_mode</code> <span class="eff">&mdash; pin the merged macbook view to GLANCE or AIM (POST /macbook/mode)</span></li>
     <li><code>talon_tab</code> <span class="eff">&mdash; page the header app strip one window back/forward (POST /talon/tab)</span></li>
+    <li><code>review_select</code> <span class="eff">&mdash; choose option N on the review decision page (POST /review/select)</span></li>
+    <li><code>review_confirm</code> <span class="eff">&mdash; send the chosen review option (POST /review/confirm)</span></li>
+    <li><code>review_back</code> <span class="eff">&mdash; step back on, or leave, the review page (POST /review/back)</span></li>
   </ul>
   <div class="meta">What a tap on the panel can do (touch bridge allowlist).</div>
 </div>

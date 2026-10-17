@@ -5,6 +5,24 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.13.0
+
+**Review-bead decision page** (task-sptg1, LATER item of inbox-nwdj). A bead
+from the `review` store is loaded (`POST /review/load`), parsed
+deterministically (`review_decision.py`: `metadata.decision.options`, else the
+description's own "(1) ... (2) ..." list) and drawn as a focused page by the new
+`review` view (`html-templates/review.html`, required `bead` param so it stays
+out of the picker). Options are pre-filled touch buttons; a tap only asks for
+confirmation (`review_flow.py`: showing -> confirming -> sending -> done/failed),
+and the explicit confirm publishes `{nonce, bead, option, action}` on the
+`review-decisions` stream. `tools/review_bridge.py` (Mac side) re-reads the live
+bead, re-derives the answer and runs `review human respond|dismiss`, then
+reports to `POST /review/result`; the panel never names a command. New touch
+actions `review_select`, `review_confirm`, `review_back` (view-gated, 409
+otherwise); regions example `touch-review.json.example`. An optional AI summary
+of long unstructured context exists as a hook (`review_summary.py`), off by
+default and with no provider shipped. Details: `docs/REVIEW.md`.
+
 ## 0.12.0
 
 **MCP tools for surfaces, streams, columns, targeting and touch events**

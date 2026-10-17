@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<!--
+  The review decision page: one review bead, its context, up to five option
+  rows and a footer with BACK/CONFIRM. Filled by review_view.build_vars (all
+  twelve variables are required, empty is fine). The pixel metrics -- header
+  120px, context band 230px (120-350) + meta line 50px (350-400), rows 88px on a 100px pitch from y=400,
+  footer 160px from y=920 split in two halves -- are the touch rects of
+  review_view.review_regions and are pinned by tests/test_review_view.py:
+  change one, change both. Text is fitted in Python, never clipped here.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { background: var(--page); color: var(--ink); font-family: sans-serif; }
+  .head    { height: 114px; padding: 0 48px; border-bottom: 6px solid var(--rule); }
+  .eyebrow { padding-top: 14px; font-size: 26px; font-weight: bold; color: var(--accent); }
+  .title   { font-size: 40px; font-weight: bold; color: var(--ink-strong); }
+  .context { height: 200px; padding: 16px 48px 14px 48px; font-size: 28px;
+             color: var(--muted-soft); }
+  .meta    { height: 44px; padding: 6px 48px 0 48px; font-size: 22px; color: var(--muted); }
+  .opt     { height: 86px; margin-bottom: 12px; padding: 0 48px; font-size: 34px;
+             color: var(--ink); border-bottom: 2px solid var(--edge); }
+  .foot    { display: flex; height: 160px; margin-top: 20px; }
+  .half    { width: 960px; height: 160px; font-size: 44px; font-weight: bold;
+             text-align: center; }
+  .back    { color: var(--muted-soft); background: var(--panel); }
+  .go      { color: var(--ok); background: var(--pane); }
+  .label   { padding-top: 54px; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="eyebrow">{{eyebrow}}</div>
+    <div class="title">{{title}}</div>
+  </div>
+  <div class="context">{{context}}</div>
+  <div class="meta">{{status}}</div>
+  <div class="rows">
+    <div class="opt">{{o1}}</div>
+    <div class="opt">{{o2}}</div>
+    <div class="opt">{{o3}}</div>
+    <div class="opt">{{o4}}</div>
+    <div class="opt">{{o5}}</div>
+  </div>
+  <div class="foot">
+    <div class="half back"><div class="label">{{foot_left}}</div></div>
+    <div class="half go"><div class="label">{{foot_right}}</div></div>
+  </div>
+</body>
+</html>

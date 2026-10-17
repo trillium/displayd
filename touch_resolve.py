@@ -101,6 +101,15 @@ def _resolve(action, panel=None, allow_missing_coords=False):
         spec = ACTION_TABLE[name]
         return (spec["method"], spec["path"],
                 {"dir": direction}), None
+    if name == "review_select":
+        # Review decision page option row: the slot (1..5) rides in config;
+        # the daemon refuses an unshown page or a slot with no option.
+        slot = action.get("slot")
+        if isinstance(slot, bool) or not isinstance(slot, int) or not 1 <= slot <= 5:
+            return None, "review_select slot must be an integer 1-5"
+        return (spec["method"], spec["path"], {"slot": slot}), None
+    if name in ("review_confirm", "review_back"):
+        return (spec["method"], spec["path"], {}), None
     if name == "notify":
         title = action.get("title")
         if not title or not isinstance(title, str):
