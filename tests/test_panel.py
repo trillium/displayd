@@ -289,7 +289,7 @@ class TextAndSleepCardTest(unittest.TestCase):
         inked = [count(frame, theme.rgb("ink-strong"))
                  for frame in (small.frames[0], big.frames[0])]
         self.assertGreater(inked[1], inked[0])
-        self.assertEqual(small.frames[0].getpixel((0, 0)), (16, 16, 16))
+        self.assertEqual(small.frames[0].getpixel((60, 60)), (16, 16, 16))
 
     def test_text_draws_nothing_for_no_message(self):
         screen = render("renderers.text", {})
@@ -397,7 +397,8 @@ class FailureCardTest(unittest.TestCase):
         frame = self.error.error_strip(self.screen, rect, "dock: boom",
                                        "build it")
         x, y, w, h = rect
-        self.assertEqual(frame.getpixel((x + 5, y + 2)), theme.rgb("alert"))
+        self.assertEqual(frame.getpixel((x + w // 2, y + 2)),
+                         theme.rgb("alert"))
         # Above the rect the frame is exactly the alert page: a sub-view
         # must never repaint the tiles around it.
         outside = frame.crop((0, 0, self.screen.W, y))

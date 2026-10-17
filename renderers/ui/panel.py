@@ -1,20 +1,15 @@
 """The panel component: a titled region with a body.
 
-Three views were the same card with different words -- ``notice`` (a
-severity bar, a headline, a body, a tag), ``text`` (one auto-fitted
-message) and ``sleep`` (a centred hint) -- each with its own font
-loader, its own "make the words fit" search and its own colour
-literals.
+Three views (``notice``, ``text``, ``sleep``) were the same card with
+different words, each with its own font loader, fit search and colours.
 
 What this owns:
 
 - ``fit_size`` -- the one rule for "these words must fit this region":
   the largest size up to the declared one whose *whole* block fits, never
-  a truncation (``notice`` searched one line's width, ``text`` the whole
-  block's box -- two halves of one rule).
+  a truncation.
 - ``headline`` -- the title, scaled to the region and centred.
-- ``block`` -- a centred multi-line body, hung from a stated top when
-  something sits above it.
+- ``block`` -- a centred multi-line body, hung from a stated top if given.
 - ``tag`` -- the corner label under the block.
 - ``bar`` -- the accent band across the top of the region.
 - ``card`` -- the component itself: an optional accent bar, a title
@@ -22,9 +17,10 @@ What this owns:
 - ``strip`` -- the card confined to a rect of a bigger frame, for a view
   composited into a larger one.
 
-Nothing here raises and nothing here is a colour literal: the caller may
-pass an ink, and every other role is read from ``theme`` at draw time --
-a card that cannot draw is a missing card, never a blank panel.
+Card and strip wear ``round_box`` corners, ``page`` outside. Nothing here
+raises or holds a colour literal: the caller may pass an ink, every other
+role is read from ``theme`` at draw time -- a card that cannot draw is a
+missing card, never a blank panel.
 """
 
 import os
@@ -33,6 +29,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import theme
+from ui import round_box
 from ui import text as ui_text
 
 PAD = 60            # the tag's inset from the region's own edge
@@ -51,7 +48,7 @@ BODY_GAP = 140      # headline centre -> body top
 
 
 def _room(value):
-    """A region dimension as usable room, or 0 for "no limit on this axis"."""
+    """A region dimension as usable room; 0 means no limit on this axis."""
     try:
         return max(0.0, float(value) * MARGIN)
     except (TypeError, ValueError):
@@ -194,7 +191,7 @@ def strip(img, screen, rect, title, detail="", title_size=None,
     """
     try:
         x, y, w, h = (int(v) for v in rect)
-        w, h = max(1, w), max(1, h)
+        x0, y0, w, h = x, y, max(1, w), max(1, h)
         rule, margin = max(4, h // STRIP_RULE), max(8, w // STRIP_MARGIN)
         room = max(1, w - 2 * margin)
         bar(img, screen, theme.rgb("alert") if bar_ink is None else bar_ink,
@@ -212,6 +209,7 @@ def strip(img, screen, rect, title, detail="", title_size=None,
                 ui_text.write(img, screen, (x + margin, y), line, ink, size,
                               bold=bold)
                 y += size + _spacing(size)
+        round_box.cut(img, (x0, y0, w, h), round_box.RADIUS, theme.rgb("page"))
     except Exception:
         pass
     return img
@@ -245,6 +243,8 @@ def card(img, screen, title, body="", ink=None, tag_text=None, tag_ink=None,
                   centre=(int(screen.W) // 2, middle + BODY_GAP), top=True)
         if tag_text:
             tag(img, screen, tag_text, ink=tag_ink, family=family)
+        round_box.cut(img, (0, 0, int(screen.W), int(screen.H)),
+                      round_box.RADIUS, theme.rgb("page"))
     except Exception:
         pass
     return img

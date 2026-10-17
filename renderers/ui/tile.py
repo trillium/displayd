@@ -4,10 +4,9 @@
 panel's two tile layers into one tile. ``_picker_tiles.py`` and
 ``_options_grid.py`` each carried the same four things -- the border
 compensation a declared litehtml box needs, the shrink-until-it-fits rule,
-the centring measured from the real face, and the palette -> CSS colour
-step. They were the same component twice, because nothing owned "a tile".
+the centring measured from the real face, and the palette -> CSS colour step. They were the same component twice; nothing owned "a tile".
 
-Both paths ask this module for it: the picker and options surfaces take the
+Both paths ask this module: the picker and options surfaces take the
 **markup half** (``cell`` / ``layer``) -- the only place a raw slot's tile
 divs are built, and so the only reason a caller's label must be escaped
 here -- and a Pillow view takes the **drawing half** (``draw``), which
@@ -18,7 +17,7 @@ accent, ink on a bright fill is ``on-accent``, and the offset copy behind a
 label is ``label-shade``. The template path takes those from the token
 block worn by the shared stylesheet, so the surface owns the look, this
 module owns the geometry, and neither half may raise: a missing label beats
-a missing frame.
+a missing frame. The drawing half's box wears ``round_box`` corners.
 """
 
 import os
@@ -28,6 +27,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import theme
+from ui import round_box
 
 BORDER = 6       # the frame a document tile draws OUTSIDE its declared box
 SHADE = 4        # how far a label's offset copy sits from the label
@@ -183,7 +183,7 @@ def layer(labels, geometry, fills=None, border=BORDER, ink=None,
 
 
 def _pad(pad):
-    """A ``(x, y)`` inset from an int or a pair. Never raises."""
+    """A ``(x, y)`` inset from an int or a pair."""
     if isinstance(pad, (list, tuple)):
         values = [_int(v) for v in pad][:2]
         values += [8, 6][len(values):]
@@ -192,7 +192,7 @@ def _pad(pad):
 
 
 def _default_font(size):
-    """The face of last resort: a missing font is a small label, not none."""
+    """The face of last resort: a missing font is a small label."""
     from PIL import ImageFont
     try:
         return ImageFont.load_default(size=max(LABEL_MIN, _int(size, LABEL_MIN)))
@@ -223,11 +223,11 @@ def draw(img, rect, label="", ink=None, font=None, fill=None, outline=None,
     try:
         from PIL import ImageDraw
         x, y, w, h = (int(v) for v in rect)
-        box = (x, y, w, h)
-        draw_ = ImageDraw.Draw(img)
-        if fill is not None or outline is not None:
-            draw_.rectangle([x, y, x + w - 1, y + h - 1], fill=fill,
-                            outline=outline, width=max(1, int(width)))
+        box, draw_ = (x, y, w, h), ImageDraw.Draw(img)
+        if fill is not None:
+            round_box.fill(img, box, round_box.RADIUS, fill)
+        if outline is not None:
+            round_box.ring(img, box, round_box.RADIUS, outline, width)
         text = "" if label is None else str(label)
         if not text:
             return img
