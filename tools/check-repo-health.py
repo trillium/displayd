@@ -34,6 +34,13 @@ def main():
         print(out)
     else:
         print(out.rstrip())
+    # 4. Template trust: local chrome only, raw slot count frozen
+    rc, out = run([sys.executable, 'tools/check_template_trust.py'])
+    if rc != 0:
+        ok = False
+        print(out)
+    else:
+        print(out.rstrip())
     if not ok:
         return 1
     return 0
