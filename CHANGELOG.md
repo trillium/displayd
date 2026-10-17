@@ -5,6 +5,35 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.9.0
+
+**Registered display surfaces: multi-Sidecar, renderer-agnostic**
+(task-fbbds). `/surfaces` lets any number of Sidecars register, describe
+their viewport (scale, insets, usable rect), renderer, content types, regions
+and touch capability (which interactions), keep a TTL lease alive with
+heartbeats, and be discovered and targeted (`id`, `id/region`, or a `select`
+with first-match / broadcast). Content goes to one surface/region and is
+pulled by the Sidecar (long-poll); touch is reported back through a validated
+event stream. The panel is a built-in surface, and DisplayD's on-device HTML
+renderer (`displayd-html`) is one implementation behind the API: it draws
+into one panel region without disturbing the others. The renderer-agnostic
+layer was not on `main`, so this adds its minimal form. Purely additive: no
+existing route, renderer or policy changes (the only edit to existing code is
+mixing the new routes into `Handler` and `DisplayDaemon`). Also drops the stale
+`renderers/_html_native.py` entry from the line-limit baseline (it is 246
+lines since #61). Automated headless tests only (`tests/test_surfaces.py`,
+`tests/test_surfaces_http.py`, `tests/test_surface_columns.py`); not deployed
+and not device-verified. See `docs/SURFACES.md` "Implemented vs pending".
+
+Also in this release: **multi-column event streams**. Producers declare
+`/event-streams` (event types, views, follow-on actions); a surface's
+`panel.config.columns` binds `{stream, view, region}` (columns are distinct
+from surfaces and regions); consumers can target a stream, column, surface or
+region; follow-on actions are validated against the stream. The panel block
+carries a stable `panel.id` (separate from the surface id) and a versioned
+config object. Roadmap items (accessibility scale, identity restore, MIT/perf
+review, review-bead UI, demo/join mode) are documented, not built.
+
 ## 0.8.1
 
 **The reload-proof warning on consecutive deploys is already fixed on `main`;
