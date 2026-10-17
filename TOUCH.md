@@ -407,6 +407,9 @@ Reference wiring (`touch-picker.json.example`, 1920x1080):
   map sharing that space), `load_config()` + `--check-views`
   against the live panel, restart only the existing `displayd-touch` unit.
   Revert by restoring the backup and restarting the unit again.
+  `python3 tools/regen_touch_tiles.py --config touch.json [--apply]` does the
+  regenerate + backup + validate part for both the picker and `unified`
+  scopes (dry run by default; restart and `/touch/check` stay manual).
 
 `confidence_feedback` keeps working untouched: it still POSTs every resolved
 tap best-effort AFTER the tile action dispatches, pointed wherever the host
