@@ -20,24 +20,15 @@ import threading
 import time
 
 import surface_model as model
+from surface_builtin_panel import BuiltinPanels
 from surface_channels import Channels
 from surface_panel import normalize_panel
+from surface_patch import merge_patch
 from surface_restore import restore_surfaces
 from surface_target import match
 from surface_touch import build_event
 
 TOMBSTONES = 64
-PATCH_MERGE = ("renderer", "viewport", "touch")  # one-level merge, rest replace
-
-
-def _merge_panel(old, patch):
-    """``id`` replaces; ``config`` merges one level (a key given replaces)."""
-    out = dict(old, **{k: v for k, v in patch.items() if k != "config"})
-    if isinstance(patch.get("config"), dict):
-        out["config"] = dict(old.get("config") or {}, **patch["config"])
-    elif "config" in patch:
-        out["config"] = patch["config"]
-    return out
 
 
 class SurfaceRegistry:
@@ -53,6 +44,7 @@ class SurfaceRegistry:
         self._builtin = {}    # id -> provider() -> raw spec
         self._tombs = collections.OrderedDict()  # id -> expired_at
         self.channels = Channels(clock, seq_base)
+        self.panels = BuiltinPanels()  # settable panel blocks of the built-ins
 
     # ---- views ---------------------------------------------------------
 
@@ -74,7 +66,7 @@ class SurfaceRegistry:
         try:
             spec = dict(self._builtin[sid](), id=sid)
             rec = model.normalize(spec, builtin=True)
-            rec["panel"] = normalize_panel(spec.get("panel"), rec["regions"])
+            rec["panel"] = self.panels.view(sid, rec["regions"])
         except Exception as err:  # a broken provider must not break discovery
             raise model.SurfaceError(503, "built-in surface %r unavailable: %s"
                                      % (sid, err))
@@ -171,25 +163,15 @@ class SurfaceRegistry:
             raise ValueError("update: expected an object")
         if "id" in patch and patch["id"] != sid:
             raise ValueError("id: cannot change a surface's id")
+        if sid in self._builtin:
+            with self._lock:
+                regions = self._builtin_record(sid)["regions"]
+            self.panels.update(sid, patch, regions)  # outside our lock
+            self._on_change()
+            return self.get(sid)
         with self._lock:
             old = self._live_record(sid)
-            merged = {k: v for k, v in old.items()
-                      if k in ("id", "name", "kind", "renderer", "viewport",
-                               "touch", "regions", "labels", "ttl_seconds",
-                               "panel")}
-            regions_default = model.is_default_regions(old)
-            for key, value in patch.items():
-                turning_touch_off = (key == "touch" and isinstance(value, dict)
-                                     and value.get("supported") is False)
-                if key == "panel" and isinstance(value, dict):
-                    merged[key] = _merge_panel(merged[key], value)
-                elif (key in PATCH_MERGE and isinstance(value, dict)
-                        and not turning_touch_off):
-                    merged[key] = dict(merged[key], **value)
-                else:
-                    merged[key] = value
-            if "regions" not in patch and regions_default:
-                merged.pop("regions")  # re-derive: geometry/types may have moved
+            merged = merge_patch(old, patch)
             rec = model.normalize(merged, default_ttl=self._default_ttl)
             rec["panel"] = normalize_panel(merged["panel"], rec["regions"])
             now = self._clock()
@@ -217,7 +199,7 @@ class SurfaceRegistry:
         """Plain-data copy of what must survive a restart."""
         with self._lock:
             return {"surfaces": [copy.deepcopy(self._live[s]) for s in sorted(self._live)],
-                    "tombs": dict(self._tombs)}
+                    "tombs": dict(self._tombs), "panels": self.panels.export()}
 
     def restore(self, records, tombs=None):
         """Load stored records at boot; returns the report (restored /

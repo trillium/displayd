@@ -138,7 +138,8 @@ class TestLeases(StoreCase):
         self.clock.t += 31  # the daemon was down past the lease
         hub = self.boot()
         self.assertEqual(hub.restored, {"restored": 0, "expired": 1, "invalid": 0,
-                                        "streams": 0, "streams_invalid": 0})
+                                        "streams": 0, "streams_invalid": 0,
+                                        "panels": 0, "panels_invalid": 0})
         self.assertEqual(hub.registry.list(), [])
         with self.assertRaises(SurfaceError) as err:
             hub.registry.get("wall")

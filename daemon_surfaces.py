@@ -10,6 +10,8 @@ onto this daemon. Three things live here:
   active layout's regions (or one ``full`` region), touch = ``tap`` only and
   only while the touch service's heartbeat is fresh (touch.py dispatches
   taps; it drops swipes and long presses by design);
+* the panel draws its own ``columns`` (column_painter.py), repainting when a
+  layout is set, an event arrives or the columns change;
 * the ``displayd-html`` implementation's actuator: content for a panel
   region binds the ``html`` renderer into *that region only*
   (``_rebind_region``), leaving every other region's thread and frame alone.
@@ -20,6 +22,7 @@ import re
 import threading
 import time
 
+from column_painter import ColumnPainter
 from daemon_config import APP_VERSION
 from schema import validate_params
 from screen import RegionScreen
@@ -70,12 +73,24 @@ class SurfacesMixin:
                     hub.register_renderer(HtmlSurfaceRenderer(self._panel_apply))
                     hub.registry.register_builtin(PANEL_ID, self._panel_spec)
                     self._surface_hub = hub
+                    self._column_painter = ColumnPainter(
+                        hub, self._panel_regions,
+                        lambda name, params: self._rebind_region(name, HTML_VIEW, params),
+                        lambda: self.layout_started_at)
         return hub
 
     def surfaces_state(self):
         """``GET /state``'s ``surfaces`` key; never builds the hub."""
         hub = self.__dict__.get("_surface_hub")
-        return None if hub is None else hub.persistence()
+        if hub is None:
+            return None
+        return dict(hub.persistence() or {}, columns=self._column_painter.status())
+
+    def poke_columns(self):
+        """A layout changed: let the panel redraw its columns into it."""
+        painter = self.__dict__.get("_column_painter")
+        if painter is not None:
+            painter.poke()
 
     # ---- the panel's self-description ----------------------------------
 

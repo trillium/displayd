@@ -12,6 +12,10 @@ which ``deploy.sh`` never ships or deletes. It holds the *registry* only:
     re-register) instead of 404 (never existed).
 ``streams``
     the declared event streams (declarations only).
+``panels``
+    ``{built-in id: {id, config}}``: the settable panel block (columns) of a
+    built-in surface such as the device panel. Additive within format 1: a
+    file without it loads as "none set".
 
 Not stored, on purpose: event/action rings, touch events and content slots.
 They are transient and bounded; a producer republishes. To keep a consumer's
@@ -50,7 +54,7 @@ FLUSH_INTERVAL = 5.0
 
 def empty_doc():
     return {"format": FORMAT, "generation": -1, "surfaces": [], "tombs": {},
-            "streams": []}
+            "streams": [], "panels": {}}
 
 
 def seq_base(generation):
@@ -129,7 +133,8 @@ class SurfaceStore:
         gen = (raw if isinstance(raw, dict) else doc).get("generation")
         prior = gen if isinstance(gen, int) and not isinstance(gen, bool) else -1
         self.generation = max(prior, -1) + 1
-        doc["tombs"] = doc["tombs"] if isinstance(doc.get("tombs"), dict) else {}
+        for key in ("tombs", "panels"):
+            doc[key] = doc[key] if isinstance(doc.get(key), dict) else {}
         for key in ("surfaces", "streams"):
             doc[key] = doc[key] if isinstance(doc.get(key), list) else []
         return doc
@@ -137,7 +142,7 @@ class SurfaceStore:
     # ---- save ----------------------------------------------------------
 
     def attach(self, snapshot):
-        """``snapshot()`` -> ``{"surfaces", "tombs", "streams"}`` (plain data)."""
+        """``snapshot()`` -> ``{"surfaces", "tombs", "streams", "panels"}`` (plain data)."""
         self._snapshot = snapshot
 
     def changed(self, urgent=True):

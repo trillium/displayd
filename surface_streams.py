@@ -73,9 +73,23 @@ class EventStreams(Waiter):
         self._clock = clock
         self._base = seq_base
         self._on_change = on_change or (lambda urgent=True: None)
+        self._listeners = []
         self._cond = threading.Condition()
         self._decl = {}  # id -> declaration
         self._log = {}   # id -> {"events": {"seq","ring"}, "actions": {...}}
+
+    def subscribe(self, fn):
+        """``fn()`` after an event is published or a declaration changes, with
+        no lock held (so it may read the streams); a failing listener never
+        fails the publisher."""
+        self._listeners.append(fn)
+
+    def _fire(self):
+        for fn in list(self._listeners):
+            try:
+                fn()
+            except Exception:
+                pass
 
     def _ring(self, size):
         return {"seq": self._base, "ring": collections.deque(maxlen=size)}
@@ -105,6 +119,7 @@ class EventStreams(Waiter):
                                               "actions": self._ring(ACTION_RING)})
             out = self._view(decl["id"]), created
         self._on_change()
+        self._fire()
         return out
 
     def _view(self, sid):
@@ -133,6 +148,7 @@ class EventStreams(Waiter):
             del self._decl[sid], self._log[sid]
             self._cond.notify_all()
         self._on_change()
+        self._fire()
         return {"ok": True, "stream": sid}
 
     def get_locked(self, sid):
@@ -160,7 +176,9 @@ class EventStreams(Waiter):
                       "at": self._clock()}
             ring["ring"].append(stored)
             self._cond.notify_all()
-            return dict(stored)
+            out = dict(stored)
+        self._fire()
+        return out
 
     def _read(self, sid, kind, since, wait):
         def newer():

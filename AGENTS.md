@@ -58,6 +58,10 @@ When updating this file, preserve this bar for all agents and keep entries conci
   restart by building a second hub/daemon on the same path. Any new registry
   mutator must call `self._on_change()` AFTER releasing its own lock (the
   snapshot takes the registry and stream locks one at a time).
+- Panel columns are drawn by `column_painter.py` (html renderer +
+  `html-templates/column.html`, sized by `surface_column_view.plan`). The
+  template's pixel metrics are pinned to `plan` by `tests/test_column_view.py`
+  (change both). Stream/panel listeners run with no lock held; keep it so.
 
 ## Autonomous behaviour (policy layer)
 
