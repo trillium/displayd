@@ -86,8 +86,9 @@ for leases):
   deploy.
 - Event/action rings, touch events and content slots are in memory and start
   empty after a restart (see "Persistence"); producers republish.
-- No MCP tools for surfaces yet (`mcp_server.py` derives tools from
-  `GET /renderers`; surfaces are plain HTTP for now).
+- MCP: `mcp_surface_tools.py` exposes the whole API as tools (see "MCP
+  tools"); the server is the existing `mcp_server.py`, so a client that already
+  registers it gets them after it restarts the server.
 - Real panel touch stays `touch.py`'s: it reports `tap` only, and only while
   its heartbeat (`POST /touch/announce`) is fresh. `POST /surfaces/panel/touch`
   is refused (409) so two writers cannot fight.
@@ -292,3 +293,29 @@ discovery) · `surface_channels.py` (per-surface content/event streams) ·
 `surface_streams.py` (event streams) · `surface_columns.py` (columns + actions)
 · `surface_panel.py` (panel block) · `surface_builtin_panel.py` (the panel's settable block, dormant columns) · `surface_patch.py` (update merge) · `surface_column_view.py` / `column_painter.py` (the panel draws columns) · `surface_store.py` / `surface_restore.py` (persistence) · `daemon_surfaces.py` (panel wiring) ·
 `daemon_http_surfaces.py` / `daemon_http_streams.py` (routes).
+
+## MCP tools
+
+`mcp_surface_tools.py` is one table, one row per tool, each mapping its
+arguments to exactly one HTTP route (no second code path). `mcp_server.py`
+lists them next to the core tools and dispatches through `call`; the
+`mcp_client` gained `api_delete`.
+
+| Tool | Route |
+| --- | --- |
+| `surfaces_list` (kind, renderer, content_type, touch, min_width, min_height, region, labels) | `GET /surfaces?...` |
+| `surface_get` / `surface_register` / `surface_update` | `GET` / `POST /surfaces[/<id>]` |
+| `surface_heartbeat` / `surface_deregister` | `POST .../heartbeat` / `DELETE /surfaces/<id>` |
+| `surface_send` (target: id, `id/region`, or `{select, all?}`) | `POST /surfaces/content` |
+| `surface_events` (since, wait) / `surface_touch_report` | `GET .../events` / `POST .../touch` |
+| `surface_columns` / `surface_columns_set` / `column_action` | `GET`/`POST .../columns`, `POST .../columns/<c>/action` |
+| `streams_list` / `stream_declare` / `stream_get` / `stream_remove` | `/event-streams[/<id>]` |
+| `stream_publish` / `stream_events` / `stream_actions` | `/event-streams/<id>/events`, `/actions` |
+
+Ids are quoted into one path segment. `wait` is clamped below
+`DISPLAYD_TIMEOUT` (and to 25 s) so a held-open read is never mistaken for an
+unreachable panel. Bad arguments are a tool error (`isError`), displayd's own
+refusals come back as `displayd refused (HTTP n)`. `tests/test_mcp_surfaces.py`
+pins every route with a stubbed client and walks register -> send -> touch ->
+columns -> actions against a headless daemon. The tool catalog needs no
+registration change: tools are listed live by the running server.

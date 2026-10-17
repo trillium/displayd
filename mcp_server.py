@@ -29,7 +29,8 @@ says to retry once the panel is back.
 
 Split across single-concept modules within the project's 250-line budget:
 ``mcp_client`` (HTTP client), ``mcp_schema`` (schema conversion),
-``mcp_tools`` (tool catalog), ``mcp_result`` (result envelopes). Names
+``mcp_tools`` (tool catalog), ``mcp_surface_tools`` (surface/stream/column/
+touch tools), ``mcp_result`` (result envelopes). Names
 used by existing importers and tests are re-exported here.
 """
 
@@ -37,13 +38,14 @@ import json
 import sys
 import urllib.parse
 
+import mcp_surface_tools
 from mcp_client import (DISPLAYD_URL, TIMEOUT, DisplayError,
-                        DisplayUnreachable, api_get, api_post)
+                        DisplayUnreachable, api_delete, api_get, api_post)
 from mcp_result import err_text, ok_image, ok_text, unreachable
 from mcp_tools import dynamic_tools, static_tools
 
 SERVER_NAME = "displayd-mcp"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -56,7 +58,7 @@ def fetch_renderers():
 
 
 def list_tools():
-    tools = static_tools()
+    tools = static_tools() + mcp_surface_tools.tools()
     try:
         tools.extend(dynamic_tools(fetch_renderers()))
     except (DisplayUnreachable, DisplayError):
@@ -147,6 +149,14 @@ def call_tool(name, args):
                 str(args.get("id")), safe="")))
         if name == "feedback_summary":
             return ok_text(api_get("/feedback/summary"))
+
+        try:
+            found, result = mcp_surface_tools.call(
+                name, args, lambda path: api_get(path), api_post, api_delete)
+        except ValueError as exc:
+            return err_text("bad arguments for %s: %s" % (name, exc))
+        if found:
+            return ok_text(result)
 
         # dynamic tools: resolve the view/input against a fresh /renderers
         # so names are validated, not trusted from the tools/list snapshot.
