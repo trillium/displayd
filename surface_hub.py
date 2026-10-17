@@ -25,6 +25,8 @@ from surface_model import SurfaceError
 from surface_registry import SurfaceRegistry
 from surface_streams import EventStreams
 from surface_renderers import RelayRenderer
+from surface_restore import restore_streams
+from surface_store import seq_base
 from surface_target import parse_target, resolve
 
 MAX_CONTENT_BYTES = 256 * 1024
@@ -48,11 +50,38 @@ def check_content(content):
 class SurfaceHub:
     """Resolve, validate, render, store."""
 
-    def __init__(self, registry=None, **registry_kwargs):
-        self.registry = registry or SurfaceRegistry(**registry_kwargs)
-        self.streams = EventStreams(registry_kwargs.get("clock", time.time))
+    def __init__(self, registry=None, store=None, **registry_kwargs):
+        """``store`` (a SurfaceStore) makes registered surfaces, their columns
+        and the stream declarations survive a restart: its file is loaded
+        here (stale leases become tombstones) and rewritten on every change."""
+        self.store, self.restored = store, None
+        doc = store.load() if store else None
+        base = seq_base(store.generation) if store else 0
+        change = store.changed if store else None
+        self.registry = registry or SurfaceRegistry(
+            on_change=change, seq_base=base, **registry_kwargs)
+        self.streams = EventStreams(registry_kwargs.get("clock", time.time),
+                                    seq_base=base, on_change=change)
         self._renderers = {}
         self._relay = RelayRenderer()
+        if store:
+            self.restored = self._restore(doc)
+            store.attach(self._snapshot)
+            store.save()  # commits this boot's generation before any event
+
+    def _restore(self, doc):
+        report = self.registry.restore(doc["surfaces"], doc["tombs"])
+        decls, bad = restore_streams(doc["streams"])
+        self.streams.restore(decls)
+        return dict(report, streams=len(decls), streams_invalid=bad)
+
+    def persistence(self):
+        """The store's status plus what the boot restored, or None."""
+        return None if self.store is None else dict(self.store.status(),
+                                                    restored=self.restored)
+
+    def _snapshot(self):
+        return dict(self.registry.export(), streams=self.streams.export())
 
     def register_renderer(self, impl):
         """Install a renderer implementation under its ``name``."""

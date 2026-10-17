@@ -33,3 +33,6 @@ renderers/native/liblitehtmlpil.so
 # the panel: nothing under here is source, and a scratch .output file can
 # run to a thousand lines of somebody else's tool output.
 /.pi/
+
+# Host-local registry state (surface_store.py); never committed or shipped.
+/state/

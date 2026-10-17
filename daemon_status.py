@@ -61,6 +61,10 @@ class StatusMixin:
             # loadable from this process, and which templates can it read.
             # None when the renderer module failed to load at all.
             "html": self.html_runtime(),
+            # Registry persistence (surface_store.py): file, generation,
+            # last write/error, what the boot restored. None before the
+            # surface hub exists.
+            "surfaces": self.surfaces_state(),
         }
 
     def html_runtime(self):

@@ -15,12 +15,14 @@ Delivery is surface_hub.py; touch/content streams are surface_channels.py.
 """
 
 import collections
+import copy
 import threading
 import time
 
 import surface_model as model
 from surface_channels import Channels
 from surface_panel import normalize_panel
+from surface_restore import restore_surfaces
 from surface_target import match
 from surface_touch import build_event
 
@@ -41,14 +43,16 @@ def _merge_panel(old, patch):
 class SurfaceRegistry:
     """Thread-safe registry with an injectable clock."""
 
-    def __init__(self, clock=time.time, default_ttl=model.DEFAULT_TTL):
+    def __init__(self, clock=time.time, default_ttl=model.DEFAULT_TTL,
+                 on_change=None, seq_base=0):
         self._clock = clock
         self._default_ttl = default_ttl
+        self._on_change = on_change or (lambda urgent=True: None)
         self._lock = threading.RLock()
         self._live = {}       # id -> stored record
         self._builtin = {}    # id -> provider() -> raw spec
         self._tombs = collections.OrderedDict()  # id -> expired_at
-        self.channels = Channels(clock)
+        self.channels = Channels(clock, seq_base)
 
     # ---- views ---------------------------------------------------------
 
@@ -82,6 +86,7 @@ class SurfaceRegistry:
         """Install a never-expiring surface described by ``provider()``."""
         with self._lock:
             self._builtin[sid] = provider
+            self._live.pop(sid, None)  # a stored record never shadows a built-in
 
     # ---- reads ---------------------------------------------------------
 
@@ -133,7 +138,9 @@ class SurfaceRegistry:
             self._live[rec["id"]] = rec
             self._tombs.pop(rec["id"], None)
             self.channels.keep_regions(rec["id"], [r["name"] for r in rec["regions"]])
-            return self._view(rec, now), old is None
+            out = self._view(rec, now), old is None
+        self._on_change()  # outside the lock: persisting reads the registry
+        return out
 
     def _live_record(self, sid):
         """The stored record, or the right refusal for why there is none."""
@@ -154,7 +161,9 @@ class SurfaceRegistry:
             now = self._clock()
             rec["last_seen"] = now
             rec["expires_at"] = now + rec["ttl_seconds"]
-            return self._view(rec, now)
+            out = self._view(rec, now)
+        self._on_change(urgent=False)  # coalesced: a lost refresh is a 410
+        return out
 
     def update(self, sid, patch):
         """Merge a partial spec and re-validate the whole; atomic."""
@@ -189,7 +198,9 @@ class SurfaceRegistry:
                        last_seen=now, expires_at=now + rec["ttl_seconds"])
             self._live[sid] = rec
             self.channels.keep_regions(sid, [r["name"] for r in rec["regions"]])
-            return self._view(rec, now)
+            out = self._view(rec, now)
+        self._on_change()
+        return out
 
     def deregister(self, sid):
         with self._lock:
@@ -197,7 +208,31 @@ class SurfaceRegistry:
             del self._live[sid]
             self._tombs.pop(sid, None)  # a deliberate leave is not an expiry
             self.channels.drop(sid)
-            return {"ok": True, "surface": sid}
+        self._on_change()
+        return {"ok": True, "surface": sid}
+
+    # ---- persistence (surface_store.py) --------------------------------
+
+    def export(self):
+        """Plain-data copy of what must survive a restart."""
+        with self._lock:
+            return {"surfaces": [copy.deepcopy(self._live[s]) for s in sorted(self._live)],
+                    "tombs": dict(self._tombs)}
+
+    def restore(self, records, tombs=None):
+        """Load stored records at boot; returns the report (restored /
+        expired / invalid counts). Stale leases become tombstones."""
+        with self._lock:
+            live, dead, report = restore_surfaces(
+                records, tombs, self._clock(), self._default_ttl,
+                reserved=tuple(self._builtin))
+            self._live.update(live)
+            for sid in live:
+                self._tombs.pop(sid, None)
+            self._tombs.update(dead)
+            self._tombs = collections.OrderedDict(
+                sorted(self._tombs.items(), key=lambda kv: kv[1])[-TOMBSTONES:])
+            return report
 
     # ---- touch ---------------------------------------------------------
 

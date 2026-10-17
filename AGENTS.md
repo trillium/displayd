@@ -52,6 +52,12 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Panel region updates go through `_rebind_region` (one region's thread, never
   the layout); a first-match `select` picks the first surface that accepts the
   content type.
+- Registry persistence: `state/surfaces.json` (host-local, git-ignored, never
+  deleted by deploy; format + rules in `docs/SURFACES.md` "Persistence").
+  Hub callers get it free via `SurfaceHub(store=SurfaceStore(path))`; tests
+  restart by building a second hub/daemon on the same path. Any new registry
+  mutator must call `self._on_change()` AFTER releasing its own lock (the
+  snapshot takes the registry and stream locks one at a time).
 
 ## Autonomous behaviour (policy layer)
 
