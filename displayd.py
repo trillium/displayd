@@ -40,6 +40,10 @@ API
                resolution against the CURRENT UI (region + semantic
                action, view/mode-gated like the touch path); dispatches
                nothing, changes no state
+  GET/POST /surfaces ...  registered display surfaces (Sidecars, the panel):
+               register/discover, heartbeat/expiry, update, deregister, send
+               content to a surface/region, report + read touch events --
+               renderer-agnostic; see docs/SURFACES.md
   GET  /policy  autonomous-behaviour config + activity clock
   POST /policy  {"idle":{...},"chat_attention":{...},"notifications":{...}}
   POST /clear                        blank the screen to black
@@ -54,7 +58,8 @@ QR relay (daemon_reload, daemon_relay), feedback (daemon_feedback), feeds
 (daemon_feeds), the touch audit gate and read-only tap resolution
 (daemon_touch_audit, daemon_touch_resolve), the Mac-side command queues
 (daemon_mouse, daemon_focus, daemon_macbook_mode, daemon_click), the command
-long-poll (daemon_commands), static-region layout (daemon_layout), screen
+long-poll (daemon_commands), static-region layout (daemon_layout), registered
+display surfaces (daemon_surfaces + surface_*.py), screen
 power and the policy actuators (daemon_power), and read-only introspection
 (daemon_status) -- and the HTTP surface from daemon_http.py,
 daemon_http_get.py and daemon_http_post.py. The framebuffer backends,
@@ -84,6 +89,8 @@ from daemon_focus import FocusMixin
 from daemon_http import HandlerBaseMixin
 from daemon_http_get import GETRoutesMixin
 from daemon_http_post import POSTRoutesMixin
+from daemon_http_streams import StreamRoutesMixin, install as install_stream_routes
+from daemon_http_surfaces import SurfaceRoutesMixin, install as install_surface_routes
 from daemon_layout import LayoutMixin
 from daemon_macbook_mode import MacbookModeMixin
 from daemon_mouse import MouseMixin
@@ -91,6 +98,7 @@ from daemon_power import POLICY_FILE, SLEEP_VIEW, PowerMixin
 from daemon_reload import ReloadMixin
 from daemon_relay import RelayMixin
 from daemon_status import StatusMixin
+from daemon_surfaces import SurfacesMixin
 from daemon_touch_audit import TOUCH_JSON_PATH, TouchAuditMixin, touch_audit
 from daemon_touch_resolve import TouchResolveMixin, _resolve_coords
 from daemon_transient import TransientMixin
@@ -146,7 +154,7 @@ class DisplayDaemon(DisplayCoreMixin, ViewLifecycleMixin, TransientMixin,
                     ReloadMixin, RelayMixin, FeedbackMixin, FeedsMixin,
                     TouchAuditMixin, TouchResolveMixin, MouseMixin, FocusMixin,
                     MacbookModeMixin, ClickMixin, CommandsMixin, LayoutMixin,
-                    PowerMixin, StatusMixin):
+                    PowerMixin, StatusMixin, SurfacesMixin):
     """The display daemon: state, render loop, feeds, and policy wiring."""
 
     def _framebuffer(self):
@@ -161,7 +169,8 @@ class DisplayDaemon(DisplayCoreMixin, ViewLifecycleMixin, TransientMixin,
         return Framebuffer()
 
 
-class Handler(GETRoutesMixin, POSTRoutesMixin, HandlerBaseMixin,
+class Handler(GETRoutesMixin, POSTRoutesMixin,
+              HandlerBaseMixin, SurfaceRoutesMixin, StreamRoutesMixin,
               BaseHTTPRequestHandler):
     """The HTTP handler: routes from daemon_http*.py, runtime globals here.
 
@@ -178,6 +187,9 @@ class Handler(GETRoutesMixin, POSTRoutesMixin, HandlerBaseMixin,
     def api_token(self):
         return API_TOKEN
 
+
+install_surface_routes(Handler)  # /surfaces, /event-streams in front of
+install_stream_routes(Handler)   # GET/POST/DELETE (source stays introspectable)
 
 DAEMON = None
 

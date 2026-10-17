@@ -139,7 +139,7 @@ class TestNegativeFixtures(unittest.TestCase):
             [sys.executable, os.path.join(REPO, 'tools', 'check-lines.py'), '--limit', '9999'],
             cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.assertEqual(res.returncode, 0)
-        self.assertIn('(3 pinned)', res.stdout)
+        self.assertIn('(2 pinned)', res.stdout)
 
     def test_gate_is_wired_into_hook_and_ci(self):
         hook = open(os.path.join(REPO, '.githooks', 'pre-commit')).read()

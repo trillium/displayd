@@ -36,6 +36,23 @@ When updating this file, preserve this bar for all agents and keep entries conci
   on the host (format in `renderers/beads_style.py` docstring); the panel
   reloads it live, no restart needed.
 
+## Registered surfaces (multi-Sidecar API)
+
+- `/surfaces` is renderer-agnostic: the registry/hub (`surface_*.py`) know only
+  the `SurfaceRenderer` interface; `displayd-html` is one implementation and
+  the panel is a built-in surface (`daemon_surfaces.py`). Contract, wire shape
+  and the implemented-vs-pending list are in `docs/SURFACES.md` -- keep that
+  list honest when behaviour changes.
+- Routes are a mixin in front of the others (`daemon_http_surfaces.py`), so
+  `daemon_http_post.py` stays untouched; registry state is in memory only.
+- Streams (`surface_streams.py`), columns (`surface_columns.py`) and the panel
+  block (`surface_panel.py`) are distinct from surfaces/regions: a column is
+  `{stream, view, region}` inside `panel.config`. `panel.id` is NOT the surface
+  id. LATER roadmap (not built) is in `docs/SURFACES.md` "INITIAL vs LATER".
+- Panel region updates go through `_rebind_region` (one region's thread, never
+  the layout); a first-match `select` picks the first surface that accepts the
+  content type.
+
 ## Autonomous behaviour (policy layer)
 
 - One module owns it: `policy.py` (activity clock, transient switch/return,

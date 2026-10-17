@@ -113,6 +113,8 @@ publishes an unauthenticated control surface to everything that can route to it.
 | GET | `/layout` | – | current layout (null when inactive), including the named style it came from |
 | GET | `/layout/presets` | – | the named styles, their slots, and the views each slot accepts |
 | DELETE | `/layout` | – | clear the layout |
+| GET/POST/DELETE | `/surfaces...` | see [docs/SURFACES.md](docs/SURFACES.md) | register, discover, target, send content to, and read touch from registered display surfaces (Sidecars and the panel); renderer-agnostic |
+| GET/POST/DELETE | `/event-streams...` | see [docs/SURFACES.md](docs/SURFACES.md) | declare event streams, publish/subscribe, read follow-on actions; surfaces bind them as columns |
 | POST | `/feed/<renderer>/<input>` | any JSON payload | push validated data into a view |
 | POST | `/notify` | `{"title":...}`, `body`?, `severity`? (`info`/`warn`/`critical`), `duration`? | transient notice, then automatic return |
 | POST | `/reload` | `{"sha":...}`, `highlights`? | reload confirmation (RELOADED + full SHA + scan-confirm QR, plus an optional bounded commit-message summary), stays until a scan or tap confirms it; answers `relay_url` when the phone can reach it |
