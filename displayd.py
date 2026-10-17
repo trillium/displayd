@@ -89,6 +89,7 @@ from daemon_focus import FocusMixin
 from daemon_http import HandlerBaseMixin
 from daemon_http_get import GETRoutesMixin
 from daemon_http_post import POSTRoutesMixin
+from daemon_http_review import ReviewRoutesMixin, install as install_review_routes
 from daemon_http_streams import StreamRoutesMixin, install as install_stream_routes
 from daemon_http_surfaces import SurfaceRoutesMixin, install as install_surface_routes
 from daemon_layout import LayoutMixin
@@ -96,6 +97,7 @@ from daemon_macbook_mode import MacbookModeMixin
 from daemon_mouse import MouseMixin
 from daemon_power import POLICY_FILE, SLEEP_VIEW, PowerMixin
 from daemon_reload import ReloadMixin
+from daemon_review import ReviewMixin
 from daemon_relay import RelayMixin
 from daemon_status import StatusMixin
 from daemon_surfaces import SurfacesMixin
@@ -154,7 +156,7 @@ class DisplayDaemon(DisplayCoreMixin, ViewLifecycleMixin, TransientMixin,
                     ReloadMixin, RelayMixin, FeedbackMixin, FeedsMixin,
                     TouchAuditMixin, TouchResolveMixin, MouseMixin, FocusMixin,
                     MacbookModeMixin, ClickMixin, CommandsMixin, LayoutMixin,
-                    PowerMixin, StatusMixin, SurfacesMixin):
+                    PowerMixin, StatusMixin, SurfacesMixin, ReviewMixin):
     """The display daemon: state, render loop, feeds, and policy wiring."""
 
     def _framebuffer(self):
@@ -171,7 +173,7 @@ class DisplayDaemon(DisplayCoreMixin, ViewLifecycleMixin, TransientMixin,
 
 class Handler(GETRoutesMixin, POSTRoutesMixin,
               HandlerBaseMixin, SurfaceRoutesMixin, StreamRoutesMixin,
-              BaseHTTPRequestHandler):
+              ReviewRoutesMixin, BaseHTTPRequestHandler):
     """The HTTP handler: routes from daemon_http*.py, runtime globals here.
 
     ``daemon`` and ``api_token`` are properties rather than module-level
@@ -190,6 +192,7 @@ class Handler(GETRoutesMixin, POSTRoutesMixin,
 
 install_surface_routes(Handler)  # /surfaces, /event-streams in front of
 install_stream_routes(Handler)   # GET/POST/DELETE (source stays introspectable)
+install_review_routes(Handler)   # /review (decision page + its tap targets)
 
 DAEMON = None
 

@@ -747,6 +747,14 @@ regions, validate with `touch.load_config()` + `--check-views`, curl
 `GET /touch/check` (expect ok), restart `displayd-touch`, curl again.
 Revert: restore the backup and restart the unit again.
 
+## Review decision page
+
+Three view-gated actions drive the review page (`docs/REVIEW.md`):
+`review_select` (param `slot`, 1-5; asks for confirmation only),
+`review_confirm` and `review_back`. They answer 409 unless the `review` view
+is showing in the matching state. Regions: `touch-review.json.example`
+(`view_regions.review`); merge it into the host `touch.json` yourself.
+
 ## Service supervision (lnx-server)
 
 Template unit: `touch-input.service` (review before installing -- the worker

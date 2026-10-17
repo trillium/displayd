@@ -1,0 +1,96 @@
+{
+  "_comment": "Review decision page taps (1920x1080): five option rows then BACK/CLOSE (left) and CONFIRM/RETRY (right). GENERATED from review_view.review_regions -- never hand-edit; regenerate with: python3 -c \"import json,review_view as r;print(json.dumps(r.review_regions(),indent=2))\". Merge the list under \"view_regions\" -> \"review\" in the host touch.json (ids rv-* are unique across scopes), validate with `python3 touch.py --config touch.json --check-views`, then restart displayd-touch. Do not edit the host file from this repo; see TOUCH.md \"Review decision page\".",
+  "view_regions": {
+    "review": [
+      {
+        "id": "rv-opt1",
+        "rect": [
+          0,
+          400,
+          1920,
+          100
+        ],
+        "action": {
+          "name": "review_select",
+          "slot": 1
+        }
+      },
+      {
+        "id": "rv-opt2",
+        "rect": [
+          0,
+          500,
+          1920,
+          100
+        ],
+        "action": {
+          "name": "review_select",
+          "slot": 2
+        }
+      },
+      {
+        "id": "rv-opt3",
+        "rect": [
+          0,
+          600,
+          1920,
+          100
+        ],
+        "action": {
+          "name": "review_select",
+          "slot": 3
+        }
+      },
+      {
+        "id": "rv-opt4",
+        "rect": [
+          0,
+          700,
+          1920,
+          100
+        ],
+        "action": {
+          "name": "review_select",
+          "slot": 4
+        }
+      },
+      {
+        "id": "rv-opt5",
+        "rect": [
+          0,
+          800,
+          1920,
+          100
+        ],
+        "action": {
+          "name": "review_select",
+          "slot": 5
+        }
+      },
+      {
+        "id": "rv-back",
+        "rect": [
+          0,
+          920,
+          960,
+          160
+        ],
+        "action": {
+          "name": "review_back"
+        }
+      },
+      {
+        "id": "rv-confirm",
+        "rect": [
+          960,
+          920,
+          960,
+          160
+        ],
+        "action": {
+          "name": "review_confirm"
+        }
+      }
+    ]
+  }
+}

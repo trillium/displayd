@@ -1076,6 +1076,7 @@ class GuardShapeTest(unittest.TestCase):
             "select_view", "notify", "feedback", "reload_confirm",
             "macbook_mouse", "macbook_click", "talon_focus",
             "macbook_mode", "talon_tab",
+            "review_select", "review_confirm", "review_back",
         })
         # Every entry classifies by handler effect: a daemon endpoint the
         # tap drives, never just a name.

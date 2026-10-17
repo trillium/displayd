@@ -157,6 +157,24 @@ ACTION_TABLE = {
         "method": "POST", "path": "/macbook/click",
         "params": ("x", "y"),
     },
+    "review_select": {
+        "effect": "choose option N on the showing review decision page "
+                    "(view-gated: refused unless the review view is showing "
+                    "with options; asks for confirmation, sends nothing)",
+        "method": "POST", "path": "/review/select",
+        "params": ("slot",),
+    },
+    "review_confirm": {
+        "effect": "send the chosen review option to the store bridge "
+                    "(view+state-gated: refused unless the review view is "
+                    "confirming a choice)",
+        "method": "POST", "path": "/review/confirm",
+    },
+    "review_back": {
+        "effect": "step back on the review decision page, or leave it "
+                    "(view-gated: refused unless the review view is showing)",
+        "method": "POST", "path": "/review/back",
+    },
 }
 
 # Actions positioned by the tap itself: the region names the action, the

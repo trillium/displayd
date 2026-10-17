@@ -471,3 +471,17 @@ keeps running the old tick until the installer runs (`install-mac.sh
   bad-push test that counts 2 frames passes even when frame 2 is the same error
   card -- discriminate on `_is_error_card` (the red rule) and the template
   background instead.
+
+## Review decision page (review-bead UI)
+
+- Contract and routes: `docs/REVIEW.md`. The `review` renderer has a REQUIRED
+  `bead` param on purpose: `picker.live_views` takes every renderer without a
+  required param, so an optional one would change host picker tile geometry.
+- The panel never names a command: a confirmed tap publishes only
+  `{nonce, bead, option, action}`; `tools/review_bridge.py` (Mac side, talks to
+  the `review` store) re-fetches and re-parses the live bead and re-checks the
+  option before running `review human respond|dismiss`. It is deliberately NOT
+  in `bridges/mac-set.manifest` and has no launchd job.
+- Review touch regions live in `touch-review.json.example` (pinned to
+  `review_view.review_regions` by a test); the host `touch.json` is merged by
+  hand, never by the repo.
