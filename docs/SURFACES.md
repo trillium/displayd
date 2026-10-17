@@ -64,6 +64,7 @@ for leases):
   and stream-specific follow-on actions queued for the producer.
 - The panel block (`id`, `version`, `config`) with atomic merge on update.
 - Bearer-token gate on every verb; other routes untouched.
+- Registry persistence across restart (`surface_store.py`; `tests/test_surface_store.py`).
 
 **Pending deployment / device verification (not done here):**
 
@@ -82,14 +83,45 @@ for leases):
   (`tools/build_litehtml.sh`); the tests prove the region rebind and param
   plumbing, not pixels. Eyeball one region update on the real panel after a
   deploy.
-- Registry state is in memory: a daemon restart forgets registered Sidecars
-  (they re-register on their next 410/404 heartbeat). Persistence is a
-  deliberate non-goal for now.
+- Event/action rings, touch events and content slots are in memory and start
+  empty after a restart (see "Persistence"); producers republish.
 - No MCP tools for surfaces yet (`mcp_server.py` derives tools from
   `GET /renderers`; surfaces are plain HTTP for now).
 - Real panel touch stays `touch.py`'s: it reports `tap` only, and only while
   its heartbeat (`POST /touch/announce`) is fresh. `POST /surfaces/panel/touch`
   is refused (409) so two writers cannot fight.
+
+## Persistence
+
+The registry (registered surfaces with their `panel` block and columns,
+expiry tombstones, declared event streams) is saved to one JSON file:
+`state/surfaces.json` next to the policy file (`DISPLAYD_SURFACES`
+overrides; on lnx-server `~/displayd/state/surfaces.json`). `deploy.sh`
+neither ships nor deletes it (no `--delete`; `/state/` is git-ignored).
+`GET /state` -> `surfaces` shows the path, generation, last write/error and
+what the boot restored.
+
+- **Writes** are atomic (temp file in the same directory, fsync,
+  `os.replace`) and never fail a request: an error shows in `last_error` and
+  the next change retries. Structural changes write at once; heartbeats are
+  coalesced to one write per 5 s, so a crash can lose a few seconds of lease
+  refresh, which only means an early `410` and a re-register.
+- **Format** is versioned (`format`, currently 1) and walked up through
+  `surface_store.MIGRATIONS` (`{from_version: fn(doc) -> doc}`). Every record
+  is re-validated on load by the same `normalize` a registration passes
+  (so `panel.config` follows today's rules); an invalid record is dropped and
+  counted in `restored`, the rest load. A corrupt file or one written by a
+  newer format is moved to `surfaces.json.unreadable-<n>`, never overwritten
+  or deleted, and the registry starts empty.
+- **Leases**: a surface whose `expires_at` passed while the daemon was down
+  loads as a tombstone (`410`, re-register), not a ghost; one still within its
+  lease keeps its remaining time. Tombstones persist, so `410` vs `404` holds
+  across restarts.
+- **Not stored**: event/action rings, touch events, content slots. After a
+  restart a new `generation` starts every seq counter at `generation << 32`
+  (generation 0, a fresh install, keeps seq 1, 2, ...), so a consumer's
+  `since=<seq>` is never repeated or regressed; it simply sees later events.
+- A stored record can never shadow the built-in `panel`.
 
 ## Model
 
@@ -219,5 +251,5 @@ discovery) · `surface_channels.py` (per-surface content/event streams) ·
 `surface_target.py` (select + resolve) · `surface_touch.py` (event validation)
 · `surface_renderers.py` (implementations) · `surface_hub.py` (deliver) ·
 `surface_streams.py` (event streams) · `surface_columns.py` (columns + actions)
-· `surface_panel.py` (panel block) · `daemon_surfaces.py` (panel wiring) ·
+· `surface_panel.py` (panel block) · `surface_store.py` / `surface_restore.py` (persistence) · `daemon_surfaces.py` (panel wiring) ·
 `daemon_http_surfaces.py` / `daemon_http_streams.py` (routes).

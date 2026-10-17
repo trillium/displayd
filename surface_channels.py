@@ -43,8 +43,9 @@ class Waiter:
 class Channels(Waiter):
     """Content slots + event ring per surface id. Thread-safe."""
 
-    def __init__(self, clock=time.time):
+    def __init__(self, clock=time.time, seq_base=0):
         self._clock = clock
+        self._base = seq_base  # restart generation: a seq never regresses
         self._cond = threading.Condition()
         self._content = {}  # id -> {"seq": n, "slots": {region: slot}}
         self._events = {}   # id -> {"seq": n, "ring": deque}
@@ -53,7 +54,7 @@ class Channels(Waiter):
 
     def put_content(self, sid, region, content):
         with self._cond:
-            stream = self._content.setdefault(sid, {"seq": 0, "slots": {}})
+            stream = self._content.setdefault(sid, {"seq": self._base, "slots": {}})
             stream["seq"] += 1
             stream["slots"][region] = {"seq": stream["seq"], "content": content,
                                        "at": self._clock()}
@@ -80,7 +81,8 @@ class Channels(Waiter):
     def add_event(self, sid, event):
         with self._cond:
             stream = self._events.setdefault(
-                sid, {"seq": 0, "ring": collections.deque(maxlen=EVENT_LOG)})
+                sid, {"seq": self._base,
+                      "ring": collections.deque(maxlen=EVENT_LOG)})
             stream["seq"] += 1
             event = dict(event, seq=stream["seq"], at=self._clock())
             stream["ring"].append(event)

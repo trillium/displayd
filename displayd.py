@@ -207,6 +207,7 @@ def main():
     # Boot-time clear is housekeeping, not a manual choice: let a persisted
     # enabled playlist resume rotating (it restores the first view itself).
     DAEMON.playlist.boot()
+    DAEMON.surface_hub  # load the persisted registry now, not at the first request
     DAEMON.start_watchdog()
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     print("displayd v%s listening on %s:%d with %d renderer(s)"

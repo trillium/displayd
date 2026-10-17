@@ -5,6 +5,24 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.10.0
+
+**Surface registry persistence** (task-sptg1, LATER item 1 of inbox-nwdj).
+Registered surfaces (columns and `panel` blocks included), their tombstones
+and the declared event streams now survive a daemon restart. One versioned
+file, `state/surfaces.json` next to the policy file (`DISPLAYD_SURFACES`
+overrides), written atomically (temp file, fsync, `os.replace`) on every
+register/update/deregister/declare/remove; heartbeats are coalesced to one
+write per 5 s. On load every record is re-validated by the current rules
+(bad ones are dropped and counted), a lease that ran out while the daemon
+was down becomes a tombstone (410, re-register), and an unreadable or
+newer-format file is moved aside, never overwritten. Event/action rings,
+touch events and content slots stay transient, but each restart is a new
+generation (seq counters start at `generation << 32`) so a consumer's
+`since` never goes backwards. `GET /state` gains a `surfaces` key (path,
+generation, last write/error, what boot restored). `deploy.sh` is unchanged:
+`state/` is host-local and never deleted. Tests: `tests/test_surface_store.py`.
+
 ## 0.9.1
 
 **Regenerate host touch tiles when the renderer set changes** (task-tv6va).

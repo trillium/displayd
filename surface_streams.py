@@ -13,8 +13,10 @@ follow-on ``actions`` a viewer may take; then it ``publish``es events.
   action (``{"action": "approve", "column": ...}``) is validated against the
   declared actions and queued for the producer, which reads it by ``since``.
 
-Streams live in memory, bounded (``MAX_STREAMS``, ring sizes); a daemon
-restart forgets them and producers re-declare. Nothing here knows surfaces.
+Declarations are persisted by the hub (surface_store.py); event and action
+rings are in memory, bounded (``MAX_STREAMS``, ring sizes), and start empty
+after a restart with their seq counters moved to a new generation, so a
+consumer's ``since`` stays valid. Nothing here knows surfaces.
 """
 
 import collections
@@ -67,15 +69,28 @@ def normalize_stream(spec):
 class EventStreams(Waiter):
     """Declared streams, their event rings and their action queues."""
 
-    def __init__(self, clock=time.time):
+    def __init__(self, clock=time.time, seq_base=0, on_change=None):
         self._clock = clock
+        self._base = seq_base
+        self._on_change = on_change or (lambda urgent=True: None)
         self._cond = threading.Condition()
         self._decl = {}  # id -> declaration
         self._log = {}   # id -> {"events": {"seq","ring"}, "actions": {...}}
 
-    @staticmethod
-    def _ring(size):
-        return {"seq": 0, "ring": collections.deque(maxlen=size)}
+    def _ring(self, size):
+        return {"seq": self._base, "ring": collections.deque(maxlen=size)}
+
+    def export(self):
+        with self._cond:
+            return [dict(self._decl[s]) for s in sorted(self._decl)]
+
+    def restore(self, decls):
+        """Boot-time load of validated declarations (rings start empty)."""
+        with self._cond:
+            for decl in decls[:MAX_STREAMS]:
+                self._decl[decl["id"]] = decl
+                self._log.setdefault(decl["id"], {"events": self._ring(EVENT_RING),
+                                                  "actions": self._ring(ACTION_RING)})
 
     def declare(self, spec):
         """Upsert a declaration; returns ``(stream, created)``. Events and
@@ -88,7 +103,9 @@ class EventStreams(Waiter):
             self._decl[decl["id"]] = decl
             self._log.setdefault(decl["id"], {"events": self._ring(EVENT_RING),
                                               "actions": self._ring(ACTION_RING)})
-            return self._view(decl["id"]), created
+            out = self._view(decl["id"]), created
+        self._on_change()
+        return out
 
     def _view(self, sid):
         log = self._log[sid]
@@ -115,7 +132,8 @@ class EventStreams(Waiter):
             self.get_locked(sid)
             del self._decl[sid], self._log[sid]
             self._cond.notify_all()
-            return {"ok": True, "stream": sid}
+        self._on_change()
+        return {"ok": True, "stream": sid}
 
     def get_locked(self, sid):
         if sid not in self._decl:

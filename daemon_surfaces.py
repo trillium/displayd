@@ -4,7 +4,8 @@ Single concept: wiring the renderer-agnostic surface layer (surface_*.py)
 onto this daemon. Three things live here:
 
 * the ``surface_hub`` (created lazily, so construction in daemon_core is
-  untouched) with the built-in ``panel`` surface registered on it;
+  untouched; ``main()`` touches it at boot) with the built-in ``panel``
+  surface registered on it and its registry persisted (surface_store.py);
 * the panel's self-description: viewport = the framebuffer, regions = the
   active layout's regions (or one ``full`` region), touch = ``tap`` only and
   only while the touch service's heartbeat is fresh (touch.py dispatches
@@ -14,6 +15,7 @@ onto this daemon. Three things live here:
   (``_rebind_region``), leaving every other region's thread and frame alone.
 """
 
+import os
 import re
 import threading
 import time
@@ -24,6 +26,7 @@ from screen import RegionScreen
 from surface_hub import SurfaceHub
 from surface_model import DEFAULT_REGION, SurfaceError
 from surface_renderers import HTML_CONTENT_TYPE, HTML_RENDERER, HtmlSurfaceRenderer
+from surface_store import SurfaceStore
 
 PANEL_ID = "panel"
 HTML_VIEW = "html"  # the renderers/ module the displayd-html implementation drives
@@ -42,6 +45,14 @@ class _GuardedRegionScreen(RegionScreen):
             RegionScreen.present(self, img)
 
 
+def surfaces_path(policy_path):
+    """Host-local registry file: ``DISPLAYD_SURFACES``, else ``state/`` next
+    to the policy file (the daemon's directory on the host; a test's temp dir
+    in a suite). ``deploy.sh`` neither ships nor deletes it."""
+    return os.environ.get("DISPLAYD_SURFACES") or os.path.join(
+        os.path.dirname(os.path.abspath(policy_path)), "state", "surfaces.json")
+
+
 class SurfacesMixin:
     """Registered display surfaces for the daemon."""
 
@@ -54,11 +65,17 @@ class SurfacesMixin:
             with self._surface_hub_lock:
                 hub = self.__dict__.get("_surface_hub")
                 if hub is None:
-                    hub = SurfaceHub()
+                    hub = SurfaceHub(store=SurfaceStore(
+                        surfaces_path(self.policy.path)))
                     hub.register_renderer(HtmlSurfaceRenderer(self._panel_apply))
                     hub.registry.register_builtin(PANEL_ID, self._panel_spec)
                     self._surface_hub = hub
         return hub
+
+    def surfaces_state(self):
+        """``GET /state``'s ``surfaces`` key; never builds the hub."""
+        hub = self.__dict__.get("_surface_hub")
+        return None if hub is None else hub.persistence()
 
     # ---- the panel's self-description ----------------------------------
 
