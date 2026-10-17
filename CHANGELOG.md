@@ -5,6 +5,14 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.13.1
+
+**Rounded Pillow-drawn surfaces.** The failure card, the dock's failure strip
+and the Pillow tile box (`ui/panel.py`, `ui/tile.py`) now wear anti-aliased
+rounded corners (`ui/round_box.py`, one 24 px radius, reusing the cached
+`ui/radius.py` mask). Geometry only: fills, insets, bar and label placement
+are unchanged; the litehtml path is untouched.
+
 ## 0.13.0
 
 **Review-bead decision page** (task-sptg1, LATER item of inbox-nwdj). A bead

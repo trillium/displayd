@@ -37,7 +37,7 @@ import _html_native
 import _html_templates as templates
 import _options_grid as grid
 import theme
-from ui import panel
+from ui import panel, round_box
 from ui import tile as ui_tile
 
 OPT_PATH = os.path.join(displayd.RENDERER_DIR, "options.py")
@@ -478,10 +478,12 @@ class OptionsPixelsTest(unittest.TestCase):
         # The shared failure card: the card component's alert rule across
         # the top (exactly its declared height), red title text under it,
         # and no name cells anywhere.
-        rule = frame.crop((0, 0, self.W, panel.BAR)).convert("RGB")
+        # (the card's rounded corners trim the rule's two ends)
+        edge = round_box.RADIUS
+        rule = frame.crop((edge, 0, self.W - edge, panel.BAR)).convert("RGB")
         self.assertEqual(
             sum(1 for pixel in rule.getdata() if pixel == theme.rgb("alert")),
-            self.W * panel.BAR)
+            (self.W - 2 * edge) * panel.BAR)
         self.assertEqual(frame.getpixel((300, 700)), theme.rgb("alert-page"))
 
 

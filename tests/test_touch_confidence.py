@@ -229,7 +229,7 @@ class TestDraw(unittest.TestCase):
         # First box starts at the top-left of the map band; its outline
         # must read back as the first palette colour, not background.
         map_top = int(270 * 0.26)
-        self.assertEqual(img.getpixel((1, map_top + 2))[:3],
+        self.assertEqual(img.getpixel((60, map_top + 1))[:3],
                          TC.REGION_COLORS[0])
 
     def test_labels_change_pixels(self):

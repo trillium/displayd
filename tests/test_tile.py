@@ -146,7 +146,7 @@ class DrawHalfTest(unittest.TestCase):
     def test_the_box_is_drawn_at_the_rect(self):
         img = ui_tile.draw(self.blank(), (10, 20, 100, 50),
                            outline=theme.rgb("accent"), width=2)
-        self.assertEqual(img.getpixel((12, 21)), theme.rgb("accent"))
+        self.assertEqual(img.getpixel((60, 21)), theme.rgb("accent"))
         self.assertEqual(img.getpixel((12, 80)), theme.rgb("page"))
 
     def test_the_label_is_centred_inside_the_content_box(self):
