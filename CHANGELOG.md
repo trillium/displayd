@@ -5,6 +5,19 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.9.1
+
+**Regenerate host touch tiles when the renderer set changes** (task-tv6va).
+Installing the html runtime on lnx-server added the `html` view, so the
+picker and unified screens drew one more tile and every later tile shifted
+while the host's `touch.json` still tapped the old rects (deploy.sh's
+`/touch/check` caught it). `tools/regen_touch_tiles.py` is the TOUCH.md
+reference procedure as one command: dry run reports drift, `--apply` backs
+up, regenerates both scopes from the live `GET /renderers` set via the
+renderers' own geometry functions, validates before replacing, and prints the
+revert command. deploy.sh's mismatch message now points at it. Tooling and
+docs only; no daemon behaviour change.
+
 ## 0.9.0
 
 **Registered display surfaces: multi-Sidecar, renderer-agnostic**

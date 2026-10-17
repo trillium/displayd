@@ -409,7 +409,7 @@ elif [ "$CHECK_STATUS" = "stale" ] || [ "$CHECK_STATUS" = "unknown" ]; then
     exit 1
 else
     echo "touch region check failed: $CHECK" >&2
-    echo "deploy.sh: drawn UI and live touch regions disagree (GET /touch/check); fix touch.json and re-run" >&2
+    echo "deploy.sh: drawn UI and live touch regions disagree (GET /touch/check); if the renderer set changed, run tools/regen_touch_tiles.py --config touch.json --apply on the host (TOUCH.md), restart displayd-touch" >&2
     exit 1
 fi
 echo "deployed $SHA at $DATE by $DEPLOYER"
