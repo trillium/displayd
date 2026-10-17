@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<!--
+  One panel column: a stream's recent events in a region of the panel.
+  Filled by surface_column_view.build_vars (ROW_SLOTS fixed row slots, since
+  the html renderer takes scalars only). The pixel metrics here -- header
+  96px, rows 30px, 16px padding above and below the rows and at the sides -- are pinned against
+  surface_column_view.plan by tests/test_column_view.py: change one, change
+  both. Rows are fitted to the region's width in Python, not clipped here.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { background: var(--page); color: var(--ink); font-family: sans-serif; }
+  .col   { padding: 0 16px; }
+  .head  { height: 96px; border-bottom: 3px solid var(--rule); }
+  .title { padding-top: 14px; font-size: 34px; font-weight: bold; color: var(--accent); }
+  .sub   { font-size: 20px; color: var(--muted); }
+  .rows  { padding-top: 16px; padding-bottom: 16px; }
+  .row   { height: 30px; font-size: 22px; color: var(--ink); }
+</style>
+</head>
+<body>
+  <div class="col">
+    <div class="head">
+      <div class="title">{{title}}</div>
+      <div class="sub">{{sub}}</div>
+    </div>
+    <div class="rows">
+    <div class="row">{{r0}}</div>
+    <div class="row">{{r1}}</div>
+    <div class="row">{{r2}}</div>
+    <div class="row">{{r3}}</div>
+    <div class="row">{{r4}}</div>
+    <div class="row">{{r5}}</div>
+    <div class="row">{{r6}}</div>
+    <div class="row">{{r7}}</div>
+    <div class="row">{{r8}}</div>
+    <div class="row">{{r9}}</div>
+    <div class="row">{{r10}}</div>
+    <div class="row">{{r11}}</div>
+    <div class="row">{{r12}}</div>
+    <div class="row">{{r13}}</div>
+    <div class="row">{{r14}}</div>
+    <div class="row">{{r15}}</div>
+    <div class="row">{{r16}}</div>
+    <div class="row">{{r17}}</div>
+    <div class="row">{{r18}}</div>
+    <div class="row">{{r19}}</div>
+    <div class="row">{{r20}}</div>
+    <div class="row">{{r21}}</div>
+    <div class="row">{{r22}}</div>
+    <div class="row">{{r23}}</div>
+    <div class="row">{{r24}}</div>
+    <div class="row">{{r25}}</div>
+    <div class="row">{{r26}}</div>
+    <div class="row">{{r27}}</div>
+    <div class="row">{{r28}}</div>
+    <div class="row">{{r29}}</div>
+    <div class="row">{{r30}}</div>
+    <div class="row">{{r31}}</div>
+    </div>
+  </div>
+</body>
+</html>

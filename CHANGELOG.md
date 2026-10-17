@@ -5,6 +5,24 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.11.0
+
+**The panel draws its own columns** (task-sptg1, LATER item of inbox-nwdj).
+A column `{stream, view, region}` set on the built-in `panel` surface
+(`POST /surfaces/panel/columns`) is now drawn by displayd-html itself, in its
+layout region, with the new `html-templates/column.html`: views `log`, `calls`
+and `status`, sized to the region (`surface_column_view.plan` turns the region
+rect into rows/characters, so a narrow side column and the wide centre differ).
+`column_painter.py` repaints on a published event, a stream declare/remove, a
+columns change or a layout set; bursts are coalesced and only the changed
+region is rebound (`_rebind_region`), never the layout. With no layout nothing
+is drawn, so a column cannot take over a single view. The panel's `panel`
+block is now settable and persisted (`panels` in `state/surfaces.json`, additive
+within format 1); a column whose region is not in the current layout is
+dormant (`panel.dormant`), not an error, so a layout change never breaks
+discovery. `GET /state` -> `surfaces.columns` reports what was drawn. Tests:
+`tests/test_column_view.py`, `tests/test_column_painter.py`.
+
 ## 0.10.0
 
 **Surface registry persistence** (task-sptg1, LATER item 1 of inbox-nwdj).

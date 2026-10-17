@@ -65,13 +65,14 @@ for leases):
 - The panel block (`id`, `version`, `config`) with atomic merge on update.
 - Bearer-token gate on every verb; other routes untouched.
 - Registry persistence across restart (`surface_store.py`; `tests/test_surface_store.py`).
+- The panel draws its own columns in their layout regions
+  (`column_painter.py`; `tests/test_column_painter.py`, `tests/test_column_view.py`).
 
 **Pending deployment / device verification (not done here):**
 
-- The panel itself does not yet *draw* columns: columns are stored, validated,
-  discoverable and targetable on every surface, and a Sidecar renders its own,
-  but composing a column's stream into a panel region with an HTML template is
-  not built. Deliver content to a column's region (`displayd-html`) to draw it.
+- Panel columns draw only the `log`, `calls` and `status` views (see "The
+  panel draws its columns"); a stream's other views (`chart`, `controls`...)
+  show a one-line notice on the panel and are a Sidecar's to draw.
 - Follow-on actions are queued for the producer; no on-panel follow-on UI yet.
 
 - Not deployed to the live jumbotron / `~/displayd` on lnx-server. No
@@ -122,6 +123,9 @@ what the boot restored.
   (generation 0, a fresh install, keeps seq 1, 2, ...), so a consumer's
   `since=<seq>` is never repeated or regressed; it simply sees later events.
 - A stored record can never shadow the built-in `panel`.
+- The built-in panel's own `panel` block (its columns) is stored under
+  `panels` in the same file: additive within format 1, so a file without it
+  loads as "no columns set".
 
 ## Model
 
@@ -244,6 +248,41 @@ every read: viewport = the framebuffer, regions = the active layout's regions
 (names slugged to tokens, e.g. `Top Bar!` -> `top-bar`) or one `full`, touch =
 `tap` while the touch service heartbeat is fresh, else none.
 
+Its `panel` block is settable (`POST /surfaces/panel/columns {"columns": [...]}`
+or `POST /surfaces/panel {"panel": {...}}`; nothing else on a built-in can be
+updated). Columns are validated against the regions it has *when set*, and
+setting `columns` replaces the list. A column whose region is not in the
+current layout is **dormant**: kept (and persisted), listed in
+`panel.dormant`, hidden from `panel.config.columns` and drawn again when its
+region exists -- a layout change never breaks `GET /surfaces`.
+
+## The panel draws its columns
+
+A column `{stream, view, region}` on the panel is drawn by the panel itself
+(`column_painter.py`), with the html renderer and `html-templates/column.html`:
+
+- only while a layout is active, only into the column's region, and only that
+  region's renderer is replaced (`_rebind_region`); other regions keep their
+  threads. With no layout nothing is drawn (a column never hijacks a single
+  view);
+- repainted when an event is published, a stream is declared/removed, the
+  columns change or a layout is set; bursts are coalesced (0.25 s) and a region
+  whose drawn params did not change is not rebound;
+- sized to the region: `surface_column_view.plan(rect)` gives the rows and
+  characters that fit (rows from the region height, characters from its
+  width), so a narrow side column and the wide centre truncate differently. The
+  pixel metrics live in `column.html` and are pinned against `plan` by
+  `tests/test_column_view.py`; the template is fixed-px, like every html view;
+- painting is autonomous and never counts as operator activity;
+- one content delivery to a column's region replaces its drawing until the
+  column or its stream changes again;
+- `GET /state` -> `surfaces.columns` reports `painted`, the drawn
+  `{region: column}` and per-region `errors`.
+
+Views drawn: `log` (newest events, one per row), `calls` (`name state`),
+`status` (the latest event as `key: value`). A view displayd does not draw, or
+one the stream does not offer, shows a one-line notice.
+
 ## Code map
 
 `surface_model.py` (vocabulary + validator) · `surface_registry.py` (leases,
@@ -251,5 +290,5 @@ discovery) · `surface_channels.py` (per-surface content/event streams) ·
 `surface_target.py` (select + resolve) · `surface_touch.py` (event validation)
 · `surface_renderers.py` (implementations) · `surface_hub.py` (deliver) ·
 `surface_streams.py` (event streams) · `surface_columns.py` (columns + actions)
-· `surface_panel.py` (panel block) · `surface_store.py` / `surface_restore.py` (persistence) · `daemon_surfaces.py` (panel wiring) ·
+· `surface_panel.py` (panel block) · `surface_builtin_panel.py` (the panel's settable block, dormant columns) · `surface_patch.py` (update merge) · `surface_column_view.py` / `column_painter.py` (the panel draws columns) · `surface_store.py` / `surface_restore.py` (persistence) · `daemon_surfaces.py` (panel wiring) ·
 `daemon_http_surfaces.py` / `daemon_http_streams.py` (routes).

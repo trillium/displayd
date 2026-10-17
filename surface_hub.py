@@ -73,7 +73,15 @@ class SurfaceHub:
         report = self.registry.restore(doc["surfaces"], doc["tombs"])
         decls, bad = restore_streams(doc["streams"])
         self.streams.restore(decls)
-        return dict(report, streams=len(decls), streams_invalid=bad)
+        panels, panels_bad = self.registry.panels.restore(doc.get("panels"))
+        return dict(report, streams=len(decls), streams_invalid=bad,
+                    panels=panels, panels_invalid=panels_bad)
+
+    def on_columns_changed(self, fn):
+        """``fn()`` whenever something a column shows may have changed: an
+        event published, a stream declared/removed, a panel block set."""
+        self.streams.subscribe(fn)
+        self.registry.panels.subscribe(lambda sid: fn())
 
     def persistence(self):
         """The store's status plus what the boot restored, or None."""

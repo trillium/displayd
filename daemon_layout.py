@@ -204,6 +204,7 @@ class LayoutMixin:
             with self.cache_lock:
                 self.last_switch_at = started
         self._composite_now()
+        self.poke_columns()
         return self.state()
 
     def clear_layout(self):
