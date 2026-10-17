@@ -5,6 +5,16 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.12.0
+
+**MCP tools for surfaces, streams, columns, targeting and touch events**
+(task-sptg1, LATER item of inbox-nwdj). `mcp_surface_tools.py` adds 18 tools
+(`surfaces_list`, `surface_send` for targeting, `surface_events` /
+`surface_touch_report` for touch, `surface_columns[_set]`, `column_action`,
+`stream_*`), each one a single existing HTTP route. `mcp_client` gains
+`api_delete`; the MCP server version is 1.1.0. Long polls are clamped below the
+client timeout. No daemon behaviour changes.
+
 ## 0.11.0
 
 **The panel draws its own columns** (task-sptg1, LATER item of inbox-nwdj).

@@ -103,6 +103,8 @@ When updating this file, preserve this bar for all agents and keep entries conci
 
 ## MCP + display feedback
 
+- Surface/stream/column/touch tools are the table in `mcp_surface_tools.py`
+  (one route per tool; the docs/SURFACES.md "MCP tools" table is the index).
 - Agent entry point is `mcp_server.py` (stdlib-only MCP over stdio,
   `DISPLAYD_URL` env, no auth to configure); per-view/per-input tools are
   derived live from `GET /renderers`, so a new renderer file is new tools

@@ -71,3 +71,7 @@ def api_get(path, raw=False):
 
 def api_post(path, body=None):
     return _request("POST", path, body=body if body is not None else {})
+
+
+def api_delete(path):
+    return _request("DELETE", path)
