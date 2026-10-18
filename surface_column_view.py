@@ -11,6 +11,11 @@ fills the first ``plan(rect).rows`` of them, truncated to ``plan(rect).chars``.
 The numbers below are the template's pixel metrics (``column.html``) and are
 pinned against it by ``tests/test_column_view.py``.
 
+Everything is sized by ``metrics(scale)``: the panel's accessibility scale
+(``panel.config.scale``) multiplies the pixel metrics, so a larger scale means
+bigger type and fewer, shorter rows -- the template has no fixed size of its
+own, it takes them as variables.
+
 Views drawn here: ``log`` (newest events, one per row), ``calls`` (tool calls,
 ``name state``), ``status`` (the latest event as ``key: value`` rows). Any
 other view token is shown as a one-line notice, never silently dropped.
@@ -28,12 +33,28 @@ VIEWS = ("log", "calls", "status")
 ELLIPSIS = "…"
 
 
-def plan(rect):
-    """``{"rows", "chars"}`` that fit a region ``(x, y, w, h)`` (>= 1 row)."""
+TITLE_PX, SUB_PX, FONT_PX = 34, 20, 22  # type sizes at scale 1
+BORDER_PX = 3                           # rule under the header (not scaled)
+
+
+def metrics(scale=1.0):
+    """The template's pixel metrics at ``scale`` (integers, >= 1)."""
+    def px(n):
+        return max(1, int(round(n * scale)))
+    return {"head": px(HEAD_PX), "pad": px(PAD_PX), "row": px(ROW_PX),
+            "char": px(CHAR_PX), "title": px(TITLE_PX), "sub": px(SUB_PX),
+            "font": px(FONT_PX), "title_pad": px(14)}
+
+
+def plan(rect, scale=1.0):
+    """``{"rows", "chars", "px"}`` that fit a region ``(x, y, w, h)`` at
+    ``scale`` (>= 1 row); ``px`` is ``metrics(scale)``."""
     _, _, w, h = rect
-    rows = (h - HEAD_PX - 2 * PAD_PX) // ROW_PX
-    chars = (w - 2 * PAD_PX) // CHAR_PX
-    return {"rows": max(1, min(ROW_SLOTS, rows)), "chars": max(MIN_CHARS, chars)}
+    m = metrics(scale)
+    rows = (h - m["head"] - 2 * m["pad"]) // m["row"]
+    chars = (w - 2 * m["pad"]) // m["char"]
+    return {"rows": max(1, min(ROW_SLOTS, rows)), "chars": max(MIN_CHARS, chars),
+            "px": m}
 
 
 def fit(text, chars):
@@ -102,6 +123,9 @@ def build_vars(column, stream, events, geometry):
     count = "%d event%s" % (len(events), "" if len(events) == 1 else "s")
     out = {"title": fit((stream or {}).get("name") or column["stream"], chars),
            "sub": fit("%s \u00b7 %s \u00b7 %s" % (column["view"], state, count), chars)}
+    for key, value in (geometry.get("px") or metrics()).items():
+        if key != "char":  # a planning number only: the template has no glyph width
+            out["px_" + key] = str(value)
     for i in range(ROW_SLOTS):
         out["r%d" % i] = shown[i] if i < len(shown) else ""
     return out

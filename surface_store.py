@@ -16,6 +16,10 @@ which ``deploy.sh`` never ships or deletes. It holds the *registry* only:
     ``{built-in id: {id, config}}``: the settable panel block (columns) of a
     built-in surface such as the device panel. Additive within format 1: a
     file without it loads as "none set".
+``identities``
+    ``{panel id: {version, config, surface, at}}``: the config each stable
+    ``panel.id`` last had, so a returning panel is recognised
+    (surface_identity.py). Additive within format 1.
 
 Not stored, on purpose: event/action rings, touch events and content slots.
 They are transient and bounded; a producer republishes. To keep a consumer's
@@ -54,7 +58,7 @@ FLUSH_INTERVAL = 5.0
 
 def empty_doc():
     return {"format": FORMAT, "generation": -1, "surfaces": [], "tombs": {},
-            "streams": [], "panels": {}}
+            "streams": [], "panels": {}, "identities": {}}
 
 
 def seq_base(generation):
@@ -133,7 +137,7 @@ class SurfaceStore:
         gen = (raw if isinstance(raw, dict) else doc).get("generation")
         prior = gen if isinstance(gen, int) and not isinstance(gen, bool) else -1
         self.generation = max(prior, -1) + 1
-        for key in ("tombs", "panels"):
+        for key in ("tombs", "panels", "identities"):
             doc[key] = doc[key] if isinstance(doc.get(key), dict) else {}
         for key in ("surfaces", "streams"):
             doc[key] = doc[key] if isinstance(doc.get(key), list) else []

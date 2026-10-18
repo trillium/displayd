@@ -22,6 +22,7 @@ import time
 import surface_model as model
 from surface_builtin_panel import BuiltinPanels
 from surface_channels import Channels
+from surface_identity import Identities
 from surface_panel import normalize_panel
 from surface_patch import merge_patch
 from surface_restore import restore_surfaces
@@ -45,6 +46,7 @@ class SurfaceRegistry:
         self._tombs = collections.OrderedDict()  # id -> expired_at
         self.channels = Channels(clock, seq_base)
         self.panels = BuiltinPanels()  # settable panel blocks of the built-ins
+        self.identities = Identities()  # remembered panel configs (surface_identity.py)
 
     # ---- views ---------------------------------------------------------
 
@@ -115,13 +117,16 @@ class SurfaceRegistry:
     def register(self, spec):
         """Idempotent upsert by id; returns ``(record, created)``."""
         rec = model.normalize(spec, default_ttl=self._default_ttl)
-        rec["panel"] = normalize_panel(spec.get("panel"), rec["regions"])
+        panel = normalize_panel(spec.get("panel"), rec["regions"])
         with self._lock:
             now = self._clock()
             self._sweep(now)
             if rec["id"] in self._builtin:
                 raise model.SurfaceError(
                     409, "%r is a built-in surface id" % rec["id"])
+            panel, identity, restored = self.identities.adopt(
+                panel, spec.get("panel"), rec["regions"], rec["id"], now)
+            rec["panel"] = panel
             old = self._live.get(rec["id"])
             rec.update(revision=(old["revision"] + 1) if old else 1,
                        registered_at=old["registered_at"] if old else now,
@@ -130,7 +135,11 @@ class SurfaceRegistry:
             self._live[rec["id"]] = rec
             self._tombs.pop(rec["id"], None)
             self.channels.keep_regions(rec["id"], [r["name"] for r in rec["regions"]])
-            out = self._view(rec, now), old is None
+            view = self._view(rec, now)
+            # how the panel was recognised is told once, to the registrant
+            view["panel"] = dict(panel, identity=identity,
+                                 **({"restored": restored} if restored else {}))
+            out = view, old is None
         self._on_change()  # outside the lock: persisting reads the registry
         return out
 
@@ -175,6 +184,7 @@ class SurfaceRegistry:
             rec = model.normalize(merged, default_ttl=self._default_ttl)
             rec["panel"] = normalize_panel(merged["panel"], rec["regions"])
             now = self._clock()
+            self.identities.remember(rec["panel"], sid, now)
             rec.update(revision=old["revision"] + 1,
                        registered_at=old["registered_at"], updated_at=now,
                        last_seen=now, expires_at=now + rec["ttl_seconds"])
@@ -199,7 +209,8 @@ class SurfaceRegistry:
         """Plain-data copy of what must survive a restart."""
         with self._lock:
             return {"surfaces": [copy.deepcopy(self._live[s]) for s in sorted(self._live)],
-                    "tombs": dict(self._tombs), "panels": self.panels.export()}
+                    "tombs": dict(self._tombs), "panels": self.panels.export(),
+                    "identities": self.identities.export()}
 
     def restore(self, records, tombs=None):
         """Load stored records at boot; returns the report (restored /

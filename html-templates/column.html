@@ -2,10 +2,11 @@
 <!--
   One panel column: a stream's recent events in a region of the panel.
   Filled by surface_column_view.build_vars (ROW_SLOTS fixed row slots, since
-  the html renderer takes scalars only). The pixel metrics here -- header
-  96px, rows 30px, 16px padding above and below the rows and at the sides -- are pinned against
-  surface_column_view.plan by tests/test_column_view.py: change one, change
-  both. Rows are fitted to the region's width in Python, not clipped here.
+  the html renderer takes scalars only). Every pixel metric is a px_ variable
+  from surface_column_view.metrics(scale), so the panel's accessibility scale
+  resizes type and rows together; the rendered CSS is pinned against
+  surface_column_view.plan by tests/test_column_view.py. Rows are fitted to
+  the region's width in Python, not clipped here.
 -->
 <html>
 <head>
@@ -13,12 +14,12 @@
 <style>
   * { margin: 0; padding: 0; }
   html, body { background: var(--page); color: var(--ink); font-family: sans-serif; }
-  .col   { padding: 0 16px; }
-  .head  { height: 96px; border-bottom: 3px solid var(--rule); }
-  .title { padding-top: 14px; font-size: 34px; font-weight: bold; color: var(--accent); }
-  .sub   { font-size: 20px; color: var(--muted); }
-  .rows  { padding-top: 16px; padding-bottom: 16px; }
-  .row   { height: 30px; font-size: 22px; color: var(--ink); }
+  .col   { padding: 0 {{px_pad}}px; }
+  .head  { height: {{px_head}}px; border-bottom: 3px solid var(--rule); }
+  .title { padding-top: {{px_title_pad}}px; font-size: {{px_title}}px; font-weight: bold; color: var(--accent); }
+  .sub   { font-size: {{px_sub}}px; color: var(--muted); }
+  .rows  { padding-top: {{px_pad}}px; padding-bottom: {{px_pad}}px; }
+  .row   { height: {{px_row}}px; font-size: {{px_font}}px; color: var(--ink); }
 </style>
 </head>
 <body>
