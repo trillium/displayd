@@ -109,6 +109,36 @@ class TestFlow(unittest.TestCase):
         self.assertEqual(sorted(event), ["action", "bead", "nonce", "option"])
         self.assertEqual(self.flow.result(event["nonce"], True, "closed")["state"], "done")
 
+    def _sending(self, clock):
+        flow = ReviewFlow(self.sent.append, clock=lambda: clock[0])
+        flow.load(self.decision)
+        flow.select(1)
+        flow.confirm()
+        return flow
+
+    def test_unanswered_send_times_out_to_failed(self):
+        clock = [100.0]
+        flow = self._sending(clock)
+        nonce = flow.snapshot()["nonce"]
+        clock[0] = 129.0
+        self.assertEqual(flow.snapshot()["state"], "sending")
+        clock[0] = 130.0
+        snap = flow.snapshot()
+        self.assertEqual((snap["state"], snap["message"]),
+                         ("failed", "no answer from bridge"))
+        self.refused(flow.result, nonce, True, "late")  # late answer is stale
+        self.assertEqual(flow.back()["state"], "showing")
+
+    def test_timed_out_send_can_close_and_retry(self):
+        clock = [0.0]
+        flow = self._sending(clock)
+        clock[0] = 31.0
+        self.assertEqual(flow.close()["state"], "idle")
+        flow = self._sending(clock)
+        clock[0] = 62.0
+        self.assertEqual(flow.confirm()["state"], "sending")
+        self.assertEqual(len(self.sent), 3)
+
     def test_doubled_or_stale_taps_do_nothing(self):
         self.refused(self.flow.confirm)       # nothing loaded
         self.flow.load(self.decision)

@@ -112,6 +112,7 @@ VIEWS = {
                           "highlights": "latency gate"}},
     "resources": {},
     "retro_grid": {},
+    "review": {"needs_engine": True, "params": {"bead": "review-gate"}},
     "row": {"params": _row_params},
     "services": {"params": {"url": "http://127.0.0.1:1/inventory",
                             "interval": 3600}},
