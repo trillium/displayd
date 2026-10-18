@@ -5,6 +5,28 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.14.0
+
+**Panel scale and panel identity** (the accessibility-scale and stable-identity
+LATER items of inbox-nwdj).
+
+- `panel.config.scale` (0.5 to 3, default 1) is a per-panel accessibility scale.
+  The panel draws its columns at it: `html-templates/column.html` takes every
+  pixel metric as a `px_*` variable from `surface_column_view.metrics(scale)`,
+  so type, rows and padding grow together and `plan(rect, scale)` fits fewer,
+  shorter rows. Changing it redraws the columns; other panels keep their own.
+- A stable `panel.id` is now recognised (`surface_identity.py`). A registration
+  that names a known id and sends no config gets the remembered config back,
+  trimmed to the regions the new surface has (`panel.restored.dropped` lists
+  the columns that did not fit); an unknown id registers as `new`; a config the
+  caller sends wins; a config from a newer build or without a migration is
+  `unusable` and left untouched. The report is `panel.identity` on the register
+  response only. Memory persists in `state/surfaces.json` (`identities`,
+  additive within format 1) and walks `surface_panel.MIGRATIONS` on version
+  change.
+- `tests/test_multi_surface_scenario.py` runs a phone, an iPad and a wall display
+  plus the panel through the real headless daemon at once.
+
 ## 0.13.1
 
 **Rounded Pillow-drawn surfaces.** The failure card, the dock's failure strip

@@ -7,9 +7,11 @@ content to one surface (or one region of it) without knowing which renderer
 draws it. The API is renderer-agnostic; DisplayD's on-device HTML renderer is
 **one** implementation behind it.
 
-> **Status.** The renderer-agnostic registered-surfaces layer did not exist on
-> `main` when this was written, so this change *is* that minimal layer plus the
-> multi-Sidecar capabilities on top. See "Implemented vs pending" below.
+> **Status.** Built and merged in stages (0.9.0 to 0.14.0): the registry, event
+> streams and columns, persistence, the panel drawing its own columns, MCP
+> tools, the review-bead decision page, and now the per-panel scale and panel
+> identity restore. "Implemented vs pending" below is the honest ledger of what
+> is covered by automated tests and what still needs a real device.
 
 ## INITIAL vs LATER
 
@@ -21,24 +23,20 @@ tests for multiple surfaces, differing viewports and touch. The data model
 already carries a **stable panel id** (separate from the surface id) and a
 **versioned per-panel config object**, so the LATER items fit without rework.
 
-**LATER (roadmap only, NOT built here):**
+**Since built:** persistence (0.10.0), the panel drawing columns (0.11.0), MCP
+tools (0.12.0), the review-bead decision page (0.13.0), the per-panel
+accessibility scale and stable panel identity with config restore (0.14.0;
+see "Panel scale" and "Panel identity" below).
 
-1. Per-panel accessibility scale (text + UI), stored in `panel.config`.
-2. Stable Sidecar/panel fingerprint distinct from the surface; reconnect
-   restores config (stream subscription, renderer, layout/region, scale);
-   unknown-identity and config-migration rules (`panel.version`); a panel
-   moving between surfaces. Today only the fields exist (`panel.id`,
-   `panel.version`, `panel.config`); nothing restores anything.
-3. MIT license for Sidecar; after a functional end-to-end baseline, a
-   *measured* Go-vs-Rust performance/language review (throughput, latency,
-   resources, concurrency, deploy cost). No speculative rewrite.
-4. Review-bead decision UI: load a review bead, deterministic decision page
-   from its structured fields, pre-filled option buttons, selection mapped
-   back to the bead's action with confirmation.
-5. Optional demo/join mode: explicitly enabled, off by default, ephemeral
+**Still LATER / not in this repo:**
+
+1. MIT licensing and the measured Go-vs-Rust review for Sidecar: Sidecar is its
+   own project now (written in Go); displayd is the on-device renderer and the
+   surfaces API.
+2. Optional demo/join mode: explicitly enabled, off by default, ephemeral
    revocable pairing code/token with expiry, no unauthenticated public
    endpoint, minimal grant (register + use); trust boundary and network
-   defaults documented. Until then the only gate is the existing bearer token.
+   defaults documented. Not built: the only gate is the existing bearer token.
 
 ## Implemented vs pending
 
@@ -67,13 +65,32 @@ for leases):
 - Registry persistence across restart (`surface_store.py`; `tests/test_surface_store.py`).
 - The panel draws its own columns in their layout regions
   (`column_painter.py`; `tests/test_column_painter.py`, `tests/test_column_view.py`).
+- Per-panel accessibility scale (`panel.config.scale`) and stable panel
+  identity with config restore (`surface_identity.py`;
+  `tests/test_surface_identity.py`, scale cases in `tests/test_column_view.py`
+  and `tests/test_column_painter.py`).
+- The whole product at once, through the real headless daemon: phone (390x844,
+  tap/swipe), iPad (1024x768, two regions, tap/pinch), wall display (1920x1080,
+  three regions, no touch) and the panel, one stream feeding differently
+  composed columns, targeting by surface/region/column/capability, touch
+  picking a column, stream-specific follow-on actions reaching the right
+  producer, a panel moving to another surface
+  (`tests/test_multi_surface_scenario.py`).
 
 **Pending deployment / device verification (not done here):**
 
 - Panel columns draw only the `log`, `calls` and `status` views (see "The
   panel draws its columns"); a stream's other views (`chart`, `controls`...)
   show a one-line notice on the panel and are a Sidecar's to draw.
-- Follow-on actions are queued for the producer; no on-panel follow-on UI yet.
+- Follow-on actions are queued for the producer; no on-panel follow-on UI yet
+  (the panel's touch is `tap` only and a column draws no buttons).
+- The panel's drawing is checked as renderer params; `scale` is verified in the
+  template's CSS and plan arithmetic, not on the physical panel. Look at one
+  column at scale 1 and 2 after a deploy to confirm legibility.
+- A panel's remembered config is displayd-side memory keyed by `panel.id`; no
+  real Sidecar client sends a `panel.id` yet, and nothing authenticates a
+  claimed id beyond the bearer token, so any holder of the token can claim any
+  id (and so read back its config). Treat ids as names, not secrets.
 
 - Not deployed to the live jumbotron / `~/displayd` on lnx-server. No
   `deploy.sh` run, nothing restarted.
@@ -123,6 +140,9 @@ what the boot restored.
   restart a new `generation` starts every seq counter at `generation << 32`
   (generation 0, a fresh install, keeps seq 1, 2, ...), so a consumer's
   `since=<seq>` is never repeated or regressed; it simply sees later events.
+- Panel identities (`identities`: `panel.id` -> last config, version, surface)
+  are stored in the same file, additive within format 1; a malformed entry is
+  dropped and counted in `restored.identities_invalid`.
 - A stored record can never shadow the built-in `panel`.
 - The built-in panel's own `panel` block (its columns) is stored under
   `panels` in the same file: additive within format 1, so a file without it
@@ -183,6 +203,40 @@ what the boot restored.
 | GET | `/event-streams/<id>/actions[?since=&wait=]` | producer reads follow-on actions |
 
 Discovery also filters by `panel=<id>` and `stream=<id>`.
+
+## Panel scale
+
+`panel.config.scale` is a number in `[0.5, 3]` (default 1; anything else is a
+`400`, the whole spec refused). It scales text and UI together, per panel, and
+travels with the panel's config (so it persists, and is restored with the
+identity below). On the built-in panel, `POST /surfaces/panel {"panel":
+{"config": {"scale": 2}}}` redraws its columns at once. The column view takes
+its pixel metrics from `surface_column_view.metrics(scale)`; a larger scale
+fits fewer, shorter rows (`plan(rect, scale)`), so nothing scrolls or clips. A
+Sidecar reads `scale` from its own `panel.config` and applies it itself.
+
+## Panel identity
+
+`panel.id` names a logical panel, separate from the surface it appears on.
+displayd remembers the config each id last had (`surface_identity.py`, persisted
+under `identities` in `state/surfaces.json`). On `POST /surfaces`, the
+**response** says how the panel was recognised in `panel.identity`:
+
+| `identity` | meaning |
+|---|---|
+| `anonymous` | no `panel.id`; nothing remembered or restored |
+| `new` | an id displayd has not seen; registers as given |
+| `kept` | the caller sent its own `panel.config`; it wins and is remembered |
+| `restored` | known id, no config sent: the remembered config is applied; `panel.restored` = `{from_surface, dropped, at}` |
+| `unusable` | known id whose stored config is newer than this build, has no migration, or is invalid here; registers empty, memory untouched |
+
+Columns whose region the new surface lacks are `dropped` (listed), never
+fatal, and a restore does not overwrite the memory, so a small phone cannot
+shrink what a wall display configured. Configs of an older `panel.version` walk
+up `surface_panel.MIGRATIONS` (`{from_version: fn(config) -> config}`; none are
+needed yet). The memory holds the 256 most recent ids. Moving a logical panel
+between surfaces is therefore: deregister the old surface, register the new one
+with the same `panel.id`.
 
 ## Streams, columns, surfaces, regions
 
@@ -291,7 +345,7 @@ discovery) · `surface_channels.py` (per-surface content/event streams) ·
 `surface_target.py` (select + resolve) · `surface_touch.py` (event validation)
 · `surface_renderers.py` (implementations) · `surface_hub.py` (deliver) ·
 `surface_streams.py` (event streams) · `surface_columns.py` (columns + actions)
-· `surface_panel.py` (panel block) · `surface_builtin_panel.py` (the panel's settable block, dormant columns) · `surface_patch.py` (update merge) · `surface_column_view.py` / `column_painter.py` (the panel draws columns) · `surface_store.py` / `surface_restore.py` (persistence) · `daemon_surfaces.py` (panel wiring) ·
+· `surface_panel.py` (panel block, scale) · `surface_identity.py` (identity restore) · `surface_builtin_panel.py` (the panel's settable block, dormant columns) · `surface_patch.py` (update merge) · `surface_column_view.py` / `column_painter.py` (the panel draws columns) · `surface_store.py` / `surface_restore.py` (persistence) · `daemon_surfaces.py` (panel wiring) ·
 `daemon_http_surfaces.py` / `daemon_http_streams.py` (routes).
 
 ## MCP tools

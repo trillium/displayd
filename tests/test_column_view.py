@@ -74,15 +74,41 @@ class TestTemplatePinned(unittest.TestCase):
                   encoding="utf-8") as fh:
             cls.text = fh.read()
 
-    def css(self, selector):
-        return re.search(r"%s\s*\{([^}]*)\}" % re.escape(selector), self.text).group(1)
+    def css(self, selector, scale=1.0):
+        """The rule for ``selector`` after the template is filled at ``scale``."""
+        out = view.build_vars(COL, STREAM, [], view.plan((0, 0, 600, 600), scale))
+        document, _root = templates.load(view.TEMPLATE, out)
+        return re.search(r"%s\s*\{([^}]*)\}" % re.escape(selector), document).group(1)
 
     def test_pixel_metrics_match_the_plan_constants(self):
-        self.assertIn("height: %dpx" % view.HEAD_PX, self.css(".head"))
-        self.assertIn("height: %dpx" % view.ROW_PX, self.css(".row"))
-        self.assertIn("padding: 0 %dpx" % view.PAD_PX, self.css(".col"))
-        rows = self.css(".rows")
-        self.assertEqual(rows.count("%dpx" % view.PAD_PX), 2)
+        for scale in (1.0, 0.5, 1.5, 3.0):
+            m = view.metrics(scale)
+            self.assertIn("height: %dpx" % m["head"], self.css(".head", scale))
+            self.assertIn("height: %dpx" % m["row"], self.css(".row", scale))
+            self.assertIn("font-size: %dpx" % m["font"], self.css(".row", scale))
+            self.assertIn("padding: 0 %dpx" % m["pad"], self.css(".col", scale))
+            self.assertEqual(self.css(".rows", scale).count("%dpx" % m["pad"]), 2)
+
+    def test_scale_one_is_the_original_design(self):
+        m = view.metrics()
+        self.assertEqual((m["head"], m["row"], m["pad"], m["font"]),
+                         (view.HEAD_PX, view.ROW_PX, view.PAD_PX, view.FONT_PX))
+
+    def test_a_bigger_scale_means_bigger_type_and_fewer_shorter_rows(self):
+        rect = (0, 0, 900, 700)
+        small, normal, big = (view.plan(rect, s) for s in (0.5, 1.0, 2.0))
+        self.assertGreater(small["rows"], normal["rows"])
+        self.assertGreater(normal["rows"], big["rows"])
+        self.assertGreater(normal["chars"], big["chars"])
+        self.assertGreater(big["px"]["font"], normal["px"]["font"])
+
+    def test_rows_fit_the_pixel_height_at_every_scale(self):
+        for scale in (0.5, 1.0, 1.7, 3.0):
+            for h in range(1, 1200, 53):
+                got = view.plan((0, 0, 600, h), scale)
+                if got["rows"] > 1:
+                    m = got["px"]
+                    self.assertLessEqual(m["head"] + 2 * m["pad"] + got["rows"] * m["row"], h)
 
     def test_slots_are_exactly_what_build_vars_fills(self):
         slots = set(re.findall(r"\{\{(\w+)\}\}", re.sub(r"<!--.*?-->", "", self.text,

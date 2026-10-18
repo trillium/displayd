@@ -9,14 +9,19 @@ surface changes. A surface record has ``panel: {"id", "version", "config"}``:
     (``None``) for an anonymous registration.
 ``config``
     one opaque, bounded JSON object holding everything per-panel: today the
-    ``columns`` (surface_columns.py, validated against the regions); future
-    per-panel settings (accessibility scale, renderer choice) are further keys
-    of this same object, so they need no new field.
+    ``columns`` (surface_columns.py, validated against the regions) and ``scale``;
+    further per-panel settings (renderer choice) are more keys of this same
+    object, so they need no new field.
 ``version``
     the config schema version, so a later release can migrate a stored config.
 
+``config.scale``
+    the panel's accessibility scale (text and UI together), a number in
+    ``[MIN_SCALE, MAX_SCALE]``; absent means 1. Per panel, so it follows the
+    panel (see surface_identity.py), not the physical surface.
+
 Only the *shape* lives here. Recognising a returning panel by ``id`` and
-restoring its config is pending (docs/SURFACES.md "Roadmap").
+restoring its config is surface_identity.py.
 """
 
 import json
@@ -26,6 +31,21 @@ from surface_model import ID_RE, _dict, _token
 
 CONFIG_VERSION = 1
 MAX_CONFIG_BYTES = 16 * 1024
+MIN_SCALE, MAX_SCALE = 0.5, 3.0
+MIGRATIONS = {}  # from_version -> fn(config) -> config at from_version + 1
+
+
+def scale_of(config):
+    """The accessibility scale a (normalized) panel config asks for."""
+    return float((config or {}).get("scale", 1.0))
+
+
+def _scale(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not MIN_SCALE <= value <= MAX_SCALE:
+        raise ValueError("panel.config.scale: expected a number in [%g, %g]"
+                         % (MIN_SCALE, MAX_SCALE))
+    return float(value)
 
 
 def normalize_panel(raw, regions):
@@ -36,6 +56,8 @@ def normalize_panel(raw, regions):
         config["columns"] = normalize_columns(config["columns"], regions)
     else:
         config["columns"] = []
+    if "scale" in config:
+        config["scale"] = _scale(config["scale"])
     if len(json.dumps(config)) > MAX_CONFIG_BYTES:
         raise ValueError("panel.config: over %d bytes" % MAX_CONFIG_BYTES)
     return {"id": None if pid is None else _token(pid, "panel.id", ID_RE),

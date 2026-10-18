@@ -29,6 +29,7 @@ import time
 
 import surface_column_view as view
 from surface_columns import columns_of
+from surface_panel import scale_of
 
 PANEL_ID = "panel"
 INTERVAL = 0.25
@@ -81,6 +82,7 @@ class ColumnPainter:
             return []
         surface = self._hub.registry.get(PANEL_ID)
         painted, shown = [], {}
+        scale = scale_of((surface.get("panel") or {}).get("config"))
         for column in columns_of(surface):
             if column["region"] not in regions:
                 continue
@@ -89,7 +91,7 @@ class ColumnPainter:
             events = (self._hub.streams.read(column["stream"])["events"]
                       if stream else [])
             params = {"template": view.TEMPLATE, "vars": view.build_vars(
-                column, stream, events, view.plan(rect))}
+                column, stream, events, view.plan(rect, scale))}
             key = (epoch, json.dumps(params, sort_keys=True))
             shown[column["region"]] = column["id"]
             if self._cache.get(name) == key:

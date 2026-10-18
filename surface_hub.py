@@ -74,8 +74,10 @@ class SurfaceHub:
         decls, bad = restore_streams(doc["streams"])
         self.streams.restore(decls)
         panels, panels_bad = self.registry.panels.restore(doc.get("panels"))
+        known, known_bad = self.registry.identities.restore(doc.get("identities"))
         return dict(report, streams=len(decls), streams_invalid=bad,
-                    panels=panels, panels_invalid=panels_bad)
+                    panels=panels, panels_invalid=panels_bad,
+                    identities=known, identities_invalid=known_bad)
 
     def on_columns_changed(self, fn):
         """``fn()`` whenever something a column shows may have changed: an

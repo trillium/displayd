@@ -93,6 +93,22 @@ class TestPaint(unittest.TestCase):
             self.assertTrue(all(len(v) <= fitted for v in params["vars"].values()), name)
         self.assertNotIn("Right", by_region)  # no column there: untouched
 
+    def test_the_panels_scale_resizes_what_is_drawn_and_redraws(self):
+        self.fx.columns(col("c-main", "main"))
+        self.painter.paint()
+        normal = dict(self.fx.drawn)["Main"]["vars"]
+        self.fx.drawn.clear()
+        self.fx.hub.registry.update("panel", {"panel": {"config": {"scale": 2}}})
+        self.painter.paint()  # the worker may get there first; either way, one redraw
+        self.assertTrue(until(lambda: self.fx.drawn))
+        big = dict(self.fx.drawn)["Main"]["vars"]
+        self.assertEqual(big["px_font"], str(2 * int(normal["px_font"])))
+        self.assertEqual(big["px_row"], str(2 * int(normal["px_row"])))
+        rect = self.fx.layout[1][2]
+        self.assertEqual(sum(1 for i in range(view.ROW_SLOTS) if "r%d" % i in big),
+                         view.ROW_SLOTS)
+        self.assertLess(view.plan(rect, 2)["rows"], view.plan(rect)["rows"])
+
     def test_an_unchanged_column_is_not_redrawn(self):
         self.fx.columns(col("c-main", "main"))
         self.painter.paint()
