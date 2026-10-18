@@ -18,19 +18,30 @@ import uuid
 
 from surface_model import SurfaceError
 
+SEND_TIMEOUT = 30.0
 STATES = ("idle", "showing", "confirming", "sending", "done", "failed")
 
 
 class ReviewFlow:
-    def __init__(self, publish, clock=time.time):
+    def __init__(self, publish, clock=time.time, send_timeout=SEND_TIMEOUT):
         self._publish = publish
         self._clock = clock
+        self._send_timeout = send_timeout
         self._lock = threading.Lock()
         self._state = dict(state="idle", decision=None, chosen=None, nonce=None,
                            message=None, at=None)
 
+    def _expire(self):
+        """Liveness: a send nobody answered within the timeout becomes
+        ``failed`` (so back/close/retry work). Checked under the lock on every
+        read and transition; a late bridge answer is then a 409."""
+        st = self._state
+        if st["state"] == "sending" and self._clock() - st["at"] >= self._send_timeout:
+            self._set(state="failed", message="no answer from bridge")
+
     def snapshot(self):
         with self._lock:
+            self._expire()
             return dict(self._state)
 
     def _set(self, **change):
@@ -46,6 +57,7 @@ class ReviewFlow:
                              nonce=None, message=None)
 
     def _need(self, *states):
+        self._expire()
         if self._state["state"] not in states:
             raise SurfaceError(409, "review is %s (needs %s)"
                                % (self._state["state"], " or ".join(states)))
