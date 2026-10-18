@@ -154,6 +154,36 @@ poll to find out what happened. `/state` also carries `feeds` (per-input
 buffer counts, last-update age, and `cold`/`warm`/`stale` health) and `switch`
 (request-to-first-pixel and request-to-fresh-frame timings in milliseconds).
 
+## Sidecar server (`/surfaces`)
+
+A Sidecar is any secondary display (phone, tablet, browser tab) that
+registers with the daemon and then pulls content and reports touches. There
+is no separate process: the routes are served by the same daemon (`python3
+displayd.py`, bind with `DISPLAYD_BIND`) and implemented in
+`daemon_http_surfaces.py`. Full contract: [docs/SURFACES.md](docs/SURFACES.md).
+
+Auth: set `DISPLAYD_API_TOKEN` and send `Authorization: Bearer <token>` on
+every request (a wrong, missing or non-Bearer header is `401`); with no token
+configured the API is open, so keep the bind tailnet/loopback only.
+
+```sh
+# register (201 created / 200 replaced), keep alive, send, pull, touch
+curl -X POST $D/surfaces -d '{"id":"phone","kind":"sidecar","renderer":{"name":"web","content_types":["text"]},"viewport":{"width":390,"height":844},"touch":{"supported":true,"interactions":["tap"]},"ttl_seconds":30}'
+curl -X POST $D/surfaces/phone/heartbeat            # 410 => lease expired, re-register
+curl -X POST $D/surfaces/phone/content -d '{"content":{"type":"text","text":"hi"}}'
+curl "$D/surfaces/phone/content?since=0&wait=20"    # long-poll, wait <= 25s
+curl -X POST $D/surfaces/phone/touch -d '{"interaction":"tap","x":10,"y":20}'
+curl "$D/surfaces/phone/events?since=0"             # consumers read touches
+```
+
+Errors: `400` bad body/query (invalid JSON, non-object, non-numeric
+`since`/`wait`), `401` bad token, `404` unknown surface/route, `409`
+unsupported touch or protected id (`panel`), `410` expired lease, `415`
+content type the surface cannot draw. Mutating requests count as operator
+activity for the idle policy; reads and heartbeats do not. Tests:
+`tests/test_surfaces_http.py` (happy paths) and
+`tests/test_surfaces_server.py` (auth gate and refusal paths).
+
 ## Layout styles
 
 `POST /layout` takes either raw region geometry or one of four named styles --
