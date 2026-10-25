@@ -8,6 +8,7 @@ renderers/ -- the core knows nothing about any particular one.
 API
   GET  /                             web control page (this panel)
   GET  /health                       liveness
+  GET  /stats                        request/error counters, uptime, feed health
   GET  /version                      application semver (APP_VERSION)
   GET  /state                        what is showing + screen power
   GET  /renderers                    available renderers and their params
@@ -81,6 +82,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from control_page import CONTROL_PAGE
 from daemon_click import ClickMixin
 from daemon_commands import CommandsMixin
+import daemon_stats
 from daemon_config import APP_VERSION, BIND, PORT
 from daemon_core import DisplayCoreMixin
 from daemon_feedback import FeedbackMixin
@@ -205,6 +207,7 @@ def main():
     parser.add_argument("--port", type=int, default=PORT,
                         help="TCP port to listen on (default: %(default)s)")
     args = parser.parse_args()
+    daemon_stats.configure_logging()
     DAEMON = DisplayDaemon()
     DAEMON.clear()
     # Boot-time clear is housekeeping, not a manual choice: let a persisted

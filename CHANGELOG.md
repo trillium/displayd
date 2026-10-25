@@ -5,6 +5,20 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.15.0
+
+**Server observability** (the observability half of project-73bi.3).
+
+- One structured access line per request on stderr via `logging`
+  (`daemon_stats.py`): method, path without query, status, duration, remote.
+  `DISPLAYD_LOG_LEVEL` (default INFO) gates it. The API token, headers and
+  bodies are never logged; the `/r/<token>` relay token is masked.
+- `GET /stats` (token-protected): version, started_at, uptime_s, request
+  totals by status class and route family, 5xx error count with `last_error`,
+  renderer count and feed health counts. Counters are in-process and
+  thread-safe. `/health` is unchanged.
+- `tests/test_stats.py`.
+
 ## 0.14.0
 
 **Panel scale and panel identity** (the accessibility-scale and stable-identity

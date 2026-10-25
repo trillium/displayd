@@ -29,6 +29,8 @@ class GETRoutesMixin:
             return self._send(401, auth_error)
         if path == "/state":
             return self._send(200, self.daemon.state())
+        if path == "/stats":
+            return self._send(200, self.daemon.stats_report())
         if path == "/version":
             return self._send(200, {"version": APP_VERSION})
         if path == "/renderers":

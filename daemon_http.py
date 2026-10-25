@@ -9,6 +9,9 @@ tables live in daemon_http_get.py and daemon_http_post.py.
 
 import hmac
 import json
+import time
+
+import daemon_stats
 
 
 class HandlerBaseMixin:
@@ -17,7 +20,44 @@ class HandlerBaseMixin:
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
+        # BaseHTTPRequestHandler's own lines (send_error, parse failures);
+        # the per-request access line is written by handle_one_request.
+        daemon_stats.access_logger.debug(fmt, *args)
+
+    def log_request(self, code="-", size="-"):
         pass
+
+    def send_response(self, code, message=None):
+        self._status = code
+        super().send_response(code, message)
+
+    def handle_one_request(self):
+        """One request: serve it, then log one access line and count it.
+
+        Only method, path (no query), status, duration and remote address
+        reach the log; headers and bodies never do."""
+        self._status = None
+        self._error_message = None
+        start = time.monotonic()
+        try:
+            super().handle_one_request()
+        except Exception as exc:
+            if self._status is None:
+                self._status = 500
+            self._error_message = type(exc).__name__
+            raise
+        finally:
+            if self._status is not None:
+                self._observe(self._status, (time.monotonic() - start) * 1000)
+
+    def _observe(self, status, ms):
+        method = getattr(self, "command", None) or "-"
+        path = getattr(self, "path", None) or "-"
+        daemon_stats.log_access(method, path, status, ms,
+                                self.client_address[0])
+        stats = getattr(self.daemon, "stats", None)
+        if stats is not None:
+            stats.record(path, status, self._error_message)
 
     def _check_token(self):
         """Return None when the request is authorized, else an error body.
@@ -37,6 +77,8 @@ class HandlerBaseMixin:
 
     def _send(self, code, payload, ctype="application/json"):
         body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+        if code >= 500 and isinstance(payload, dict):
+            self._error_message = str(payload.get("error") or "")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))

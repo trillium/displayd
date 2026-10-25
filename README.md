@@ -98,6 +98,14 @@ or, in the unit file:
 Do not bind `0.0.0.0` on a machine reachable from an untrusted network: that
 publishes an unauthenticated control surface to everything that can route to it.
 
+## Request log
+
+Every request writes one line on stderr: `method=GET path=/state status=200
+ms=1.2 remote=127.0.0.1` (query string dropped, the `/r/<token>` relay token
+masked; headers, the API token and bodies are never logged). Set
+`DISPLAYD_LOG_LEVEL` (default `INFO`) to `WARNING` or above to silence the
+access lines. Counters for the same traffic are served at `GET /stats`.
+
 ## API
 
 | Method | Path | Body | Meaning |
@@ -105,6 +113,7 @@ publishes an unauthenticated control surface to everything that can route to it.
 | GET | `/` | – | web control panel (live preview, renderer picker, layout styles, power) |
 | GET | `/health` | – | liveness |
 | GET | `/version` | – | application semver (`{"version": ...}`); same value is in `/state`'s `"version"` key and the startup log |
+| GET | `/stats` | – | request observability: `version`, `started_at`, `uptime_s`, `requests` (`total`, `by_status` 2xx/4xx/5xx, `by_route` first path segment), `errors` (`count` of 5xx, `last_error` `{time, path, status, message}`), `renderers` count, `feeds` cold/warm/stale counts. In-process, reset on restart |
 | GET | `/state` | – | what is showing, screen power, display facts |
 | GET | `/renderers` | – | available renderers and their params |
 | GET | `/snapshot` | – | PNG of the last frame presented |
