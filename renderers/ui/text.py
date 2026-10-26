@@ -27,6 +27,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from ui import textbox
+
 
 FAMILY = "DejaVuSans"        # the regular face
 BOLD_FAMILY = "DejaVuSans-Bold"
@@ -146,8 +148,13 @@ def fit_size(screen, text, size, room, floor=FLOOR, step=2, bold=False,
 
 
 def write(img, screen, xy, text, ink, size, bold=False, room=None,
-          family=None, anchor=None):
+          family=None, anchor=None, box=None, cut=True, label=None):
     """One line of type at ``xy``, fitted to ``room`` px first.
+
+    ``room`` (or an explicit ``box`` = (l, t, r, b), edges may be None) is
+    the DECLARATION the text check compares the drawn ink against (see
+    ``ui.textbox``); ``cut=False`` declares that this line must never be
+    trimmed, so a trim is then a finding rather than the design.
 
     ``xy`` is the text box's top-left corner unless ``anchor`` states
     otherwise (PIL's own anchor letters: ``mm`` centred on ``xy``, ``ma``
@@ -162,6 +169,9 @@ def write(img, screen, xy, text, ink, size, bold=False, room=None,
         if not line:
             return img
         kwargs = {} if anchor is None else {"anchor": str(anchor)}
+        if textbox.active():
+            textbox.note(text if text is not None else "",
+                         box or textbox.derive(xy, room, anchor), cut, label)
         ImageDraw.Draw(img).text(
             (int(xy[0]), int(xy[1])), line,
             font=face(screen, size, bold=bold, family=family), fill=ink,

@@ -116,6 +116,8 @@ class Screen:
     @staticmethod
     def font_path(family="DejaVuSans-Bold"):
         candidates = [
+            os.path.join(os.environ.get("DISPLAYD_FONT_DIR") or "/nonexistent",
+                         family + ".ttf"),
             os.path.join("/usr/share/fonts/truetype/dejavu", family + ".ttf"),
             os.path.join("/usr/share/fonts/truetype/dejavu", "DejaVuSans-Bold.ttf"),
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",

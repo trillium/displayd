@@ -115,6 +115,7 @@ access lines. Counters for the same traffic are served at `GET /stats`.
 | GET | `/version` | – | application semver (`{"version": ...}`); same value is in `/state`'s `"version"` key and the startup log |
 | GET | `/stats` | – | request observability: `version`, `started_at`, `uptime_s`, `requests` (`total`, `by_status` 2xx/4xx/5xx, `by_route` first path segment), `errors` (`count` of 5xx, `last_error` `{time, path, status, message}`), `renderers` count, `feeds` cold/warm/stale counts. In-process, reset on restart |
 | GET | `/state` | – | what is showing, screen power, display facts |
+| GET | `/text/check` | – | text-fit gate: every view drawn offscreen against stress content; `200` clean, `409` per view naming each text that escaped its declared box (see "Text fits its box") |
 | GET | `/renderers` | – | available renderers and their params |
 | GET | `/snapshot` | – | PNG of the last frame presented |
 | POST | `/show` | `{"renderer":"text","params":{...}}` | switch content |
@@ -534,6 +535,26 @@ view renders correctly into a region smaller than the panel -- a split half or
 a `15-70-15` band -- and `POST /layout` refuses a `full` view in one of those,
 naming it. An undeclared or misspelled value is `full`, so the safe failure is
 a whole frame rather than a cropped one. See `capability.py`.
+
+## Text fits its box (`GET /text/check`)
+
+Text a view draws must stay inside the box that view meant it for. A draw
+declares that box by drawing through `ui.text.write(room=, box=, cut=)`,
+`ui.line.put(...)` (a draw handle's line, cut with an ellipsis to its
+`room`) or inside `ui.textbox.boxed(rect)`; a line with no declaration is
+held to the frame only. The check reads the same declaration the drawing
+used, so the two cannot drift: it records the measured ink of every Pillow
+`text` call while the view's own `run()` draws once offscreen (never on the
+live screen) against the stress feeds in `text_stress.py` (long title, long
+app name, unbroken token, empty string, non-ASCII).
+
+Escaping rules (`renderers/ui/textbox.py`): ink outside the frame; ink wider
+or taller than its box; ink pushed across a box edge (names the side); a
+source string cut where the draw said `cut=False`; text collapsed to
+nothing. `deploy.sh` step 8 (`deploy_text_check.sh`) fails the deploy on a
+`409`. litehtml views report `checkable: false` where the engine is not
+built (the host builds it). Fix an overflow in the view (wrap, shrink,
+ellipsis or widen); never loosen the rules to silence it.
 
 ## Bridges: feeding views from the outside world
 

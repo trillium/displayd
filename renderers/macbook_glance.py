@@ -22,15 +22,22 @@ from macbook_glance_color import (APP_SIZE, C_DIM, C_FOCUS_BG,
                                   C_LINE, C_ROW, C_STALE, META_SIZE,
                                   MODE_COLORS, ROW_SIZE, TITLE_SIZE)
 from macbook_glance_map import draw_map
-from macbook_strip import _chip, _chip_label, _strip_layer, _wrap
+from macbook_strip import _chip, _chip_label, _strip_layer
+from ui import line as ui_line
+
+TITLE_ROOM_END = lay.CHROME_L + 64 - 12  # the GLANCE tag starts at +64
+CHIP_ROOM = 480          # the widest a Talon mode chip may grow
+STALE_ROOM = 420         # the right-hand STALE tag's reserved width
 
 
 def waiting(screen, img, draw, title, font):
     """No macbook payload yet: named waiting frame, never invented data."""
-    draw.text((lay.PAD, lay.TITLE_Y), title, font=font, fill=C_DIM)
-    draw.text((lay.PAD, lay.HDR_H + 40),
-              "waiting for macbook feed -- run bridges/macos_state.py",
-              font=font, fill=(120, 120, 130))
+    room = screen.W - 2 * lay.PAD
+    ui_line.put(draw, (lay.PAD, lay.TITLE_Y), title, font, C_DIM,
+                room=TITLE_ROOM_END - lay.PAD, label="waiting title")
+    ui_line.put(draw, (lay.PAD, lay.HDR_H + 40),
+                "waiting for macbook feed -- run bridges/macos_state.py",
+                font, (120, 120, 130), room=room, label="waiting hint")
 
 
 def header(draw, screen, img, title, state, stale, apps, apps_stale,
@@ -47,20 +54,20 @@ def header(draw, screen, img, title, state, stale, apps, apps_stale,
     plain = title_font or app_font or row_font or meta_font
     focus, mouse, talon = state.get("focus") or {}, state.get("mouse") or {}, \
         state.get("talon") or {}
-    draw.text((lay.PAD, lay.TITLE_Y), title, font=meta_font or plain,
-              fill=C_DIM)
+    shown = ui_line.put(draw, (lay.PAD, lay.TITLE_Y), title,
+                        meta_font or plain, C_DIM,
+                        room=TITLE_ROOM_END - lay.PAD, label="title")
     try:
-        title_w = draw.textlength(title, font=meta_font or plain)
+        title_w = draw.textlength(shown, font=meta_font or plain)
     except Exception:
         title_w = 0
-    draw.text((lay.PAD + title_w + 24, lay.TITLE_Y),
-              "apps (%d)" % len(apps), font=meta_font or plain,
-              fill=C_ROW)
     # Talon mode chip, top-right (the retired AIM button's slot stays
     # empty: the map tap is the zoom entry, so no control lives here).
     mode = str(talon.get("mode") or "other")
     color = MODE_COLORS.get(mode, MODE_COLORS["other"])
-    chip = mode.upper() + (" + MUTED" if talon.get("muted") else "")
+    chip = ui_line.clip(draw, mode.upper() + (
+        " + MUTED" if talon.get("muted") else ""), meta_font or plain,
+        CHIP_ROOM)
     try:
         chw = draw.textlength(chip, font=meta_font or plain)
     except Exception:
@@ -69,30 +76,48 @@ def header(draw, screen, img, title, state, stale, apps, apps_stale,
     draw.rounded_rectangle([mx, lay.TITLE_Y, mx + chw + 36,
                             lay.TITLE_Y + META_SIZE + 22],
                            radius=10, fill=tuple(color))
-    draw.text((mx + 18, lay.TITLE_Y + 8), chip, font=meta_font or plain,
-              fill=(10, 10, 14))
-    draw.text((lay.CHROME_L + 64, lay.TITLE_Y),
-              "GLANCE", font=meta_font or plain, fill=C_DIM)
+    ui_line.put(draw, (mx + 18, lay.TITLE_Y + 8), chip, meta_font or plain,
+                (10, 10, 14), room=chw + 18, label="mode chip")
+    # The count rides after the title, never under the GLANCE tag or the
+    # mode chip: its room is whatever the title and the chip leave.
+    tag_x = lay.CHROME_L + 64
+    ui_line.put(draw, (tag_x, lay.TITLE_Y), "GLANCE",
+                meta_font or plain, C_DIM, label="GLANCE tag")
+    tag_w = draw.textlength("GLANCE", font=meta_font or plain)
+    count_x = max(lay.PAD + title_w, tag_x + tag_w) + 24
+    # a stale app list says so here, where the count is (not over the chips)
+    ui_line.put(draw, (count_x, lay.TITLE_Y),
+                "apps (%d)%s" % (len(apps), " STALE" if apps_stale else ""),
+                meta_font or plain, C_STALE if apps_stale else C_ROW,
+                room=mx - 24 - count_x, label="apps count")
     # State line: focused app, window, mouse, capture hint.
     app_name = ta.clean(focus.get("app_name")) or "unknown"
     line = app_name
     window_title = focus.get("window_title")
     if window_title:
-        line += " -- " + (_wrap(draw, window_title, row_font or plain,
-                                  screen.W - 2 * lay.PAD) or [""])[0]
+        line += " -- " + str(window_title).splitlines()[0]
     elif state.get("accessibility_trusted") is False:
         line += " -- app only (accessibility off?)"
     elif not focus.get("window_bounds"):
         line += " -- app only (no focused window)"
+    tail = ""
     if isinstance(mouse.get("x"), (int, float)) and \
             isinstance(mouse.get("y"), (int, float)):
-        line += "   @ (%d, %d)" % (mouse["x"], mouse["y"])
-    draw.text((lay.PAD, lay.SUB_Y), line, font=row_font or plain,
-              fill=C_ROW)
+        tail = "   @ (%d, %d)" % (mouse["x"], mouse["y"])
+    # The mouse position is the part that must survive: the app and window
+    # are cut to what it leaves, and the STALE tag owns the right edge.
+    line_room = screen.W - 2 * lay.PAD - (STALE_ROOM + 24 if stale else 0)
+    try:
+        tail_w = draw.textlength(tail, font=row_font or plain)
+    except Exception:
+        tail_w = 0
+    head = ui_line.clip(draw, line, row_font or plain, line_room - tail_w)
+    ui_line.put(draw, (lay.PAD, lay.SUB_Y), head + tail, row_font or plain,
+                C_ROW, room=line_room, label="state line")
     if stale:
-        draw.text((screen.W - lay.PAD - 420, lay.SUB_Y),
-                  "STALE -- feed quiet >3s", font=row_font or plain,
-                  fill=C_STALE)
+        ui_line.put(draw, (screen.W - lay.PAD - STALE_ROOM, lay.SUB_Y),
+                    "STALE -- feed quiet >3s", row_font or plain, C_STALE,
+                    room=STALE_ROOM, label="stale tag")
     # App strip: steppers, visible window, focus marker. The highlight
     # is gone: it selected nothing. A dead-end stepper draws dim so a
     # press that would do nothing looks like it.
@@ -107,11 +132,11 @@ def header(draw, screen, img, title, state, stale, apps, apps_stale,
               fill=C_DIM if at_last else C_ROW)
     ax, ay, aw, ah = lay.chip_area(screen.W)
     if not apps:
-        draw.text((ax, lay.STRIP_Y + 10),
-                  "no running apps in feed" if not apps_stale else
-                  "apps feed quiet >30s -- last known lost",
-                  font=row_font or plain,
-                  fill=C_STALE if apps_stale else C_DIM)
+        ui_line.put(draw, (ax, lay.STRIP_Y + 10),
+                    "no running apps in feed" if not apps_stale else
+                    "apps feed quiet >30s -- last known lost",
+                    row_font or plain, C_STALE if apps_stale else C_DIM,
+                    room=aw, label="no apps")
     else:
         _, slots = lay.page_slots(start, total)
         focused = ta.clean((state.get("focus") or {}).get("app_name"))
@@ -149,9 +174,6 @@ def header(draw, screen, img, title, state, stale, apps, apps_stale,
                 _chip(draw, x, y, cw, ch,
                       _chip_label(draw, name, font, cw - 28),
                       bool(name and name == focused), font)
-    if apps_stale and apps:
-        draw.text((screen.W - lay.PAD - 300, lay.STRIP_Y + 10),
-                  "apps STALE", font=row_font or plain, fill=C_STALE)
     draw.line([(lay.PAD, lay.HDR_H - 12),
                (screen.W - lay.PAD, lay.HDR_H - 12)],
               fill=C_LINE, width=2)

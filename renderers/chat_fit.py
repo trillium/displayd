@@ -40,6 +40,16 @@ def width(text, size, bold=False):
         return int(len(str(text)) * size * 0.55)
 
 
+def clip(text, size, budget, bold=False):
+    """``text`` cut with an ellipsis to ``budget`` px (never wider)."""
+    text = str(text)
+    if width(text, size, bold) <= budget:
+        return text
+    while text and width(text + "\u2026", size, bold) > budget:
+        text = text[:-1]
+    return text.rstrip() + "\u2026" if text else ""
+
+
 def split_token(row, size, budget):
     """Break one over-long token (a pasted URL) into budget-sized pieces, so
     a single word cannot run out of its pane."""
@@ -87,6 +97,8 @@ def roster_rows(viewers, rect, lay):
         if isinstance(name, str) and name.strip():
             names.append(name.strip())
     names.sort(key=lambda text: text.lower())
+    names = [clip(n, lay["row_font"], int(rect[2]) - 2 * lay["inside"]
+                  - 2 * lay["border"]) for n in names]
     room = max(0, (int(rect[3]) - lay["ph_h"] - lay["inside"]) // lay["row_h"])
     if room <= 0:
         return []   # a degenerate panel draws no rows rather than past them
@@ -120,6 +132,7 @@ def message_lines(msg, lay, budget, ink):
     the wrapped text indented under it. ``runs`` are ``(dx, text, colour,
     bold)`` with ``colour`` a palette tuple."""
     author = str(msg.get("display_name") or msg.get("author") or "???")
+    author = clip(author, lay["line_font"], budget // 2, bold=True)
     tags = "".join("[%s] " % tag for flag, tag in ROLE_TAGS if msg.get(flag))
     prefix = tags + author + "  "
     used = width(prefix, lay["line_font"], bold=True)
@@ -147,7 +160,8 @@ def feed_lines(events, rect, lay, max_messages, ink):
     kept, used = [], 0
     for msg in reversed(window(events, max_messages)):
         if msg.get("join"):
-            name = str(msg.get("display_name") or msg.get("author") or "???")
+            name = clip(msg.get("display_name") or msg.get("author") or "???",
+                        lay["line_font"], budget // 2, bold=True)
             draw = [{"runs": [(0, name + " " + JOINED, ink["join"], True)],
                      "gap": lay["gap"]}]
         else:

@@ -13,6 +13,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import theme
+from ui import line as ui_line
 from PIL import Image, ImageDraw, ImageFont
 
 DEFAULT_BG = (16, 12, 40)
@@ -175,10 +176,15 @@ def draw_cell(draw, img, screen, box, rect, fill, border, highlight,
     cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
     ink = screen.color(box.get("text_color"), DEFAULT_INK)
     # Hard offset shadow: the readable-at-distance arcade punch.
-    draw.text((cx + 3, cy + 4), label, font=font,
-              fill=_shade(ink, 0.4) if not highlight else (80, 60, 0), anchor="mm")
-    draw.text((cx, cy), label, font=font,
-              fill=(255, 255, 255) if highlight else ink, anchor="mm")
+    # A label too long even at the smallest size is cut with an ellipsis to
+    # the cell's content width (less the shadow offset), never run off it.
+    room = max(1, cw - 6)
+    ui_line.put(draw, (cx + 3, cy + 4), label, font,
+                _shade(ink, 0.4) if not highlight else (80, 60, 0),
+                room=room, anchor="mm", label="retro_grid shadow")
+    ui_line.put(draw, (cx, cy), label, font,
+                (255, 255, 255) if highlight else ink, room=room, anchor="mm",
+                label="retro_grid label")
 
 
 def draw(screen, boxes, geometry, fills, border, highlight, images, bg=None):

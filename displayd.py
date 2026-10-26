@@ -103,6 +103,7 @@ from daemon_review import ReviewMixin
 from daemon_relay import RelayMixin
 from daemon_status import StatusMixin
 from daemon_surfaces import SurfacesMixin
+from daemon_text_audit import TextAuditMixin
 from daemon_touch_audit import TOUCH_JSON_PATH, TouchAuditMixin, touch_audit
 from daemon_touch_resolve import TouchResolveMixin, _resolve_coords
 from daemon_transient import TransientMixin
@@ -157,8 +158,8 @@ __all__ = [
 
 class DisplayDaemon(DisplayCoreMixin, ViewLifecycleMixin, TransientMixin,
                     ReloadMixin, RelayMixin, FeedbackMixin, FeedsMixin,
-                    TouchAuditMixin, TouchResolveMixin, MouseMixin, FocusMixin,
-                    MacbookModeMixin, ClickMixin, CommandsMixin, LayoutMixin,
+                    TouchAuditMixin, TextAuditMixin, TouchResolveMixin, MouseMixin,
+                    FocusMixin, MacbookModeMixin, ClickMixin, CommandsMixin, LayoutMixin,
                     PowerMixin, StatusMixin, SurfacesMixin, ReviewMixin):
     """The display daemon: state, render loop, feeds, and policy wiring."""
 

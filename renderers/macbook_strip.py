@@ -9,7 +9,6 @@ from macbook_layout, colours from macbook_glance_color.
 
 import os
 import sys
-import textwrap
 
 from PIL import Image, ImageDraw
 
@@ -75,16 +74,3 @@ def _strip_layer(aw, ah, cw, old_slots, new_slots, labels, focused_set,
         _chip(d, x, 0, cw, ah, labels.get(index, ""),
               index in focused_set, font)
     return layer
-
-
-def _wrap(draw, text, font, max_w, rows=1, width=90):
-    if font is not None:
-        try:
-            avg = draw.textlength("0123456789", font=font) / 10.0
-            width = max(12, int(max_w / max(avg, 1)))
-        except Exception:
-            pass
-    out = []
-    for para in str(text or "").splitlines() or [""]:
-        out.extend(textwrap.wrap(para, width) or [""])
-    return out[:rows]
