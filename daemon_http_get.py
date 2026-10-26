@@ -111,6 +111,12 @@ class GETRoutesMixin:
             if report.get("blind"):
                 return self._send(503, report)
             return self._send(409, report)
+        if path == "/text/check":
+            # Text-fit gate (text_audit.py): 200 when every line stays in
+            # its declared box, 409 naming each escaping text and its box.
+            # A GET: never touches the idle clock or the live screen.
+            report = self.daemon.text_check()
+            return self._send(200 if report.get("ok") else 409, report)
         if path == "/feedback":
             query = parse_qs(urlsplit(self.path).query)
             try:

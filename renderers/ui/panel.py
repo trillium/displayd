@@ -1,8 +1,5 @@
 """The panel component: a titled region with a body.
 
-Three views (``notice``, ``text``, ``sleep``) were the same card with
-different words, each with its own font loader, fit search and colours.
-
 What this owns:
 
 - ``fit_size`` -- the one rule for "these words must fit this region":
@@ -17,10 +14,8 @@ What this owns:
 - ``strip`` -- the card confined to a rect of a bigger frame, for a view
   composited into a larger one.
 
-Card and strip wear ``round_box`` corners, ``page`` outside. Nothing here
-raises or holds a colour literal: the caller may pass an ink, every other
-role is read from ``theme`` at draw time -- a card that cannot draw is a
-missing card, never a blank panel.
+Card and strip wear ``round_box`` corners. Nothing here raises or holds a
+colour literal; a card that cannot draw is a missing card.
 """
 
 import os
@@ -31,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import theme
 from ui import round_box
 from ui import text as ui_text
+from ui import textbox
 
 PAD = 60            # the tag's inset from the region's own edge
 BAR = 18            # the accent bar's height, across the top
@@ -116,22 +112,28 @@ def fit_size(screen, text, size, room_w=0, room_h=0, bold=True, family=None):
 
 def block(img, screen, text, ink=None, size=BODY_SIZE, centre=None,
           top=False, bold=False, family=None):
-    """A centred multi-line block.
+    """A centred multi-line block, wrapped and shrunk to fit the region.
 
-    ``centre`` defaults to the region's centre; ``top`` hangs the block's
-    top edge at that y instead of centring it on it, which is what the
-    body of a card wants under the headline. Ink defaults to the palette's
-    supporting-copy role.
+    ``top`` hangs the block's top edge at ``centre`` y (a card body).
     """
     try:
         from PIL import ImageDraw
-        x, y = centre if centre else (int(screen.W) // 2, int(screen.H) // 2)
-        ImageDraw.Draw(img).multiline_text(
-            (int(x), int(y)), str(text if text is not None else ""),
-            font=ui_text.face(screen, size, bold=bold, family=family),
-            fill=theme.rgb("muted-soft") if ink is None else ink,
-            spacing=_spacing(size), anchor="ma" if top else "mm",
-            align="center")
+        W, H = int(screen.W), int(screen.H)
+        x, y = centre if centre else (W // 2, H // 2)
+        # wrap to the region, then shrink until the whole block fits it
+        text = "\n".join(ui_text.wrap(screen, str(text if text is not None
+                         else ""), size, int(W * MARGIN), rows=None,
+                         bold=bold, family=family))
+        down = H - int(y) - TAG_Y if top else 2 * min(int(y), H - int(y))
+        size = fit_size(screen, text, size, W, max(1, down) / MARGIN,
+                        bold=bold, family=family)
+        with textbox.boxed((0, 0, W, H), label="panel block"):
+            ImageDraw.Draw(img).multiline_text(
+                (int(x), int(y)), text,
+                font=ui_text.face(screen, size, bold=bold, family=family),
+                fill=theme.rgb("muted-soft") if ink is None else ink,
+                spacing=_spacing(size), anchor="ma" if top else "mm",
+                align="center")
     except Exception:
         pass
     return img
@@ -184,11 +186,7 @@ def tag(img, screen, text, ink=None, size=TAG_SIZE, family=None):
 
 def strip(img, screen, rect, title, detail="", title_size=None,
           body_size=None, bar_ink=None, title_ink=None, body_ink=None):
-    """The card confined to ``rect`` -- the failure card's own shape.
-    Same vocabulary as :func:`card`, but the region is a rect of a bigger
-    frame and the copy reads left to right, so a view composited into the
-    dock can be loud in its own strip without hiding the tiles around it.
-    """
+    """The card confined to ``rect`` of a bigger frame, copy left to right."""
     try:
         x, y, w, h = (int(v) for v in rect)
         x0, y0, w, h = x, y, max(1, w), max(1, h)

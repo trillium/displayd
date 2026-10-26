@@ -17,6 +17,7 @@ import macbook_map
 import macbook_preview
 import theme
 from macbook_glance_color import C_DIM
+from ui import line as ui_line
 
 
 def draw_map(img, draw, screen, state, preview, meta_font):
@@ -29,9 +30,9 @@ def draw_map(img, draw, screen, state, preview, meta_font):
     displays = state.get("displays") or []
     box = macbook_map.union(displays)
     if box is None:
-        draw.text((lay.PAD, lay.HDR_H + 20),
-                  "no display geometry in feed",
-                  font=plain, fill=C_DIM)
+        ui_line.put(draw, (lay.PAD, lay.HDR_H + 20),
+                    "no display geometry in feed", plain, C_DIM,
+                    room=screen.W - 2 * lay.PAD, label="no displays")
         return
     scale, ox, oy = macbook_map.frame(box, screen.W, screen.H,
                                       top=lay.HDR_H, bottom=screen.H)
@@ -64,8 +65,10 @@ def draw_map(img, draw, screen, state, preview, meta_font):
             draw.rectangle([r[0] + 4, r[1] + 4,
                             r[0] + 16 + tw, r[1] + 44],
                            fill=(10, 10, 14))
-        draw.text((r[0] + 10, r[1] + 8), tag, font=plain,
-                  fill=(255, 255, 255) if is_active else C_DIM)
+        ui_line.put(draw, (r[0] + 10, r[1] + 8), tag, plain,
+                    (255, 255, 255) if is_active else C_DIM,
+                    box=(r[0], r[1], r[2], r[1] + 48), label="display tag",
+                    room=max(1, r[2] - r[0] - 16))
     bounds = focus.get("window_bounds")
     rect = macbook_map.rect(bounds, scale, ox, oy) \
         if isinstance(bounds, dict) else None

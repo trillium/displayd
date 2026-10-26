@@ -1,9 +1,27 @@
 # Changelog
 
 All notable changes to displayd, newest first. Every change bumps
-`APP_VERSION` in `displayd.py` (the single source of truth) per the
+`APP_VERSION` in `daemon_config.py` (the single source of truth) per the
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
+
+## 0.17.0
+
+**Text-fit check: `GET /text/check` and a deploy gate.** Every loaded view is
+drawn offscreen against stress content (long window title, long app name,
+unbroken token, empty string, non-ASCII) with a ledger recording the measured
+ink of each line (`renderers/ui/textbox.py`, a hook on `ImageDraw.text` that
+is inert unless the probe is recording). A line escapes when its ink leaves
+the image, is wider/taller than, or crosses an edge of, the box its draw
+declared (`ui.text.write` `room`/`box`, `ui.line.put`, `ui.textbox.boxed`),
+or is cut where `cut=False` / collapsed to nothing. The report is per view and
+names each text and its box; `deploy.sh` step 8 (`deploy_text_check.sh`)
+refuses to complete on a `409`. litehtml views report `checkable: false`
+where the engine is not built. Fixed: notice/card bodies (wrap + shrink to the
+panel), macbook header/chips/state line/display tags (ellipsis to their room;
+a stale app list now reads on the count instead of over the chips), beads
+overview title (fit before the status), retro_grid labels (ellipsis to the
+cell), touch_confidence title/instructions (via the card block fix).
 
 ## 0.16.0
 

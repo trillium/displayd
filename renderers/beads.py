@@ -47,6 +47,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import beads_attention as _attention_mod
 import beads_layout as layout
 from ui import shell as ui_shell
+from ui import textbox
 from beads_age import _age
 from beads_buckets import _attention, _classify
 from beads_common import (
@@ -113,7 +114,6 @@ def _draw(screen, title, bg):
 
     # Header: inset past the badges painted over the top corners.
     hpad = ui_shell.band_pad(screen)
-    draw.text((hpad, 24), title, font=plain, fill=C_TEXT)
     health_dot = {"cold": (120, 120, 130), "warm": C_ROLLING,
                   "stale": C_STALLED, "error": (255, 90, 90)}[health]
     status = "%s \u00b7 %s" % (health, _age(updated))
@@ -123,6 +123,11 @@ def _draw(screen, title, bg):
             w = draw.textlength(status, font=small_font)
         except Exception:
             pass
+    # the title keeps clear of the status text (and its dot) on the right
+    room = int(screen.W - hpad - w - 36 - 24 - hpad)
+    textbox.note(title, (hpad, 24, hpad + room, 120), label="beads title")
+    draw.text((hpad, 24), _fit(draw, title, plain, room, max_chars=len(title)),
+              font=plain, fill=C_TEXT)
     draw.ellipse([screen.W - hpad - 22, 52, screen.W - hpad - 2, 72],
                  fill=health_dot)
     draw.text((screen.W - hpad - w - 36, 34), status,
@@ -163,7 +168,7 @@ def _draw(screen, title, bg):
         if font is not None:
             try:
                 size = COUNT_SIZE
-                while (size > 48 and draw.textlength(text, font=font)
+                while (size > 24 and draw.textlength(text, font=font)
                        > col_w - 12):
                     size -= 8
                     font = _font(screen, "DejaVuSans-Bold", size)

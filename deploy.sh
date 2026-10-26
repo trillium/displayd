@@ -29,6 +29,8 @@
 #      startup, so a daemon-only restart leaves stale regions live) and
 #      requires GET /touch/check to agree: drawn UI vs live regions, with
 #      the exact differing rects on failure.
+#   8. Requires GET /text/check clean (deploy_text_check.sh): no view's text
+#      escapes its declared box.
 #
 # Configuration (environment overrides):
 #   DISPLAYD_HOST        ssh target (default trillium@lnx-server)
@@ -342,10 +344,7 @@ echo "panel: renderer=$RENDERER backlight=$BL stamp=$SHA"
 #    announcing -- ActiveState=active first (a wedged `deactivating` reads
 #    as "restarting" to is-active pollers), then a /touch/check whose
 #    announced_at is NEWER than the pre-restart heartbeat (the new process
-#    announced, not a stale heartbeat). Anything else fails the deploy
-#    loudly: a silent wedge means dead panel input.
-#    The panel is already re-showed above, so a failing gate never leaves
-#    it black -- it fails the deploy loudly instead of shipping drift.
+#    announced, not a stale heartbeat). Anything else fails the deploy.
 TOUCH_BEFORE=$(curl -s -m 5 "http://$PANEL/touch/check" | python3 -c \
     "import json,sys; print(json.load(sys.stdin).get('announced_at') or '')" 2>/dev/null || true)
 if $SSH "$HOST" 'sudo -n systemctl restart displayd-touch'; then
@@ -412,4 +411,5 @@ else
     echo "deploy.sh: drawn UI and live touch regions disagree (GET /touch/check); if the renderer set changed, run tools/regen_touch_tiles.py --config touch.json --apply on the host (TOUCH.md), restart displayd-touch" >&2
     exit 1
 fi
+. "$HERE/deploy_text_check.sh"
 echo "deployed $SHA at $DATE by $DEPLOYER"
