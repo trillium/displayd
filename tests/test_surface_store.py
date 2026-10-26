@@ -241,6 +241,19 @@ class TestSafeFile(StoreCase):
             json.dump({"format": FORMAT + 1, "generation": 4}, fh)
         self.assertEqual(self.boot().persistence()["generation"], 5)
 
+    def test_malformed_generation_restores_as_a_first_boot(self):
+        os.makedirs(os.path.dirname(self.path))
+        for bad in ("7", -3, -1, 2.5, True, None, [4], {"n": 4}):
+            with open(self.path, "w") as fh:
+                json.dump({"format": FORMAT, "generation": bad, "surfaces": []}, fh)
+            hub = self.boot()
+            self.assertEqual(hub.persistence()["generation"], 0, bad)
+            hub.registry.register(wide())  # first write commits the generation
+            # the seq base stays non-negative, so no counter can regress
+            seq = hub.registry.channels.put_content("wall", "left", {"type": "text"})
+            self.assertEqual(seq >> store_mod.GENERATION_SHIFT, 0, bad)
+            self.assertEqual(self.doc()["generation"], 0, bad)  # rewritten sane
+
     def test_newer_format_is_kept_aside_untouched(self):
         os.makedirs(os.path.dirname(self.path))
         future = {"format": FORMAT + 1, "surfaces": [{"id": "x"}], "generation": 4}

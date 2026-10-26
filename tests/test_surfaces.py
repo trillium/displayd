@@ -288,6 +288,39 @@ class TestTargeting(unittest.TestCase):
         self.assertEqual(self.pairs({"select": {"min_width": 1000}, "all": True,
                                      "region": "left"}), [("ipad", "left")])
 
+    def test_first_match_tie_break_is_newest_registration_then_id(self):
+        clock = Clock()
+        reg = SurfaceRegistry(clock=clock)
+        reg.register(kiosk(id="zulu"))
+        clock.t += 1
+        reg.register(kiosk(id="alpha"))
+        clock.t += 1
+        reg.register(kiosk(id="mike"))
+
+        def first(**query):
+            return [s["id"] for s, _ in resolve(reg, {"select": dict(query)})]
+
+        self.assertEqual(first(kind="wall"), ["mike"])  # newest, not lowest id
+        # stable: a repeat, an idempotent re-register and a heartbeat keep it
+        self.assertEqual(first(kind="wall"), ["mike"])
+        clock.t += 1
+        reg.register(kiosk(id="alpha"))
+        reg.heartbeat("alpha")
+        self.assertEqual(first(kind="wall"), ["mike"])
+        # narrowing the query moves the pick to the newest remaining match
+        reg.deregister("mike")
+        self.assertEqual(first(kind="wall"), ["alpha"])
+        # a broadcast still lists every match, by id
+        self.assertEqual([s["id"] for s, _ in resolve(
+            reg, {"select": {"kind": "wall"}, "all": True})], ["alpha", "zulu"])
+        # equal stamps fall back to the lowest id, whatever the register order
+        for order in (("b", "a", "c"), ("c", "b", "a")):
+            tied = SurfaceRegistry(clock=Clock())
+            for sid in order:
+                tied.register(kiosk(id=sid))
+            self.assertEqual([s["id"] for s, _ in resolve(
+                tied, {"select": {"kind": "wall"}})], ["a"])
+
     def test_ambiguous_region_is_refused_not_guessed(self):
         with self.assertRaises(SurfaceError) as ctx:
             resolve(self.reg, "ipad")

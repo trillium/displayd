@@ -47,12 +47,32 @@ class TestPlan(unittest.TestCase):
         self.assertGreater(small["rows"], short["rows"])
         self.assertEqual(short["rows"], (360 - view.HEAD_PX - 2 * view.PAD_PX) // view.ROW_PX)
 
-    def test_rows_are_capped_by_the_template_and_floored_at_one(self):
+    def test_rows_are_capped_by_the_template(self):
         self.assertEqual(view.plan((0, 0, 400, 100000))["rows"], view.ROW_SLOTS)
-        for rect in ((0, 0, 1, 1), (0, 0, 5, 40), (0, 0, 1920, 100)):
+
+    def test_sub_header_and_extreme_regions_never_claim_a_row(self):
+        head = view.HEAD_PX + 2 * view.PAD_PX
+        for rect in ((0, 0, 1, 1), (0, 0, 5, 40), (0, 0, 1920, 100),
+                     (0, 0, 600, head - 1), (0, 0, 600, head),
+                     (0, 0, 600, head + view.ROW_PX - 1),
+                     (0, 0, 0, 0)):
             got = view.plan(rect)
-            self.assertEqual(got["rows"], 1)
-            self.assertGreaterEqual(got["chars"], view.MIN_CHARS)
+            self.assertEqual(got["rows"], 0, rect)
+            self.assertGreaterEqual(got["chars"], view.MIN_CHARS, rect)
+        # a sliver narrower than the padding keeps its rows and floors chars
+        sliver = view.plan((0, 0, 2 * view.PAD_PX - 1, 1080))
+        self.assertEqual((sliver["rows"], sliver["chars"]),
+                         (31, view.MIN_CHARS))
+        # one row appears exactly when a row fits below the header band
+        self.assertEqual(view.plan((0, 0, 600, head + view.ROW_PX))["rows"], 1)
+        # a very wide, very short region keeps its chars but still gets no row
+        wide = view.plan((0, 0, 4000, 50))
+        self.assertEqual((wide["rows"], wide["chars"]),
+                         (0, (4000 - 2 * view.PAD_PX) // view.CHAR_PX))
+        # no rows planned means none drawn, however many events there are
+        out = view.build_vars(COL, STREAM, [ev(i, data="x") for i in range(5)],
+                              view.plan((0, 0, 600, 50)))
+        self.assertEqual(set(rows_of(out)), {""})
 
     def test_origin_does_not_change_the_plan(self):
         self.assertEqual(view.plan((0, 0, 500, 500)), view.plan((700, 300, 500, 500)))
@@ -60,7 +80,7 @@ class TestPlan(unittest.TestCase):
     def test_rows_always_fit_the_pixel_height(self):
         for h in range(1, 1200, 37):
             rows = view.plan((0, 0, 600, h))["rows"]
-            if rows > 1:
+            if rows:
                 used = view.HEAD_PX + 2 * view.PAD_PX + rows * view.ROW_PX
                 self.assertLessEqual(used, h, h)
 

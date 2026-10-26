@@ -150,7 +150,10 @@ def resolve(registry, target, content_type=None):
     if not found:
         raise SurfaceError(404, "no live surface matches %r" % parsed["select"])
     if not parsed["all"]:
-        found = found[:1]
+        # newest registration wins; built-ins (no registered_at) keep first
+        # place and equal stamps fall back to id, so the pick is stable
+        found = [min(found, key=lambda s: (
+            s["registered_at"] is not None, -(s["registered_at"] or 0), s["id"]))]
     pairs = []
     for surface in found:
         name = parsed["region"] or default_region_name(surface["regions"])

@@ -48,12 +48,13 @@ def metrics(scale=1.0):
 
 def plan(rect, scale=1.0):
     """``{"rows", "chars", "px"}`` that fit a region ``(x, y, w, h)`` at
-    ``scale`` (>= 1 row); ``px`` is ``metrics(scale)``."""
+    ``scale`` (0 rows when the header and padding alone overflow it); ``px``
+    is ``metrics(scale)``."""
     _, _, w, h = rect
     m = metrics(scale)
     rows = (h - m["head"] - 2 * m["pad"]) // m["row"]
     chars = (w - 2 * m["pad"]) // m["char"]
-    return {"rows": max(1, min(ROW_SLOTS, rows)), "chars": max(MIN_CHARS, chars),
+    return {"rows": max(0, min(ROW_SLOTS, rows)), "chars": max(MIN_CHARS, chars),
             "px": m}
 
 
@@ -119,7 +120,7 @@ def build_vars(column, stream, events, geometry):
         shown, state = ["stream offers %s, not %r" % (", ".join(views), column["view"])], "VIEW"
     else:
         shown, state = rows_for(column["view"], events), "LIVE"
-    shown = [fit(r, chars) for r in shown[-rows:]]
+    shown = [fit(r, chars) for r in shown[-rows:]] if rows else []
     count = "%d event%s" % (len(events), "" if len(events) == 1 else "s")
     out = {"title": fit((stream or {}).get("name") or column["stream"], chars),
            "sub": fit("%s \u00b7 %s \u00b7 %s" % (column["view"], state, count), chars)}

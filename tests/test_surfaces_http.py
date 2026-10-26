@@ -199,6 +199,43 @@ class TestSidecarFlow(SurfaceHttpTestCase):
         self.assertEqual(got["contents"]["full"]["content"]["text"], "late")
         self.assertLess(time.time() - started, 4)
 
+    def test_concurrent_long_polls_on_separate_surfaces_stay_isolated(self):
+        for sid in ("phone", "tablet"):
+            self.assertIn(self.call("POST", "/surfaces", sidecar(sid))[0], (200, 201))
+        got, done = {}, {sid: threading.Event() for sid in ("phone", "tablet")}
+
+        def poll(sid):
+            got[sid] = self.call("GET", "/surfaces/%s/content?since=0&wait=10" % sid,
+                                 timeout=15)
+            done[sid].set()
+
+        pollers = [threading.Thread(target=poll, args=(sid,), daemon=True)
+                   for sid in done]
+        for t in pollers:
+            t.start()
+        # content for phone only: its poller returns, the tablet's keeps holding
+        self.call("POST", "/surfaces/phone/content",
+                  {"content": {"type": "text", "text": "for-phone"}})
+        self.assertTrue(done["phone"].wait(10))
+        self.assertFalse(done["tablet"].is_set())
+        code, out = got["phone"]
+        self.assertEqual((code, out["contents"]["full"]["content"]["text"]),
+                         (200, "for-phone"))
+        self.call("POST", "/surfaces/tablet/content",
+                  {"content": {"type": "text", "text": "for-tablet"}})
+        self.assertTrue(done["tablet"].wait(10))
+        for t in pollers:
+            t.join(10)
+        code, out = got["tablet"]
+        self.assertEqual((code, out["contents"]["full"]["content"]["text"]),
+                         (200, "for-tablet"))
+        self.assertEqual(list(out["contents"]), ["full"])
+        # neither surface's channel picked up the other's content
+        for sid, text in (("phone", "for-phone"), ("tablet", "for-tablet")):
+            code, out = self.call("GET", "/surfaces/%s/content?since=0" % sid)
+            self.assertEqual([c["content"]["text"] for c in out["contents"].values()],
+                             [text])
+
     def test_touch_roundtrip_each_surface_its_own_interactions(self):
         code, out = self.call("POST", "/surfaces/phone/touch",
                               {"interaction": "swipe", "x": 20, "y": 400,
