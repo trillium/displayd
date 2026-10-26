@@ -21,7 +21,7 @@ where the engine is not built. Fixed: notice/card bodies (wrap + shrink to the
 panel), macbook header/chips/state line/display tags (ellipsis to their room;
 a stale app list now reads on the count instead of over the chips), beads
 overview title (fit before the status), retro_grid labels (ellipsis to the
-cell), touch_confidence title/instructions (via the card block fix).
+cell), touch_confidence title/instructions (via the card block fix), chat title/author/roster names (ellipsis), and the beads count glyph (shrinks below 48px in a floored column).
 
 ## 0.16.0
 
