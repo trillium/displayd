@@ -174,6 +174,24 @@ what the boot restored.
 - `id`/region names are short lowercase tokens; `content` is a reserved id.
 - `viewport.usable` is derived (viewport minus insets); every region must fit.
   With no `regions`, one `full` region covers the usable viewport.
+- `layout` is the alternative to `regions` (both is a `400` naming `layout`):
+  the device reports only its viewport and displayd partitions `viewport.usable`
+  with the same stack / grid / `rect` vocabulary as `POST /layout`. Each entry
+  names a surface region (`name`, optional `content_types`, `touch`) instead of
+  a renderer; sizes are px or `%` of the usable area, rects are offset by its
+  origin, and overlapping entries are refused. The derived `regions` are
+  exactly what the explicit form would store, and the `layout` is kept on the
+  record (`GET /surfaces`), so a viewport update re-derives them. Updating
+  with `regions` replaces the layout; `"layout": null` freezes the regions.
+
+  ```json
+  "viewport": {"width": 1024, "height": 768, "insets": {"top": 24, "bottom": 20}},
+  "layout": {"regions": [{"name": "left", "width": "50%", "content_types": ["text"]},
+                         {"name": "right", "content_types": ["text"]}]}
+  ```
+
+  This yields `left` as above (512x724 at y=24) plus `right` at x=512. Grid
+  (`rows`/`cols` + `row`/`col`/`row_span`/`col_span`) and `rect` work the same.
 - Touch interactions: `tap`, `double_tap`, `long_press`, `swipe`, `drag`,
   `pinch`, `multi_touch`. `pinch`/`multi_touch` need `max_points >= 2`.
 - A bad spec is refused whole (`400` naming the field); nothing half-valid is

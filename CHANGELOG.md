@@ -5,6 +5,17 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.16.0
+
+**Server-side viewport partitioning.** A surface registration or update may
+carry a `layout` (stack, grid or `rect` geometry, the `POST /layout`
+vocabulary) instead of `regions`; displayd computes the non-overlapping
+regions inside `viewport.usable`, so the device reports only its viewport.
+The directive is stored and shown in `GET /surfaces`, and a viewport update
+re-derives the regions from it. Both `layout` and `regions` is a `400`. The
+partitioning maths moved from `layout.py` to `layout_geometry.py`, shared by
+`POST /layout` (unchanged behaviour) and the new `surface_layout.py`.
+
 ## 0.15.2
 
 **Collapsed column banner.** A panel region too short for the column header
