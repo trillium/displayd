@@ -90,8 +90,9 @@ class ColumnPainter:
             stream = self._hub.streams.find(column["stream"])
             events = (self._hub.streams.read(column["stream"])["events"]
                       if stream else [])
-            params = {"template": view.TEMPLATE, "vars": view.build_vars(
-                column, stream, events, view.plan(rect, scale))}
+            geometry = view.plan(rect, scale)
+            params = {"template": view.template_for(geometry), "vars": view.build_vars(
+                column, stream, events, geometry)}
             key = (epoch, json.dumps(params, sort_keys=True))
             shown[column["region"]] = column["id"]
             if self._cache.get(name) == key:
