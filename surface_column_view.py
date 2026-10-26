@@ -16,6 +16,11 @@ Everything is sized by ``metrics(scale)``: the panel's accessibility scale
 bigger type and fewer, shorter rows -- the template has no fixed size of its
 own, it takes them as variables.
 
+A region too short for the header and padding collapses (``plan`` reports
+``rows == 0`` plus a ``banner`` height): ``template_for`` then picks
+``column_banner.html``, a single title line sized to the region, no sub line
+and no row slots.
+
 Views drawn here: ``log`` (newest events, one per row), ``calls`` (tool calls,
 ``name state``), ``status`` (the latest event as ``key: value`` rows). Any
 other view token is shown as a one-line notice, never silently dropped.
@@ -25,6 +30,7 @@ import json
 import time
 
 TEMPLATE = "column.html"
+BANNER_TEMPLATE = "column_banner.html"  # rows == 0: one title line, no rows
 ROW_SLOTS = 32
 HEAD_PX, PAD_PX = 96, 16               # header band, side/row-block padding
 ROW_PX, CHAR_PX = 30, 13               # row pitch, conservative glyph width
@@ -54,8 +60,24 @@ def plan(rect, scale=1.0):
     m = metrics(scale)
     rows = (h - m["head"] - 2 * m["pad"]) // m["row"]
     chars = (w - 2 * m["pad"]) // m["char"]
-    return {"rows": max(0, min(ROW_SLOTS, rows)), "chars": max(MIN_CHARS, chars),
-            "px": m}
+    out = {"rows": max(0, min(ROW_SLOTS, rows)), "chars": max(MIN_CHARS, chars),
+           "px": m}
+    if not out["rows"]:  # collapsed: a one-line badge that never exceeds the region
+        out["banner"] = max(0, h)
+    return out
+
+
+def template_for(geometry):
+    """The template that draws a ``plan`` result: the banner when collapsed."""
+    return BANNER_TEMPLATE if "banner" in geometry else TEMPLATE
+
+
+def _banner_vars(column, stream, chars, height, m):
+    """Variables of ``column_banner.html``: the title alone, in a line box of
+    exactly ``height`` px (type shrunk to fit it), so nothing is clipped."""
+    return {"title": fit((stream or {}).get("name") or column["stream"], chars),
+            "px_banner": str(height), "px_pad": str(m["pad"]),
+            "px_banner_font": str(max(1, min(m["title"], height)))}
 
 
 def fit(text, chars):
@@ -113,6 +135,9 @@ def build_vars(column, stream, events, geometry):
     """The ``column.html`` variables for one column, sized to ``geometry``
     (a ``plan`` result): newest rows, each fitted, empty slots blank."""
     rows, chars = geometry["rows"], geometry["chars"]
+    if "banner" in geometry:
+        return _banner_vars(column, stream, chars, geometry["banner"],
+                            geometry.get("px") or metrics())
     views = (stream or {}).get("views") or []
     if stream is None:
         shown, state = ["stream %s is not declared" % column["stream"]], "WAITING"

@@ -5,6 +5,14 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.15.2
+
+**Collapsed column banner.** A panel region too short for the column header
+plus padding (`surface_column_view.plan` reports `rows: 0`, now with a
+`banner` height) draws `html-templates/column_banner.html`: one title line
+sized to the region, no sub line, no row slots, so nothing overflows. Regions
+that fit a row render exactly as before.
+
 ## 0.15.1
 
 **Per-key long-poll conditions.** `Channels` and `EventStreams` no longer share

@@ -72,7 +72,7 @@ class TestPlan(unittest.TestCase):
         # no rows planned means none drawn, however many events there are
         out = view.build_vars(COL, STREAM, [ev(i, data="x") for i in range(5)],
                               view.plan((0, 0, 600, 50)))
-        self.assertEqual(set(rows_of(out)), {""})
+        self.assertFalse([k for k in out if k.startswith("r") and k[1:].isdigit()])
 
     def test_origin_does_not_change_the_plan(self):
         self.assertEqual(view.plan((0, 0, 500, 500)), view.plan((700, 300, 500, 500)))
@@ -155,6 +155,49 @@ class TestTemplatePinned(unittest.TestCase):
             document, root = templates.load(view.TEMPLATE, out)
             image, _ = _html_native.render(document, rect[2], rect[3], root=root)
             self.assertEqual(image.size, (rect[2], rect[3]))
+
+
+class TestCollapsedBanner(unittest.TestCase):
+    HEAD = view.HEAD_PX + 2 * view.PAD_PX
+    RECTS = ((0, 0, 1, 1), (0, 0, 5, 40), (0, 0, 1920, 100), (0, 0, 600, HEAD - 1),
+             (0, 0, 600, HEAD), (0, 0, 600, HEAD + view.ROW_PX - 1), (0, 0, 0, 0),
+             (0, 0, 4000, 50))
+
+    def test_rows_zero_yields_banner_vars_and_no_row_text(self):
+        events = [ev(i, data="x") for i in range(5)]
+        for rect in self.RECTS:
+            geometry = view.plan(rect)
+            self.assertEqual(view.template_for(geometry), view.BANNER_TEMPLATE, rect)
+            out = view.build_vars(COL, STREAM, events, geometry)
+            self.assertEqual(set(out), {"title", "px_banner", "px_pad", "px_banner_font"})
+            self.assertEqual(out["title"], "Agent")
+            self.assertFalse(any(re.match(r"(r\d+|sub)$", k) for k in out), rect)
+
+    def test_banner_never_exceeds_the_region(self):
+        for scale in (0.5, 1.0, 3.0):
+            for rect in self.RECTS + tuple((0, 0, 600, h) for h in range(0, 200, 7)):
+                geometry = view.plan(rect, scale)
+                if geometry["rows"]:
+                    continue
+                out = view.build_vars(COL, STREAM, [], geometry)
+                self.assertLessEqual(int(out["px_banner"]), rect[3], rect)
+                self.assertLessEqual(int(out["px_banner_font"]), max(1, rect[3]), rect)
+
+    def test_template_fills_and_has_no_row_slots(self):
+        out = view.build_vars(COL, STREAM, [], view.plan((0, 0, 600, 50)))
+        document, _root = templates.load(view.BANNER_TEMPLATE, out)
+        self.assertIn("height: 50px", document)
+        self.assertNotIn('class="row"', document)
+        self.assertNotIn("class=\"sub\"", document)
+
+    def test_rows_above_zero_keep_the_full_template_and_vars(self):
+        geometry = view.plan((0, 0, 600, self.HEAD + view.ROW_PX))
+        self.assertEqual(geometry["rows"], 1)
+        self.assertNotIn("banner", geometry)
+        self.assertEqual(view.template_for(geometry), view.TEMPLATE)
+        out = view.build_vars(COL, STREAM, [ev(1, data="x")], geometry)
+        self.assertIn("sub", out)
+        self.assertEqual(len(rows_of(out)), view.ROW_SLOTS)
 
 
 class TestBuildVars(unittest.TestCase):

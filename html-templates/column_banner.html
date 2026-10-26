@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<!--
+  Collapsed column: the region is too short for the header band plus padding
+  (surface_column_view.plan reports rows == 0), so only the stream title is
+  drawn, on one line whose box is exactly the region height. No sub line, no
+  row slots, no fixed glyph width: the title is fitted to the width in Python.
+  Filled by surface_column_view.build_vars; column.html is the full layout.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { background: var(--page); color: var(--ink); font-family: sans-serif; }
+  .banner { height: {{px_banner}}px; line-height: {{px_banner}}px; padding: 0 {{px_pad}}px;
+            font-size: {{px_banner_font}}px; font-weight: bold; color: var(--accent); }
+</style>
+</head>
+<body>
+  <div class="banner">{{title}}</div>
+</body>
+</html>
