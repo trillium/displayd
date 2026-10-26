@@ -5,6 +5,16 @@ All notable changes to displayd, newest first. Every change bumps
 convention in README.md "Versioning": tiny to patch, medium to minor,
 large/breaking to major.
 
+## 0.15.1
+
+**Per-key long-poll conditions.** `Channels` and `EventStreams` no longer share
+one condition variable: each surface id and stream id gets its own, on the
+class's single lock, so a put or publish wakes only that key's waiters instead
+of every long-poller on every surface and stream. A key's condition exists only
+while someone waits on it, so unregistering or removing a key leaves nothing
+behind. Public signatures and results are unchanged.
+`tests/test_surface_waiters.py` pins the isolation deterministically.
+
 ## 0.15.0
 
 **Server observability** (the observability half of project-73bi.3).

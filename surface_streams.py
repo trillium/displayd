@@ -21,7 +21,6 @@ consumer's ``since`` stays valid. Nothing here knows surfaces.
 
 import collections
 import json
-import threading
 import time
 
 from surface_channels import Waiter
@@ -74,7 +73,7 @@ class EventStreams(Waiter):
         self._base = seq_base
         self._on_change = on_change or (lambda urgent=True: None)
         self._listeners = []
-        self._cond = threading.Condition()
+        self._init_waiter()
         self._decl = {}  # id -> declaration
         self._log = {}   # id -> {"events": {"seq","ring"}, "actions": {...}}
 
@@ -95,12 +94,12 @@ class EventStreams(Waiter):
         return {"seq": self._base, "ring": collections.deque(maxlen=size)}
 
     def export(self):
-        with self._cond:
+        with self._lock:
             return [dict(self._decl[s]) for s in sorted(self._decl)]
 
     def restore(self, decls):
         """Boot-time load of validated declarations (rings start empty)."""
-        with self._cond:
+        with self._lock:
             for decl in decls[:MAX_STREAMS]:
                 self._decl[decl["id"]] = decl
                 self._log.setdefault(decl["id"], {"events": self._ring(EVENT_RING),
@@ -110,7 +109,7 @@ class EventStreams(Waiter):
         """Upsert a declaration; returns ``(stream, created)``. Events and
         queued actions survive a re-declaration."""
         decl = normalize_stream(spec)
-        with self._cond:
+        with self._lock:
             created = decl["id"] not in self._decl
             if created and len(self._decl) >= MAX_STREAMS:
                 raise SurfaceError(409, "at most %d streams" % MAX_STREAMS)
@@ -128,25 +127,25 @@ class EventStreams(Waiter):
                     action_seq=log["actions"]["seq"])
 
     def get(self, sid):
-        with self._cond:
+        with self._lock:
             if sid not in self._decl:
                 raise SurfaceError(404, "unknown stream %r" % sid)
             return self._view(sid)
 
     def find(self, sid):
         """The stream or None (columns may name one not declared yet)."""
-        with self._cond:
+        with self._lock:
             return self._view(sid) if sid in self._decl else None
 
     def list(self):
-        with self._cond:
+        with self._lock:
             return [self._view(s) for s in sorted(self._decl)]
 
     def remove(self, sid):
-        with self._cond:
+        with self._lock:
             self.get_locked(sid)
             del self._decl[sid], self._log[sid]
-            self._cond.notify_all()
+            self._notify(sid)
         self._on_change()
         self._fire()
         return {"ok": True, "stream": sid}
@@ -164,7 +163,7 @@ class EventStreams(Waiter):
         data = event.get("data")
         if len(json.dumps(data)) > MAX_EVENT_BYTES:
             raise ValueError("event.data: over %d bytes" % MAX_EVENT_BYTES)
-        with self._cond:
+        with self._lock:
             self.get_locked(sid)
             types = self._decl[sid]["event_types"]
             if types and etype not in types:
@@ -175,7 +174,7 @@ class EventStreams(Waiter):
             stored = {"seq": ring["seq"], "type": etype, "data": data,
                       "at": self._clock()}
             ring["ring"].append(stored)
-            self._cond.notify_all()
+            self._notify(sid)
             out = dict(stored)
         self._fire()
         return out
@@ -186,9 +185,9 @@ class EventStreams(Waiter):
                 return None
             return [dict(e) for e in self._log[sid][kind]["ring"] if e["seq"] > since]
 
-        with self._cond:
+        with self._lock:
             self.get_locked(sid)
-            found = self._wait_until(newer, wait)
+            found = self._wait_until(sid, newer, wait)
             alive = sid in self._log
             return {"stream": sid, "seq": self._log[sid][kind]["seq"] if alive else 0,
                     "items": found or []}
@@ -201,7 +200,7 @@ class EventStreams(Waiter):
 
     def add_action(self, sid, action):
         """Queue a follow-on action; it must be one the stream declared."""
-        with self._cond:
+        with self._lock:
             self.get_locked(sid)
             declared = [a["id"] for a in self._decl[sid]["actions"]]
             if action.get("action") not in declared:
@@ -211,7 +210,7 @@ class EventStreams(Waiter):
             ring["seq"] += 1
             stored = dict(action, seq=ring["seq"], at=self._clock())
             ring["ring"].append(stored)
-            self._cond.notify_all()
+            self._notify(sid)
             return dict(stored)
 
     def read_actions(self, sid, since=0, wait=0):
