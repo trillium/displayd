@@ -61,6 +61,8 @@ GAP = 6           # between two events in the feed
 TITLE = "CHAT"
 BOARD_LABEL = "HERE NOW"
 FEED_LABEL = "CHAT"
+TITLE_PX = 72                # panel.wide's title size (chat.html, fixed px)
+TITLE_ROOM = 1100            # what the title may take before the status text
 ROSTER_STALE_AFTER = 120.0   # the bridge pushes every ~10s; 12 misses is death
 
 
@@ -168,7 +170,7 @@ def chrome(ink, title, count, state, age, notice_text,
         "dim": templates.hex_colour(ink["dim"]),
         "line": templates.hex_colour(ink["line"]),
         "eyebrow": "DISPLAYD",
-        "title": str(title or TITLE),
+        "title": fit.clip(title or TITLE, TITLE_PX, TITLE_ROOM, bold=True),
         "status": status,
         "notice": notice_text,
         "footer": footer,
