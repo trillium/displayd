@@ -16,6 +16,7 @@ import feedback as feedback_module
 import playlist as playlist_module
 import policy as policy_module
 from daemon_power import POLICY_FILE
+from daemon_stats import RequestStats
 from feed_store import FeedStore
 from renderer_registry import (RENDERER_DIR, load_renderers,
                                system_buttons_module, talon_apps_module)
@@ -38,6 +39,7 @@ class DisplayCoreMixin:
         self.cmd_cond = threading.Condition()
         self.cache_lock = threading.Lock()
         self.feeds = FeedStore()
+        self.stats = RequestStats()  # GET /stats counters (in-process)
         self.screen.feeds = self.feeds
         self.screen.on_present = self._note_frame
         for name, entry in self.renderers.items():

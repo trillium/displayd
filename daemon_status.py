@@ -85,6 +85,18 @@ class StatusMixin:
         except Exception as err:  # a probe, not a dependency
             return {"ok": False, "error": str(err)}
 
+    def stats_report(self):
+        """GET /stats: request counters plus renderer and feed-health counts."""
+        out = self.stats.snapshot()
+        health = {"cold": 0, "warm": 0, "stale": 0}
+        for inputs in self.feeds.snapshot().values():
+            for entry in inputs.values():
+                health[entry["health"]] = health.get(entry["health"], 0) + 1
+        out["version"] = APP_VERSION
+        out["renderers"] = len(self.renderers)
+        out["feeds"] = health
+        return out
+
     def renderer_list(self):
         out = []
         for name, entry in sorted(self.renderers.items()):
