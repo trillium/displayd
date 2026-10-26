@@ -22,6 +22,8 @@ def _number(value, where):
 
 def restore_surface(rec, now, default_ttl):
     """One stored record -> a live record, or ``ValueError``."""
+    if "layout" in rec:  # regions are derived from it, never a second source
+        rec = {k: v for k, v in rec.items() if k != "regions"}
     spec = model.normalize(rec, default_ttl=default_ttl)
     spec["panel"] = normalize_panel(rec.get("panel"), spec["regions"])
     revision = rec.get("revision")

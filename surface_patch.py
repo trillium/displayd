@@ -9,7 +9,7 @@ import surface_model as model
 
 PATCH_MERGE = ("renderer", "viewport", "touch")  # one-level merge, rest replace
 SPEC_KEYS = ("id", "name", "kind", "renderer", "viewport", "touch", "regions",
-             "labels", "ttl_seconds", "panel")
+             "layout", "labels", "ttl_seconds", "panel")
 
 
 def merge_panel(old, patch):
@@ -36,6 +36,12 @@ def merge_patch(old, patch):
             merged[key] = dict(merged[key], **value)
         else:
             merged[key] = value
-    if "regions" not in patch and regions_default:
+    has_layout = patch.get("layout") is not None
+    if "regions" in patch:
+        if not has_layout:
+            merged.pop("layout", None)  # explicit rects replace a layout
+    elif has_layout:
+        merged.pop("regions", None)
+    elif "layout" not in patch and regions_default:
         merged.pop("regions")  # re-derive: geometry/types may have moved
     return merged

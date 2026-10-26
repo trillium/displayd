@@ -117,8 +117,9 @@ from feed_store import FeedStore
 from framebuffer import (BACKLIGHT_GLOB, FB, FB_SYS, KD_GRAPHICS, KD_TEXT,
                          KDSETMODE, VT, Framebuffer, _read)
 from framebuffer_headless import HeadlessFramebuffer
-from layout import (MAX_LAYOUT_REGIONS, _assign_grid, _assign_rect,
-                    _assign_stack, _grid_rect, _parse_dim, parse_layout)
+from layout import parse_layout
+from layout_geometry import (MAX_LAYOUT_REGIONS, _assign_grid, _assign_rect,
+                             _assign_stack, _grid_rect, _parse_dim)
 from renderer_registry import (RENDERER_DIR, _load_shared_helper,
                                load_renderers, macbook_layout_module,
                                macbook_map_module, system_buttons_module,

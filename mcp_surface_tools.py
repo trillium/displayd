@@ -92,7 +92,8 @@ TOOLS = [
           None, _discover),
     _tool("surface_get", "One surface: viewport, regions, touch, panel block.",
           _ID, ["id"], _sid("/surfaces/%s")),
-    _tool("surface_register", "Register (upsert) a surface from a full spec.",
+    _tool("surface_register", "Register (upsert) a surface from a full spec; give regions as rects, "
+          "or a 'layout' (stack/grid/rect) displayd partitions inside the viewport.",
           {"spec": _OBJ}, ["spec"],
           lambda a: ("POST", "/surfaces", a.get("spec"))),
     _tool("surface_update", "Merge a partial spec into a surface (the built-in "

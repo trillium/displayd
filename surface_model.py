@@ -15,9 +15,10 @@ an iPad -- and describes itself with four things:
 ``touch``
     ``supported`` plus the ``interactions`` it can report (closed vocabulary
     ``TOUCH_INTERACTIONS``) and ``max_points``. No touch means no interactions.
-``regions``
-    named rects inside the usable viewport that consumers can target. With
-    none declared, one ``full`` region covers the usable viewport.
+``regions`` / ``layout``
+    named rects inside the usable viewport that consumers can target: given,
+    or derived from a ``layout`` (``surface_layout``); with neither, one
+    ``full`` region covers the usable viewport.
 
 ``normalize`` is the only place a spec is judged: a bad one raises
 ``ValueError`` naming the field. Its output is itself a valid input
@@ -25,6 +26,7 @@ an iPad -- and describes itself with four things:
 """
 
 import re
+import surface_layout
 
 TOUCH_INTERACTIONS = ("tap", "double_tap", "long_press", "swipe", "drag",
                       "pinch", "multi_touch")
@@ -156,16 +158,16 @@ def default_regions(usable, renderer, touch):
              "touch": touch["supported"]}]
 
 
-def _regions(raw, usable, renderer, touch):
+def _regions(raw, field, usable, renderer, touch):
     if raw is None:
         return default_regions(usable, renderer, touch)
     if not isinstance(raw, (list, tuple)) or not raw:
-        raise ValueError("regions: expected a non-empty list")
+        raise ValueError("%s: expected a non-empty list" % field)
     if len(raw) > MAX_REGIONS:
-        raise ValueError("regions: at most %d" % MAX_REGIONS)
+        raise ValueError("%s: at most %d" % (field, MAX_REGIONS))
     out, seen = [], set()
     for i, item in enumerate(raw):
-        where = "regions[%d]" % i
+        where = "%s[%d]" % (field, i)
         item = _dict(item, where)
         name = _token(item.get("name"), where + ".name")
         if name in seen:
@@ -211,15 +213,14 @@ def default_region_name(regions):
     """The region a send lands in when none is named: ``full`` if declared,
     else the only one, else None (the sender must say which)."""
     names = [r["name"] for r in regions]
-    if DEFAULT_REGION in names:
-        return DEFAULT_REGION
-    return names[0] if len(names) == 1 else None
+    return DEFAULT_REGION if DEFAULT_REGION in names else (
+        names[0] if len(names) == 1 else None)
 
 
 def is_default_regions(spec):
-    """True when ``spec['regions']`` is exactly what normalize would have
-    derived -- so a viewport/renderer/touch change may re-derive it."""
-    return spec.get("regions") == default_regions(
+    """True when ``spec['regions']`` is what normalize derived -- the default
+    or a stored ``layout`` -- so a viewport/renderer/touch change re-derives."""
+    return spec.get("layout") is not None or spec.get("regions") == default_regions(
         spec["viewport"]["usable"], spec["renderer"], spec["touch"])
 
 
@@ -232,7 +233,8 @@ def normalize(spec, builtin=False, default_ttl=DEFAULT_TTL):
     renderer = _renderer(spec.get("renderer"))
     viewport = _viewport(spec.get("viewport"))
     touch = _touch(spec.get("touch"))
-    regions = _regions(spec.get("regions"), viewport["usable"], renderer, touch)
+    regions = _regions(*surface_layout.source(spec, viewport["usable"], MAX_REGIONS),
+                       viewport["usable"], renderer, touch)
     ttl = None
     if not builtin:
         ttl = spec.get("ttl_seconds", default_ttl)
@@ -245,4 +247,4 @@ def normalize(spec, builtin=False, default_ttl=DEFAULT_TTL):
             "touch": touch, "regions": regions,
             "default_region": default_region_name(regions),
             "labels": _labels(spec.get("labels")),
-            "ttl_seconds": None if ttl is None else float(ttl)}
+            "ttl_seconds": None if ttl is None else float(ttl), **surface_layout.stored(spec)}
