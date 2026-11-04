@@ -359,7 +359,7 @@ keeps running the old tick until the installer runs (`install-mac.sh
 - `html-templates/layout.html` is the shell surface (header, side gesture
   strips, content band, footer) and the default template, so `template`
   is optional and `html` sits in the live picker/home set and rotates like
-  any other view. Its ten variables (`eyebrow`, `title`, `status`, `lead`,
+  any other view. Its nine variables (`eyebrow`, `title`, `status`, `lead`,
   `body`, `hint_left`, `hint_right`, `footer`, `footer_right`) are ALL
   required -- a missing one names itself rather than drawing a wrong shell --
   and the set is pinned to `DEFAULT_VARS` in `renderers/html.py` by
